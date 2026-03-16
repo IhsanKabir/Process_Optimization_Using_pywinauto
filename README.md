@@ -8,6 +8,35 @@ The main motivation behind this project was to eliminate the heavy manual burden
 
 The process follows a sequential pipeline to interact with the live desktop application:
 
+```mermaid
+graph TD
+    A[Initialization] --> B{config.json loaded}
+    B -->|Routes & Airlines| C[UI Attachment]
+    C -->|pywinauto backend| D[Macro Execution]
+    
+    subgraph Smartpoint Terminal
+    D --> E((Send Keystrokes))
+    E --> F[Scrape Clipboard]
+    F -->|Detect Pagination?| G{More Pages?}
+    G -->|Yes| E
+    G -->|No| H[Raw Text Dump]
+    end
+    
+    H --> I[Regex Data Parsing]
+    I -->|fare_parser.py| J((Structured Fares))
+    I -->|tax_parser.py| K((Structured Taxes))
+    
+    J --> L[Excel Report Generation]
+    K --> L
+    L --> M[(Timestamped .xlsx Output)]
+    
+    style A fill:#2b323b,stroke:#a3b8cc,color:#fff
+    style M fill:#2ea043,stroke:#2ea043,color:#fff
+    style D fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style I fill:#8957e5,stroke:#8957e5,color:#fff
+    style Smartpoint Terminal fill:#0d1117,stroke:#30363d,color:#fff
+```
+
 1. **Initialization & Configuration**: The orchestrator (`main.py`) reads `config.json` to load the target routes, airlines, output file names, and UI timeout settings.
 2. **UI Attachment**: The script utilizes `pywinauto` via the UIAutomation (UIA) backend to locate the active Smartpoint window on the desktop and attach to its command-line input box.
 3. **Macro Execution**: `pyautogui` mimics human keystrokes to fire off the required GDS terminal commands (e.g., `FD` for fares, `FTAX` for taxes).
