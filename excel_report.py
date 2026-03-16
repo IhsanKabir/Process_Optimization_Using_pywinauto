@@ -1,0 +1,541 @@
+"""
+excel_report.py - Fare Report Generator with Comparison Dashboard
+
+Groups routes by international destination, placing fares from all
+domestic airports (DAC, CGP, ZYL, CXB) side-by-side.
+
+Layout per section:
+    → Doha (DOH) [QAR]
+    RBD | BG DAC OW | BG DAC RT | BS DAC OW | BS DAC RT | BG CGP OW | BG CGP RT | ...
+"""
+
+import os
+from collections import OrderedDict
+from datetime import datetime
+from typing import Optional
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+from openpyxl.utils import get_column_letter
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
+
+# ── Styles ──────────────────────────────────────────────
+THIN_BORDER = Border(
+    left=Side(style='thin'), right=Side(style='thin'),
+    top=Side(style='thin'), bottom=Side(style='thin')
+)
+HEADER_FONT = Font(name='Calibri', bold=True, size=11, color='FFFFFF')
+HEADER_FILL = PatternFill(start_color='2F5496', end_color='2F5496', fill_type='solid')
+ROUTE_FONT = Font(name='Calibri', bold=True, size=13)
+ROUTE_FILL = PatternFill(start_color='D6E4F0', end_color='D6E4F0', fill_type='solid')
+
+INCREASE_FONT = Font(name='Calibri', size=11, color='CC0000')
+DECREASE_FONT = Font(name='Calibri', size=11, color='006100')
+NEW_FONT = Font(name='Calibri', size=11, color='7F6000')
+SOLD_OUT_FONT = Font(name='Calibri', size=11, color='808080', italic=True)
+
+INCREASE_FILL = PatternFill(start_color='FDE9E9', end_color='FDE9E9', fill_type='solid')
+DECREASE_FILL = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+NEW_FILL = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+SOLD_OUT_FILL = PatternFill(start_color='D9D9D9', end_color='D9D9D9', fill_type='solid')
+
+MAIN_SHEET = "Side-by-Side Comparison"
+
+
+# ── Public API ──────────────────────────────────────────
+def generate_report(
+    all_route_data: dict,
+    output_path: str,
+    changes: Optional[dict] = None,
+    config: Optional[dict] = None
+) -> str:
+    """Generate Excel fare report grouped by international destination."""
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    airline_names = config.get('airline_names', {}) if config else {}
+    city_names = config.get('city_names', {}) if config else {}
+    rbd_sort_order = config.get('rbd_sort_order', []) if config else []
+    domestic_airports = config.get('domestic_airports', ['DAC']) if config else ['DAC']
+
+    ws = wb.create_sheet(MAIN_SHEET)
+    row = 1
+
+    # ── Report header ───────────────────────────────────
+    ws.cell(row=row, column=1, value="Fare Comparison Report").font = Font(
+        name='Calibri', bold=True, size=16)
+    row += 1
+    ws.cell(row=row, column=1,
+            value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}").font = Font(
+        name='Calibri', size=10, italic=True)
+    row += 1
+
+    # Legend
+    ws.cell(row=row, column=1, value="Legend:").font = Font(
+        name='Calibri', bold=True, size=10)
+    _legend_cell(ws, row, 2, "1800 ↑ = Increased", INCREASE_FONT, INCREASE_FILL)
+    _legend_cell(ws, row, 3, "1800 ↓ = Decreased", DECREASE_FONT, DECREASE_FILL)
+    _legend_cell(ws, row, 4, "1800 NEW", NEW_FONT, NEW_FILL)
+    _legend_cell(ws, row, 5, "1800 SOLD OUT", SOLD_OUT_FONT, SOLD_OUT_FILL)
+    row += 2
+
+    # ── Group routes by (intl_airport, direction) ───────
+    # direction: 'outbound' = domestic→intl, 'inbound' = intl→domestic
+    sections = _group_by_international(
+        all_route_data, domestic_airports)
+
+    cell_locations = {}
+    freeze_row = row  # freeze here
+
+    for section_key in sorted(sections.keys()):
+        entries = sections[section_key]
+        intl_code, direction = section_key
+        row, locs = _write_section(
+            ws, row, intl_code, direction, entries,
+            airline_names, city_names, domestic_airports,
+            rbd_sort_order, changes
+        )
+        cell_locations.update(locs)
+        row += 2
+
+    ws.freeze_panes = f"A{freeze_row}"
+    _auto_fit_columns(ws)
+
+    # ── Individual Tables sheet (per-airline, side-by-side) ──
+    ws_ind = wb.create_sheet("Individual Tables")
+    _write_individual_tables_sheet(
+        ws_ind, all_route_data, sections,
+        airline_names, city_names, rbd_sort_order, domestic_airports, changes
+    )
+    _auto_fit_columns(ws_ind)
+
+    # ── Changes Summary sheet ───────────────────────────
+    if changes and any(changes.values()):
+        ws_ch = wb.create_sheet("Changes Summary")
+        _write_changes_summary(ws_ch, changes, airline_names, city_names, cell_locations)
+        _auto_fit_columns(ws_ch)
+
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    wb.save(output_path)
+    return output_path
+
+
+# ── Grouping helper ─────────────────────────────────────
+def _group_by_international(all_route_data, domestic_airports):
+    """
+    Group route_key → route_info by (international_airport, direction).
+
+    Returns:
+        { (intl_code, direction): [ (airline, domestic, route_key, route_info), ... ] }
+    """
+    sections = {}
+    for route_key, route_info in all_route_data.items():
+        parts = route_key.split('_', 1)
+        if len(parts) != 2:
+            continue
+        airline, route = parts
+        if '-' not in route:
+            continue
+        origin, dest = route.split('-', 1)
+
+        if origin in domestic_airports:
+            intl = dest
+            direction = 'outbound'
+            domestic = origin
+        elif dest in domestic_airports:
+            intl = origin
+            direction = 'inbound'
+            domestic = dest
+        else:
+            # Neither end is domestic — treat origin as domestic
+            intl = dest
+            direction = 'outbound'
+            domestic = origin
+
+        key = (intl, direction)
+        if key not in sections:
+            sections[key] = []
+        sections[key].append((airline, domestic, route_key, route_info))
+
+    return sections
+
+
+# ── Section writer ──────────────────────────────────────
+def _write_section(
+    ws, start_row, intl_code, direction, entries,
+    airline_names, city_names, domestic_airports,
+    rbd_sort_order, changes
+):
+    """
+    Write one section block.  e.g. "→ Doha (DOH)"
+    Columns: RBD | [Airline (Origin)] OW | RT | [Airline (Origin)] OW | RT | ...
+    """
+    row = start_row
+    cell_locations = {}
+
+    # Determine currency from first entry
+    first_info = entries[0][3] if entries else {}
+    currency = first_info.get('currency', '') if isinstance(first_info, dict) else ''
+
+    intl_name = city_names.get(intl_code, intl_code)
+    arrow = "→" if direction == 'outbound' else "←"
+    title = f"{arrow} {intl_name} ({intl_code})"
+    if currency:
+        title += f"  [{currency}]"
+
+    # Sort entries: by domestic airport order, then airline
+    dom_order = {code: i for i, code in enumerate(domestic_airports)}
+    entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+
+    # Build column list: each entry = (airline, domestic, route_key, info)
+    cols_needed = 1 + len(entries) * 2
+    ws.cell(row=row, column=1, value=title).font = ROUTE_FONT
+    ws.cell(row=row, column=1).fill = ROUTE_FILL
+    if cols_needed > 1:
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=cols_needed)
+    row += 1
+
+    # Column headers
+    _styled_cell(ws, row, 1, "RBD", HEADER_FONT, HEADER_FILL)
+    col = 2
+    for airline, domestic, _rk, _ri in entries:
+        al_name = airline_names.get(airline, airline)
+        dom_name = city_names.get(domestic, domestic)
+        label = f"{al_name} ({dom_name})" if len(set(e[1] for e in entries)) > 1 else al_name
+
+        _styled_cell(ws, row, col, f"{label} OW", HEADER_FONT, HEADER_FILL,
+                     alignment=Alignment(horizontal='center'))
+        _styled_cell(ws, row, col + 1, f"{label} RT", HEADER_FONT, HEADER_FILL,
+                     alignment=Alignment(horizontal='center'))
+        col += 2
+    row += 1
+
+    # Collect all RBDs across all entries + sold_out from changes
+    all_rbds = set()
+    for _al, _dom, rk, ri in entries:
+        rbd_data = ri.get('rbd_data', ri) if isinstance(ri, dict) and 'rbd_data' in ri else ri
+        if isinstance(rbd_data, dict):
+            all_rbds.update(rbd_data.keys())
+    if changes:
+        for _al, _dom, rk, _ri in entries:
+            for rbd, ci in changes.get(rk, {}).items():
+                if ci.get('type') == 'sold_out':
+                    all_rbds.add(rbd)
+
+    def sort_key(rbd):
+        try:
+            return rbd_sort_order.index(rbd)
+        except ValueError:
+            return len(rbd_sort_order) + ord(rbd[0]) if rbd else 999
+
+    sorted_rbds = sorted(all_rbds, key=sort_key)
+
+    # Data rows
+    for rbd in sorted_rbds:
+        ws.cell(row=row, column=1, value=rbd).font = Font(name='Calibri', bold=True)
+        ws.cell(row=row, column=1).border = THIN_BORDER
+
+        col = 2
+        for airline, domestic, route_key, route_info in entries:
+            rbd_data = route_info.get('rbd_data', route_info) if isinstance(
+                route_info, dict) and 'rbd_data' in route_info else route_info
+            rbd_info = rbd_data.get(rbd) if isinstance(rbd_data, dict) else None
+
+            # Track for hyperlinks
+            if route_key not in cell_locations:
+                cell_locations[route_key] = {}
+            cell_locations[route_key][rbd] = row
+
+            change_info = changes.get(route_key, {}).get(rbd) if changes else None
+            change_type = change_info.get('type') if change_info else None
+
+            ow = rbd_info.get('ow_fare') if rbd_info else None
+            rt = rbd_info.get('rt_fare') if rbd_info else None
+            if change_type == 'sold_out':
+                ow = change_info.get('old_ow_fare')
+                rt = change_info.get('old_rt_fare')
+
+            _write_fare_cell(ws, row, col, ow, change_type)
+            _write_fare_cell(ws, row, col + 1, rt, change_type)
+            col += 2
+        row += 1
+
+    return row, cell_locations
+
+
+# ── Cell helpers ────────────────────────────────────────
+def _fmt_fare(fare):
+    """Format fare: 1800.0 → '1,800', 1800.50 → '1,800.50', None → ''."""
+    if fare is None:
+        return ""
+    if fare == int(fare):
+        return f"{int(fare):,}"
+    return f"{fare:,.2f}"
+
+
+def _write_fare_cell(ws, row, col, fare, change_type):
+    """
+    Write fare value with a subscripted change indicator using openpyxl rich text.
+    
+    The fare number appears at normal 11pt, and the tag (↑/↓/NEW/SOLD OUT)
+    appears as small 8pt subscript-style text in the same cell.
+    """
+    cell = ws.cell(row=row, column=col)
+    cell.border = THIN_BORDER
+    cell.alignment = Alignment(horizontal='right')
+    
+    fare_str = _fmt_fare(fare)
+    
+    if change_type == 'sold_out':
+        cell.value = CellRichText(
+            TextBlock(InlineFont(sz=11, color='808080', i=True), fare_str),
+            TextBlock(InlineFont(sz=8, color='808080', i=True, vertAlign='subscript'), " SOLD OUT")
+        )
+        cell.fill = SOLD_OUT_FILL
+    elif change_type == 'new':
+        cell.value = CellRichText(
+            TextBlock(InlineFont(sz=11, color='7F6000'), fare_str),
+            TextBlock(InlineFont(sz=8, color='7F6000', b=True, vertAlign='subscript'), " NEW")
+        )
+        cell.fill = NEW_FILL
+    elif change_type == 'increased' and fare is not None:
+        cell.value = CellRichText(
+            TextBlock(InlineFont(sz=11, color='CC0000'), fare_str),
+            TextBlock(InlineFont(sz=8, color='CC0000', b=True, vertAlign='subscript'), " ↑")
+        )
+        cell.fill = INCREASE_FILL
+    elif change_type == 'decreased' and fare is not None:
+        cell.value = CellRichText(
+            TextBlock(InlineFont(sz=11, color='006100'), fare_str),
+            TextBlock(InlineFont(sz=8, color='006100', b=True, vertAlign='subscript'), " ↓")
+        )
+        cell.fill = DECREASE_FILL
+    else:
+        cell.value = _fmt_fare(fare) if fare is not None else None
+
+
+
+def _styled_cell(ws, row, col, value, font, fill, alignment=None):
+    cell = ws.cell(row=row, column=col, value=value)
+    cell.font = font; cell.fill = fill; cell.border = THIN_BORDER
+    if alignment:
+        cell.alignment = alignment
+    return cell
+
+
+def _legend_cell(ws, row, col, value, font, fill):
+    c = ws.cell(row=row, column=col, value=value)
+    c.font = font; c.fill = fill
+    return c
+
+
+# ── Changes Summary ────────────────────────────────────
+def _write_changes_summary(ws, changes, airline_names, city_names, cell_locations):
+    row = 1
+    ws.cell(row=row, column=1, value="Changes Summary").font = Font(
+        name='Calibri', bold=True, size=14)
+    row += 1
+    ws.cell(row=row, column=1,
+            value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}").font = Font(
+        name='Calibri', size=10, italic=True)
+    row += 2
+
+    headers = ['Route', 'RBD', 'Change', 'Old OW', 'New OW', 'Old RT', 'New RT', 'Go To']
+    for ci, h in enumerate(headers, 1):
+        _styled_cell(ws, row, ci, h, HEADER_FONT, HEADER_FILL)
+    row += 1
+    ws.freeze_panes = f"A{row}"
+
+    has_changes = False
+    for route_key, route_changes in changes.items():
+        title = route_key.replace('_', ' / ')
+        for rbd, change in route_changes.items():
+            has_changes = True
+            ws.cell(row=row, column=1, value=title).border = THIN_BORDER
+            ws.cell(row=row, column=2, value=rbd).border = THIN_BORDER
+
+            ct = change.get('type', '')
+            tc = ws.cell(row=row, column=3, value=ct.upper())
+            tc.border = THIN_BORDER
+            if ct == 'new':
+                tc.font = NEW_FONT; tc.fill = NEW_FILL
+            elif ct == 'increased':
+                tc.font = INCREASE_FONT; tc.fill = INCREASE_FILL
+            elif ct == 'decreased':
+                tc.font = DECREASE_FONT; tc.fill = DECREASE_FILL
+            elif ct == 'sold_out':
+                tc.font = SOLD_OUT_FONT; tc.fill = SOLD_OUT_FILL
+
+            ws.cell(row=row, column=4, value=change.get('old_ow_fare')).border = THIN_BORDER
+            ws.cell(row=row, column=5, value=change.get('new_ow_fare')).border = THIN_BORDER
+            ws.cell(row=row, column=6, value=change.get('old_rt_fare')).border = THIN_BORDER
+            ws.cell(row=row, column=7, value=change.get('new_rt_fare')).border = THIN_BORDER
+
+            # Hyperlink
+            lc = ws.cell(row=row, column=8)
+            lc.border = THIN_BORDER
+            target = None
+            if route_key in cell_locations and rbd in cell_locations[route_key]:
+                target = cell_locations[route_key][rbd]
+            if target:
+                lc.value = "View →"
+                lc.hyperlink = f"#'{MAIN_SHEET}'!A{target}"
+                lc.font = Font(name='Calibri', size=10, color='0563C1', underline='single')
+            else:
+                lc.value = "—"
+            row += 1
+
+    if not has_changes:
+        ws.cell(row=row, column=1, value="No changes detected.").font = Font(
+            name='Calibri', italic=True)
+
+
+def _auto_fit_columns(ws, min_width=10, max_width=30):
+    for ci in range(1, ws.max_column + 1):
+        ml = min_width
+        cl = get_column_letter(ci)
+        for ri in range(1, ws.max_row + 1):
+            v = ws.cell(row=ri, column=ci).value
+            if v:
+                ml = max(ml, min(len(str(v)) + 2, max_width))
+        ws.column_dimensions[cl].width = ml
+
+
+# ── Individual Tables Sheet ─────────────────────────────
+def _write_individual_tables_sheet(
+    ws, all_route_data, sections,
+    airline_names, city_names, rbd_sort_order, domestic_airports, changes
+):
+    """
+    Write per-airline tables placed side-by-side horizontally.
+    
+    Layout:
+        8D / MLE-DAC           BS / MLE-DAC           BG / MLE-DAC
+        RBD  OW/USD  RT/USD    RBD  OW/USD  RT/USD    RBD  OW/USD  RT/USD
+        Y    405     650       J    850     1600       J    2099
+        B    180     320       C    700     1300       Y    1417
+        ...                    ...                     ...
+    
+    Each section (international destination + direction) is a row-group.
+    Within each, airlines are placed side-by-side with a 1-column gap.
+    """
+    current_row = 1
+    
+    # Title
+    ws.cell(row=current_row, column=1, value="Individual Airline Tables").font = Font(
+        name='Calibri', bold=True, size=16)
+    current_row += 1
+    ws.cell(row=current_row, column=1,
+            value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}").font = Font(
+        name='Calibri', size=10, italic=True)
+    current_row += 2
+    
+    TABLE_WIDTH = 3  # RBD, OW, RT
+    GAP = 1          # 1 empty column between tables
+    
+    for section_key in sorted(sections.keys()):
+        entries = sections[section_key]
+        intl_code, direction = section_key
+        
+        # Sort entries by domestic order then airline
+        dom_order = {code: i for i, code in enumerate(domestic_airports)}
+        entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+        
+        intl_name = city_names.get(intl_code, intl_code)
+        arrow = "→" if direction == 'outbound' else "←"
+        
+        # Write section title spanning all tables
+        section_title = f"{arrow} {intl_name} ({intl_code})"
+        ws.cell(row=current_row, column=1, value=section_title).font = Font(
+            name='Calibri', bold=True, size=14)
+        ws.cell(row=current_row, column=1).fill = ROUTE_FILL
+        total_cols = len(entries) * (TABLE_WIDTH + GAP) - GAP
+        if total_cols > 1:
+            ws.merge_cells(start_row=current_row, start_column=1,
+                           end_row=current_row, end_column=total_cols)
+        current_row += 1
+        
+        # Track the tallest table in this row-group
+        max_rows_in_group = 0
+        table_start_row = current_row
+        
+        col_offset = 1
+        for airline, domestic, route_key, route_info in entries:
+            al_name = airline_names.get(airline, airline)
+            dom_name = city_names.get(domestic, domestic)
+            currency = route_info.get('currency', 'USD') if isinstance(route_info, dict) else 'USD'
+            
+            rbd_data = route_info.get('rbd_data', route_info) if isinstance(
+                route_info, dict) and 'rbd_data' in route_info else route_info
+            if not isinstance(rbd_data, dict):
+                rbd_data = {}
+            
+            # Include sold_out RBDs from changes
+            all_rbds = set(rbd_data.keys())
+            if changes and route_key in changes:
+                for rbd, ci in changes[route_key].items():
+                    if ci.get('type') == 'sold_out':
+                        all_rbds.add(rbd)
+            
+            # Sort RBDs
+            def sort_key(rbd, _rso=rbd_sort_order):
+                try:
+                    return _rso.index(rbd)
+                except ValueError:
+                    return len(_rso) + ord(rbd[0]) if rbd else 999
+            sorted_rbds = sorted(all_rbds, key=sort_key)
+            
+            # Table title: "BG / DAC-DOH" or "Biman (Dhaka)"
+            if direction == 'outbound':
+                table_title = f"{al_name} / {domestic}-{intl_code}"
+            else:
+                table_title = f"{al_name} / {intl_code}-{domestic}"
+            
+            row = table_start_row
+            
+            # Table title
+            title_cell = ws.cell(row=row, column=col_offset, value=table_title)
+            title_cell.font = Font(name='Calibri', bold=True, size=11)
+            ws.merge_cells(start_row=row, start_column=col_offset,
+                           end_row=row, end_column=col_offset + TABLE_WIDTH - 1)
+            row += 1
+            
+            # Column headers
+            _styled_cell(ws, row, col_offset, "RBD", HEADER_FONT, HEADER_FILL)
+            _styled_cell(ws, row, col_offset + 1, f"OW/{currency}", HEADER_FONT, HEADER_FILL,
+                         alignment=Alignment(horizontal='center'))
+            _styled_cell(ws, row, col_offset + 2, f"RT/{currency}", HEADER_FONT, HEADER_FILL,
+                         alignment=Alignment(horizontal='center'))
+            row += 1
+            
+            # Data rows
+            for rbd in sorted_rbds:
+                rbd_info = rbd_data.get(rbd)
+                
+                change_info = changes.get(route_key, {}).get(rbd) if changes else None
+                change_type = change_info.get('type') if change_info else None
+                
+                ow = rbd_info.get('ow_fare') if rbd_info else None
+                rt = rbd_info.get('rt_fare') if rbd_info else None
+                if change_type == 'sold_out':
+                    ow = change_info.get('old_ow_fare')
+                    rt = change_info.get('old_rt_fare')
+                
+                ws.cell(row=row, column=col_offset, value=rbd).font = Font(
+                    name='Calibri', bold=True)
+                ws.cell(row=row, column=col_offset).border = THIN_BORDER
+                
+                _write_fare_cell(ws, row, col_offset + 1, ow, change_type)
+                _write_fare_cell(ws, row, col_offset + 2, rt, change_type)
+                row += 1
+            
+            table_height = row - table_start_row
+            max_rows_in_group = max(max_rows_in_group, table_height)
+            
+            col_offset += TABLE_WIDTH + GAP
+        
+        # Move to next section (below the tallest table)
+        current_row = table_start_row + max_rows_in_group + 2
+
