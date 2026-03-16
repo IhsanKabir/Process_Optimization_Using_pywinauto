@@ -1,69 +1,79 @@
-# Travelport Smartpoint Automation Suite
+# Process Optimization Using pywinauto
 
-![Travelport Automation](https://img.shields.io/badge/Automation-Python_UIA-blue)
-![Status](https://img.shields.io/badge/Status-Active_Development-success)
+A Python-based automation solution I built to control the Travelport Smartpoint terminal, extract complex Global Distribution System (GDS) data, and structure the output into clean Excel reports.
 
-A robust, intelligent Python automation toolkit designed to interact directly with **Travelport Smartpoint**. This project eliminates manual data extraction burdens by autonomously navigating the Smartpoint terminal, parsing complex Global Distribution System (GDS) formats, and exporting business-critical data into structured, automated Excel reports.
+The main motivation behind this project was to eliminate the heavy manual burden of constantly querying GDS systems by hand. Scraping an archaic terminal application requires robust UI automation and complex regex parsing, especially since the data spans across multiple paginated screens built on 1960s-era terminal protocols. 
 
-## 🚀 Key Capabilities
+## End-to-End Pipeline
 
-### 1. Automated Fare Extraction (`FD` Commands)
-- Automatically drives the Smartpoint terminal to pull comprehensive public, private, and unsaleable fare datasets across requested airline/route combinations.
-- **Intelligent Pagination:** Seamlessly navigates complex Fares pagination (e.g. `MD`, `FU*`, overcoming currency loops and handling `END` markers automatically).
-- Generates polished, sortable Excel sheets containing `Fare Basis`, `OW/RT`, `Currency`, `Amount`, `Seasons`, `Min/Max` stays, and ticketing details.
+The process follows a sequential pipeline to interact with the live desktop application:
 
-### 2. Autonomous Tax Scraping (`FTAX` Commands)
-- Navigates through multi-page Travelport terminal tax definitions (`FTAX-{CC}/{CODE}`).
-- Intelligently skips verbose exemption pages to accurately locate and parse the crucial `TAX RATE:` blocks.
-- Produces detailed Tax Reports grouping taxes by airport explicitly formatting the time/date-range ticket conditions, validities, and distinct transfer/departure amounts.
+1. **Initialization & Configuration**: The orchestrator (`main.py`) reads `config.json` to load the target routes, airlines, output file names, and UI timeout settings.
+2. **UI Attachment**: The script utilizes `pywinauto` via the UIAutomation (UIA) backend to locate the active Smartpoint window on the desktop and attach to its command-line input box.
+3. **Macro Execution**: `pyautogui` mimics human keystrokes to fire off the required GDS terminal commands (e.g., `FD` for fares, `FTAX` for taxes).
+4. **Clipboard Scraping & Pagination**: The script reads the terminal output, detects Smartpoint-specific pagination prompts (like "More Fares" or missing "END" indicators), handles inline sub-commands like `FU*`, and accumulates the raw text strings.
+5. **Regex Data Structuring**: The raw strings are passed to dedicated parsers (`fare_parser.py` / `tax_parser.py`) which use heavy regular expressions to isolate variables like fare basis codes, validities, maximum stays, and exact tax amounts by airport terminal.
+6. **Excel Generation**: Finally, `openpyxl` takes the structured dictionaries and dynamically lays out the final `.xlsx` report files, applying color-coding and time-stamped metadata.
 
-### 3. Queue Charge (YQ/YR) & Baggage Rule Extraction *(WIP)*
-- Captures dynamic surcharges mapped against corresponding routes and fare bases.
-- Pulls precise baggage allowances associated directly with specific fare basis codes.
+## Project Structure
 
-### 4. Dynamic Currency Conversion Integration *(WIP)*
-- Normalizes disparate global currencies directly within the reporting pipelines.
+```text
+travelport-automation/
+├── main.py                     # Primary orchestrator and CLI entry point
+├── config.json                 # Target routes, airlines, airports, and settings
+├── smartpoint_automation.py    # pywinauto/pyautogui logic for terminal interaction
+├── fare_parser.py              # Regex logic for extracting standard public/private fares
+├── tax_parser.py               # Complex multi-page syntax parsing for tax exemptions
+├── report_generator.py         # Formats scraped fare datasets into Excel worksheets
+├── tax_report.py               # Formats categorized airport taxes into Excel
+├── README.md                   # Project documentation
+├── requirements.txt            # Python dependencies (pywinauto, pyautogui, openpyxl)
+├── data/
+│   ├── raw/                    # Automatically saved terminal strings (for debugging)
+│   ├── logs/                   # System execution logs
+│   ├── archive/                # Historical snapshot storage for delta comparisons
+│   └── reports/                # Generated timestamped .xlsx output files
+```
 
-## 🛠️ Technology Stack
-- **Python 3.10+**: Core extraction and data transformation logic.
-- **pywinauto (UIA Base)** & **pyautogui**: Deep GUI inspection and robust macro execution directly targeting the Smartpoint application window.
-- **openpyxl**: Complex Excel `.xlsx` generation, formatting, status color-coding, and data layout.
-- **Regex Parsing Engine**: Highly customized logic configured strictly for Travelport GDS terminal output idiosyncrasies.
+## Core Capabilities
 
-## ⚙️ Requirements & Installation
+### Fare Extraction
+The script automatically drives the terminal to pull comprehensive public, private, and unsaleable fare datasets across requested airline and route combinations. It handles complex pagination logic (e.g., sending `MD` continuously, intercepting currency loops, breaking out of stuck screens, and knowing when to fall back on the `FU*` command). The final Excel output contains the Fare Basis, Currency, Amount, Seasons, Min/Max stays, and ticketing details.
 
-1. Must be run on a Windows machine actively logged into **Travelport Smartpoint**.
-2. Requires a valid, authenticated GDS session with active focus on the primary terminal window.
-3. Install dependencies:
+### Tax Scraping
+The terminal tax definitions (`FTAX-{CC}/{CODE}`) are incredibly dense. A major challenge in the project was figuring out how to intelligently paginate through 20+ pages of irrelevant tax exemption legal text just to locate the specific `TAX RATE:` blocks. The project parses out these specific amounts against distinct time-ranges and airport categorization rules.
+
+### Ongoing Development
+I am actively adding new features to the pipeline, including:
+- Extracting Queue Charges (YQ/YR) mapped directly to specific fares.
+- Pulling dynamic baggage allowance data directly from the terminal.
+- Implementing an automated currency conversion pipeline within the Excel reporting layer.
+
+## Setup Requirements
+
+The execution environment requires:
+- A Windows machine actively logged into Travelport Smartpoint.
+- An authenticated GDS session with active focus on the primary terminal window.
+- Python 3.10+ installed.
+
+Dependencies can be installed via:
 ```bash
 pip install -r requirements.txt
 ```
 
-## 🎮 Usage 
+## Running the Tool
 
-The orchestrator `main.py` is entirely configurable via `config.json`.
-
-**Full Auto Extraction (Fares):**
+To run the standard Fare extraction pipeline:
 ```bash
 python main.py --auto
 ```
 
-**Tax Only Extraction (FTAX):**
+To run the Tax extraction pipeline:
 ```bash
 python main.py --tax --auto
 ```
 
-**Testing Limits:**
+For quick testing on a single route or airport without waiting for the full batch:
 ```bash
 python main.py --tax --auto --limit 1
 ```
-
-## 🏗️ Architecture Design 
-
-* `main.py`: The core orchestrator managing the run loop, configuration loading, and saving final snapshots.
-* `smartpoint_automation.py`: The workhorse. Interacts directly with the live terminal manipulating the clipboard buffer to extract screen states. It implements complex algorithms to defeat infinite loops, detect stuck pages, handle fallback navigation (Tab vs Direct commands), and recognize Smartpoint prompts instantly.
-* `fare_parser.py` & `tax_parser.py`: Transforms raw, cryptic GDS strings into structured python dicts via extensive regular expressions.
-* `report_generator.py` & `tax_report.py`: Ingests structured python dicts and executes dynamic Excel styling, conditional logic, and tab management.
-
-## 📝 License
-Proprietary - Internal Corporate Use Only.
