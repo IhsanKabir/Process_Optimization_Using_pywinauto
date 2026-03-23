@@ -13,8 +13,10 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
-from datetime import datetime
+import time as _time
+from datetime import datetime, timedelta
 from collections import OrderedDict
 
 from parser import (
@@ -24,6 +26,7 @@ from parser import (
     generate_file_key,
     parse_command
 )
+from tax_breakdown_parser import parse_fs_tax_breakdown
 from excel_report import generate_report
 from change_detector import (
     detect_changes,
@@ -83,27 +86,33 @@ def load_config(config_path: str) -> dict:
     return config
 
 
-def load_raw_data(raw_dir: str) -> dict[str, str]:
+def load_raw_data(raw_dir: str) -> tuple[dict[str, str], dict[str, str]]:
     """Load raw GDS output from text files in data/raw/."""
     raw_texts = {}
+    raw_fs_texts = {}
     
     if not os.path.exists(raw_dir):
-        return raw_texts
+        return raw_texts, raw_fs_texts
     
     for filename in sorted(os.listdir(raw_dir)):
-        if filename.endswith('.txt') and not filename.startswith('_'):
+        if filename.endswith('.txt') and not filename.startswith('_') and not filename.startswith('FTAX'):
             filepath = os.path.join(raw_dir, filename)
-            file_key = filename[:-4]
-            
             with open(filepath, 'r', encoding='utf-8') as f:
-                raw_texts[file_key] = f.read()
+                content = f.read()
+
+            if filename.endswith('_FS.txt'):
+                file_key = filename[:-7]
+                raw_fs_texts[file_key] = content
+            else:
+                file_key = filename[:-4]
+                raw_texts[file_key] = content
             
             logger.info(f"  Loaded: {filename}")
     
-    return raw_texts
+    return raw_texts, raw_fs_texts
 
 
-def process_route_data(raw_texts: dict[str, str], config: dict) -> dict:
+def process_route_data(raw_texts: dict[str, str], raw_fs_texts: dict[str, str], config: dict) -> dict:
     """Process raw text files into route data."""
     rbd_sort_order = config.get('rbd_sort_order', [])
     all_route_data = OrderedDict()
@@ -113,11 +122,16 @@ def process_route_data(raw_texts: dict[str, str], config: dict) -> dict:
         fares = result.get('fares', [])
         currency = result.get('currency')
         
+        fs_taxes = {}
+        if file_key in raw_fs_texts:
+            fs_taxes = parse_fs_tax_breakdown(raw_fs_texts[file_key])
+            
         if fares:
             grouped = group_fares_by_rbd(fares, rbd_sort_order)
             all_route_data[file_key] = {
                 'rbd_data': grouped,
-                'currency': currency
+                'currency': currency,
+                'fs_taxes': fs_taxes
             }
             ow_count = sum(1 for d in grouped.values() if d.get('ow_fare') is not None)
             rt_count = sum(1 for d in grouped.values() if d.get('rt_fare') is not None)
@@ -153,6 +167,10 @@ def main():
     arg_parser.add_argument('--output', '-o', default=None, help='Output Excel path')
     arg_parser.add_argument('--auto', action='store_true', help='Extract data from live Smartpoint')
     arg_parser.add_argument('--limit', type=int, default=0, help='Limit commands (testing)')
+    arg_parser.add_argument('--route', type=str, help='Filter commands to a specific route (e.g. DAC-MLE)')
+    arg_parser.add_argument('--only-fd', action='store_true', help='Extract only basic Fares (skip YQ/Currency FS command)')
+    arg_parser.add_argument('--only-yq', action='store_true', help='Extract only YQ and Tax Breakdown (skip Fares)')
+    arg_parser.add_argument('--only-currency', action='store_true', help='Extract only exchange rates (alias for --only-yq)')
     arg_parser.add_argument('--username', help='Smartpoint username')
     arg_parser.add_argument('--password', help='Smartpoint password')
     arg_parser.add_argument('--pcc', help='Pseudo City Code')
@@ -188,10 +206,18 @@ def main():
         commands_file = os.path.join(SCRIPT_DIR, config.get('commands_file', 'commands.txt'))
         if os.path.exists(commands_file):
             commands = load_commands(commands_file)
+            if args.route:
+                rt = args.route.upper().replace('-', '')
+                if len(rt) == 6:
+                    srf1 = f"{rt[:3]}{rt[3:]}"
+                    srf2 = f"{rt[3:]}{rt[:3]}"
+                    commands = [c for c in commands if srf1 in c['command'] or srf2 in c['command']]
+                logger.info(f"  [FILTER] Limited to route {args.route}: {len(commands)} commands remaining")
             if args.limit > 0:
                 commands = commands[:args.limit]
                 logger.info(f"  [TESTING] Limited to first {args.limit} commands")
-            logger.info(f"  {len(commands)} route commands loaded")
+            if not args.route and args.limit == 0:
+                logger.info(f"  {len(commands)} route commands loaded")
     logger.info("")
     
     # [2/4] Extraction
@@ -272,6 +298,7 @@ def main():
     # FARE MODE EXTRACTION
     else:
         raw_texts = {}
+        raw_fs_texts = {}
         if args.auto:
             logger.info("[2/4] AUTO MODE: Connecting to Smartpoint UI...")
             if not commands:
@@ -295,51 +322,150 @@ def main():
             logger.info(f"  Executing {len(commands)} commands...")
             for i, cmd in enumerate(commands, 1):
                 logger.info(f"  [{i}/{len(commands)}] {cmd['command']}")
-                
                 terminal_text = ""
-                for attempt in range(1, MAX_RETRIES + 1):
-                    try:
-                        terminal_text = automation.run_command(cmd['command'])
-                        if terminal_text and len(terminal_text.strip()) > 50:
-                            break
-                        logger.warning(f"    Attempt {attempt}: insufficient data ({len(terminal_text)} chars)")
-                    except Exception as e:
-                        logger.warning(f"    Attempt {attempt} failed: {e}")
-                    
-                    if attempt < MAX_RETRIES:
-                        logger.info(f"    Retrying in 3s...")
-                        _time.sleep(3)
-                        automation.refresh_terminal()
+                file_key = generate_file_key(cmd)
                 
-                if terminal_text and len(terminal_text.strip()) > 50:
-                    file_key = generate_file_key(cmd)
-                    raw_texts[file_key] = terminal_text
+                # ── FD EXTRACTION ──
+                if not args.only_yq and not args.only_currency:
+                    for attempt in range(1, MAX_RETRIES + 1):
+                        try:
+                            terminal_text = automation.run_command(cmd['command'])
+                            if terminal_text and len(terminal_text.strip()) > 50:
+                                break
+                            logger.warning(f"    Attempt {attempt}: insufficient data ({len(terminal_text)} chars)")
+                        except Exception as e:
+                            logger.warning(f"    Attempt {attempt} failed: {e}")
+                        
+                        if attempt < MAX_RETRIES:
+                            logger.info(f"    Retrying in 3s...")
+                            _time.sleep(3)
+                            automation.refresh_terminal()
                     
-                    backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
-                    os.makedirs(os.path.dirname(backup_path) or '.', exist_ok=True)
-                    try:
-                        with open(backup_path, 'w', encoding='utf-8') as f:
-                            f.write(terminal_text)
-                    except Exception:
-                        pass
+                    if terminal_text and len(terminal_text.strip()) > 50:
+                        raw_texts[file_key] = terminal_text
+                        
+                        backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
+                        os.makedirs(os.path.dirname(backup_path) or '.', exist_ok=True)
+                        try:
+                            with open(backup_path, 'w', encoding='utf-8') as f:
+                                f.write(terminal_text)
+                        except Exception:
+                            pass
+                    else:
+                        failed_commands.append(cmd['command'])
+                        logger.error(f"    FAILED after {MAX_RETRIES} attempts: {cmd['command']}")
                 else:
-                    failed_commands.append(cmd['command'])
-                    logger.error(f"    FAILED after {MAX_RETRIES} attempts: {cmd['command']}")
+                    logger.info("    [SKIP] Skipping FD extraction (--only-yq/--only-currency)")
+                        
+                # ── FS EXTRACTION ──
+                if not args.only_fd:
+                    # Allow extracting YQ/Currency even if FD was skipped or failed
+                    base_cmd = cmd['command'].strip()
+                    if len(base_cmd) >= 11 and base_cmd.startswith('FD') and '/' in base_cmd and len(base_cmd.split('/')[0]) == 8:
+                        src = base_cmd[2:5]
+                        dst = base_cmd[5:8]
+                        airline = base_cmd.split('/')[1][:2]
+                        
+                        fs_expanded = ""
+                        fs_date_offset = 7
+                        max_fs_date_steps = 14
+                        
+                        while fs_date_offset <= max_fs_date_steps:
+                            date_str = (datetime.now() + timedelta(days=fs_date_offset)).strftime('%d%b').upper()
+                            logger.info(f"    [FS Checkout] Extracting tax details for {src}-{dst} on {date_str}...")
+                            
+                            fs_result = automation.run_fs_command(src, dst, date_str, airline)
+                            
+                            # Freshness check: ensures terminal actually refreshed
+                            if date_str.upper() not in fs_result.upper():
+                                logger.warning(f"      [!] Screen hasn't updated to {date_str} yet. Waiting 4s...")
+                                _time.sleep(4)
+                                fs_result = automation._copy_terminal_text()
+
+                            # Log raw results for diagnostics
+                            with open("fs_debug.log", "a", encoding="utf-8") as f:
+                                f.write(f"\n--- {date_str} {src}-{dst} /{airline} ---\n")
+                                f.write(fs_result)
+                                f.write("\n" + "="*50 + "\n")
+
+                            # Identify Pricing Option blocks
+                            options_iter = re.finditer(r'PRICING\s+OPTION\s+(\d+)(.*?(?=PRICING\s+OPTION\s+\d+|$))', fs_result, re.IGNORECASE | re.DOTALL)
+                            options = list(options_iter)
+                            
+                            if not options:
+                                if fs_result and ("NO FARES FOUND" in fs_result.upper() or "CHECK ACTION CODE" in fs_result.upper()):
+                                    logger.warning(f"      [!] No FS results for {date_str}. Advancing...")
+                                    fs_date_offset += 1
+                                    _time.sleep(1)
+                                    continue
+                                else:
+                                    logger.warning(f"      [!] Waiting for terminal content...")
+                                    _time.sleep(2)
+                                    continue
+
+                            target_option_index = -1
+                            
+                            logger.info(f"      [DEBUG] Parsing {len(options)} options for {airline}...")
+                            
+                            for k, opt_match in enumerate(options):
+                                opt_num = opt_match.group(1)
+                                block = opt_match.group(2)
+                                
+                                leg_matches = re.findall(r'^\s*(\d+)\s+([A-Z0-9]{2})\s+', block, re.MULTILINE)
+                                
+                                if leg_matches:
+                                    leg_airlines = [m[1].upper().strip() for m in leg_matches]
+                                    logger.debug(f"        Option {opt_num}: {leg_airlines}")
+                                    
+                                    if all(a == airline.upper() for a in leg_airlines):
+                                        logger.info(f"      [✓] Pure {airline} itinerary found in Option {opt_num}.")
+                                        target_option_index = k
+                                        break
+                                else:
+                                    logger.debug(f"        Option {opt_num}: No flight legs detected in text block.")
+
+                            if target_option_index == -1:
+                                logger.warning(f"      [!] No pure {airline} options found on {date_str}. (Tried {len(options)} items)")
+                                fs_date_offset += 1
+                                _time.sleep(1)
+                                continue
+
+                            fs_expanded = ""
+                            for y_offset in [0, -10, 10, -20, 20]:
+                                logger.debug(f"      Attempting 'D' button click with Y-offset: {y_offset}px")
+                                current_expanded = automation.click_d_button_via_text(target_option_index, fs_result, y_offset=y_offset)
+                                
+                                if current_expanded and ("EQUBDT" in current_expanded.replace(" ", "") or "TAXES" in current_expanded):
+                                    logger.info(f"      [✓] Successfully expanded tax details via click!")
+                                    fs_expanded = current_expanded
+                                    break
+                                else:
+                                    logger.debug("        Click did not expand 'D'. Retrying with different Y-offset...")
+                            break  # Exit the while loop after attempting all y_offsets
+                            
+                        if fs_expanded and len(fs_expanded.strip()) > 50:
+                            raw_fs_texts[file_key] = fs_expanded
+                            fs_backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}_FS.txt")
+                            try:
+                                with open(fs_backup_path, 'w', encoding='utf-8') as f:
+                                    f.write(fs_expanded)
+                            except Exception:
+                                pass
             
             automation.show_completion_signal()
         
         else:
             logger.info("[2/4] MANUAL MODE: Loading raw GDS data from disk...")
-            raw_texts = load_raw_data(RAW_DATA_DIR)
+            raw_texts, raw_fs_texts = load_raw_data(RAW_DATA_DIR)
             if not raw_texts:
                 show_usage()
                 sys.exit(1)
-            logger.info(f"  Loaded {len(raw_texts)} file(s)")
+            logger.info(f"  Loaded {len(raw_texts)} fare file(s) and {len(raw_fs_texts)} tax detail file(s)")
         logger.info("")
         
         # Parse Fares
-        logger.info("[3/4] Parsing fare data...")
-        all_route_data = process_route_data(raw_texts, config)
+        logger.info("[3/4] Parsing fare and tax data...")
+        all_route_data = process_route_data(raw_texts, raw_fs_texts, config)
         if not all_route_data:
             logger.error("  No fare data could be parsed.")
             sys.exit(1)
@@ -393,7 +519,8 @@ def main():
         from tax_report import generate_tax_report
         result_path = generate_tax_report(all_route_data, output_path, changes, config)
     else:
-        result_path = generate_report(all_route_data, output_path, changes, config)
+        # Pass only_currency flag down to specifically skip the main sheets if needed
+        result_path = generate_report(all_route_data, output_path, changes, config, only_currency=args.only_currency)
     
     # Run Summary
     elapsed = _time.time() - start_time

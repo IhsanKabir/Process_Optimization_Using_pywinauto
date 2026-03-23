@@ -48,7 +48,8 @@ def generate_report(
     all_route_data: dict,
     output_path: str,
     changes: Optional[dict] = None,
-    config: Optional[dict] = None
+    config: Optional[dict] = None,
+    only_currency: bool = False
 ) -> str:
     """Generate Excel fare report grouped by international destination."""
     wb = Workbook()
@@ -59,59 +60,66 @@ def generate_report(
     rbd_sort_order = config.get('rbd_sort_order', []) if config else []
     domestic_airports = config.get('domestic_airports', ['DAC']) if config else ['DAC']
 
-    ws = wb.create_sheet(MAIN_SHEET)
-    row = 1
-
-    # ── Report header ───────────────────────────────────
-    ws.cell(row=row, column=1, value="Fare Comparison Report").font = Font(
-        name='Calibri', bold=True, size=16)
-    row += 1
-    ws.cell(row=row, column=1,
-            value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}").font = Font(
-        name='Calibri', size=10, italic=True)
-    row += 1
-
-    # Legend
-    ws.cell(row=row, column=1, value="Legend:").font = Font(
-        name='Calibri', bold=True, size=10)
-    _legend_cell(ws, row, 2, "1800 ↑ = Increased", INCREASE_FONT, INCREASE_FILL)
-    _legend_cell(ws, row, 3, "1800 ↓ = Decreased", DECREASE_FONT, DECREASE_FILL)
-    _legend_cell(ws, row, 4, "1800 NEW", NEW_FONT, NEW_FILL)
-    _legend_cell(ws, row, 5, "1800 SOLD OUT", SOLD_OUT_FONT, SOLD_OUT_FILL)
-    row += 2
-
-    # ── Group routes by (intl_airport, direction) ───────
-    # direction: 'outbound' = domestic→intl, 'inbound' = intl→domestic
-    sections = _group_by_international(
-        all_route_data, domestic_airports)
-
     cell_locations = {}
-    freeze_row = row  # freeze here
+    
+    if not only_currency:
+        ws = wb.create_sheet(MAIN_SHEET)
+        row = 1
 
-    for section_key in sorted(sections.keys()):
-        entries = sections[section_key]
-        intl_code, direction = section_key
-        row, locs = _write_section(
-            ws, row, intl_code, direction, entries,
-            airline_names, city_names, domestic_airports,
-            rbd_sort_order, changes
-        )
-        cell_locations.update(locs)
+        # ── Report header ───────────────────────────────────
+        ws.cell(row=row, column=1, value="Fare Comparison Report").font = Font(
+            name='Calibri', bold=True, size=16)
+        row += 1
+        ws.cell(row=row, column=1,
+                value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}").font = Font(
+            name='Calibri', size=10, italic=True)
+        row += 1
+
+        # Legend
+        ws.cell(row=row, column=1, value="Legend:").font = Font(
+            name='Calibri', bold=True, size=10)
+        _legend_cell(ws, row, 2, "1800 ↑ = Increased", INCREASE_FONT, INCREASE_FILL)
+        _legend_cell(ws, row, 3, "1800 ↓ = Decreased", DECREASE_FONT, DECREASE_FILL)
+        _legend_cell(ws, row, 4, "1800 NEW", NEW_FONT, NEW_FILL)
+        _legend_cell(ws, row, 5, "1800 SOLD OUT", SOLD_OUT_FONT, SOLD_OUT_FILL)
         row += 2
 
-    ws.freeze_panes = f"A{freeze_row}"
-    _auto_fit_columns(ws)
+        # ── Group routes by (intl_airport, direction) ───────
+        # direction: 'outbound' = domestic→intl, 'inbound' = intl→domestic
+        sections = _group_by_international(
+            all_route_data, domestic_airports)
 
-    # ── Individual Tables sheet (per-airline, side-by-side) ──
-    ws_ind = wb.create_sheet("Individual Tables")
-    _write_individual_tables_sheet(
-        ws_ind, all_route_data, sections,
-        airline_names, city_names, rbd_sort_order, domestic_airports, changes
-    )
-    _auto_fit_columns(ws_ind)
+        freeze_row = row  # freeze here
+
+        for section_key in sorted(sections.keys()):
+            entries = sections[section_key]
+            intl_code, direction = section_key
+            row, locs = _write_section(
+                ws, row, intl_code, direction, entries,
+                airline_names, city_names, domestic_airports,
+                rbd_sort_order, changes
+            )
+            cell_locations.update(locs)
+            row += 2
+
+        ws.freeze_panes = f"A{freeze_row}"
+        _auto_fit_columns(ws)
+
+        # ── Individual Tables sheet (per-airline, side-by-side) ──
+        ws_ind = wb.create_sheet("Individual Tables")
+        _write_individual_tables_sheet(
+            ws_ind, all_route_data, sections,
+            airline_names, city_names, rbd_sort_order, domestic_airports, changes
+        )
+        _auto_fit_columns(ws_ind)
+    
+    # ── Currency Conversion Sheet ───────────────────────
+    ws_cur = wb.create_sheet("Currency Conversion")
+    _write_currency_sheet(ws_cur, all_route_data, airline_names, city_names)
+    _auto_fit_columns(ws_cur)
 
     # ── Changes Summary sheet ───────────────────────────
-    if changes and any(changes.values()):
+    if not only_currency and changes and any(changes.values()):
         ws_ch = wb.create_sheet("Changes Summary")
         _write_changes_summary(ws_ch, changes, airline_names, city_names, cell_locations)
         _auto_fit_columns(ws_ch)
@@ -403,6 +411,83 @@ def _auto_fit_columns(ws, min_width=10, max_width=30):
         ws.column_dimensions[cl].width = ml
 
 
+# ── Currency Conversion Sheet ───────────────────────────
+def _write_currency_sheet(ws, all_route_data, airline_names, city_names):
+    """
+    Writes a simplified 2-column Currency Conversion sheet exactly 
+    matching the user's requested layout:
+      Current Date
+      16-Mar-26
+      Currency | Exchange Rate To BDT
+      1 KWD    | 400.31968
+    """
+    # 1. Deduplicate exchange rates. We only need 1 entry per base currency
+    rates = {}
+    for route_key, info in all_route_data.items():
+        fs_taxes = info.get('fs_taxes', {})
+        if not fs_taxes or not fs_taxes.get('exchange_rate'):
+            continue
+            
+        base_cur = fs_taxes.get('base_currency')
+        rate = fs_taxes.get('exchange_rate')
+        if base_cur and rate:
+            # If there's an existing one, just keep the first we find
+            if base_cur not in rates:
+                rates[base_cur] = rate
+
+    row = 1
+    
+    # "Current Date" Header spanning 2 columns
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+    sc1 = ws.cell(row=row, column=1, value="Current Date")
+    sc1.font = Font(name='Calibri', bold=True, size=14)
+    sc1.alignment = Alignment(horizontal='center')
+    sc1.border = THIN_BORDER
+    ws.cell(row=row, column=2).border = THIN_BORDER
+    row += 1
+    
+    # The Date itself spanning 2 columns
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+    dt_str = datetime.now().strftime('%d-%b-%y')
+    sc2 = ws.cell(row=row, column=1, value=dt_str)
+    sc2.font = Font(name='Calibri', bold=True, size=14)
+    sc2.alignment = Alignment(horizontal='center')
+    sc2.border = THIN_BORDER
+    ws.cell(row=row, column=2).border = THIN_BORDER
+    row += 1
+    
+    # Table Headers
+    h1 = ws.cell(row=row, column=1, value="Currency")
+    h1.font = Font(name='Calibri', bold=True, size=14)
+    h1.alignment = Alignment(horizontal='center', vertical='center')
+    h1.border = THIN_BORDER
+    
+    h2 = ws.cell(row=row, column=2, value="Exchange Rate To BDT")
+    h2.font = Font(name='Calibri', bold=True, size=14)
+    h2.alignment = Alignment(horizontal='center', vertical='center')
+    h2.border = THIN_BORDER
+    row += 1
+    
+    # Data Rows
+    for cur, rate in sorted(rates.items()):
+        c1 = ws.cell(row=row, column=1, value=f"1 {cur}")
+        c1.font = Font(name='Calibri', bold=True, size=14)
+        c1.alignment = Alignment(horizontal='center')
+        c1.border = THIN_BORDER
+        
+        c2 = ws.cell(row=row, column=2, value=rate)
+        c2.font = Font(name='Calibri', bold=True, size=14)
+        c2.alignment = Alignment(horizontal='center')
+        c2.border = THIN_BORDER
+        c2.number_format = '0.000000'
+        
+        row += 1
+        
+    # Auto-fit specifically for this tiny sheet
+    ws.column_dimensions['A'].width = 15
+    ws.column_dimensions['B'].width = 30
+
+
 # ── Individual Tables Sheet ─────────────────────────────
 def _write_individual_tables_sheet(
     ws, all_route_data, sections,
@@ -432,7 +517,7 @@ def _write_individual_tables_sheet(
         name='Calibri', size=10, italic=True)
     current_row += 2
     
-    TABLE_WIDTH = 3  # RBD, OW, RT
+    TABLE_WIDTH = 7  # RBD, OW/USD, YQ/OW, OW/Gross, RT/USD, YQ/RT, RT/Gross
     GAP = 1          # 1 empty column between tables
     
     for section_key in sorted(sections.keys()):
@@ -463,6 +548,18 @@ def _write_individual_tables_sheet(
         
         col_offset = 1
         for airline, domestic, route_key, route_info in entries:
+            # First, check if valid fs_taxes exist to determine table width
+            fs_taxes = route_info.get('fs_taxes', {}) if isinstance(route_info, dict) else {}
+            yq_charge = fs_taxes.get('yq_charge', 0)
+            yr_charge = fs_taxes.get('yr_charge', 0)
+            q_charge = fs_taxes.get('q_charge', 0)
+            yq_total = yq_charge + yr_charge + q_charge
+            
+            has_yq = yq_total > 0
+            # Width is 7 if has_yq (RBD, OW, WithYQ, Gross, RT, WithYQ, Gross)
+            # Width is 5 if no yq (RBD, OW, Gross, RT, Gross)
+            this_table_width = 7 if has_yq else 5
+            
             al_name = airline_names.get(airline, airline)
             dom_name = city_names.get(domestic, domestic)
             currency = route_info.get('currency', 'USD') if isinstance(route_info, dict) else 'USD'
@@ -499,21 +596,69 @@ def _write_individual_tables_sheet(
             title_cell = ws.cell(row=row, column=col_offset, value=table_title)
             title_cell.font = Font(name='Calibri', bold=True, size=11)
             ws.merge_cells(start_row=row, start_column=col_offset,
-                           end_row=row, end_column=col_offset + TABLE_WIDTH - 1)
+                           end_row=row, end_column=col_offset + this_table_width - 1)
             row += 1
             
+            # Tax & Charge Summary Row (User request: Add at the top)
+            yq_str = f"YQ:{yq_charge} YR:{yr_charge} Q:{q_charge}" if yq_total > 0 else "None"
+            tax_map = fs_taxes.get('tax_breakdown', {})
+            tax_breakdown_str = " ".join([f"{k}{v}" for k, v in tax_map.items()])
+            total_tax_val = fs_taxes.get('total_taxes', 0)
+            
+            sum_text = f"Charges (BDT): {yq_str} | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): {total_tax_val}"
+            summary_cell = ws.cell(row=row, column=col_offset, value=sum_text)
+            summary_cell.font = Font(name='Calibri', size=9, italic=True)
+            ws.merge_cells(start_row=row, start_column=col_offset,
+                           end_row=row, end_column=col_offset + this_table_width - 1)
+            row += 1
+
             # Column headers
             _styled_cell(ws, row, col_offset, "RBD", HEADER_FONT, HEADER_FILL)
-            _styled_cell(ws, row, col_offset + 1, f"OW/{currency}", HEADER_FONT, HEADER_FILL,
-                         alignment=Alignment(horizontal='center'))
-            _styled_cell(ws, row, col_offset + 2, f"RT/{currency}", HEADER_FONT, HEADER_FILL,
-                         alignment=Alignment(horizontal='center'))
+            _styled_cell(ws, row, col_offset + 1, f"OW/{currency}", HEADER_FONT, HEADER_FILL, alignment=Alignment(horizontal='center'))
+            
+            current_col = col_offset + 2
+            if has_yq:
+                _styled_cell(ws, row, current_col, f"With YQ/OW({currency})", HEADER_FONT, HEADER_FILL, alignment=Alignment(horizontal='center'))
+                current_col += 1
+            
+            _styled_cell(ws, row, current_col, f"OW/Gross(BDT)", HEADER_FONT, HEADER_FILL, alignment=Alignment(horizontal='center'))
+            current_col += 1
+            
+            _styled_cell(ws, row, current_col, f"RT/{currency}", HEADER_FONT, HEADER_FILL, alignment=Alignment(horizontal='center'))
+            current_col += 1
+            
+            if has_yq:
+                _styled_cell(ws, row, current_col, f"With YQ/RT({currency})", HEADER_FONT, HEADER_FILL, alignment=Alignment(horizontal='center'))
+                current_col += 1
+                
+            _styled_cell(ws, row, current_col, f"RT/Gross(BDT)", HEADER_FONT, HEADER_FILL, alignment=Alignment(horizontal='center'))
             row += 1
+            
+            # Extract calculations
+            exchange_rate = fs_taxes.get('exchange_rate', 1.0)
+            yq_ow = yq_total
+            tax_ow = total_tax_val
+            
+            # Fetch inbound taxes for RT math
+            inbound_tax_total = 0
+            parts = route_key.split('_', 1)
+            if len(parts) == 2 and '-' in parts[1]:
+                origin, dest = parts[1].split('-', 1)
+                inbound_key = f"{parts[0]}_{dest}-{origin}"
+                inbound_info = all_route_data.get(inbound_key, {})
+                inbound_taxes = inbound_info.get('fs_taxes', {})
+                inbound_tax_total = inbound_taxes.get('total_taxes', 0)
+            
+            yq_rt = yq_ow * 2
+            tax_rt = tax_ow + inbound_tax_total
+            
+            # Convert BDT YQ amounts to Base Currency (USD) for the "With YQ" column
+            yq_ow_usd = (yq_ow / exchange_rate) if exchange_rate else 0
+            yq_rt_usd = (yq_rt / exchange_rate) if exchange_rate else 0
             
             # Data rows
             for rbd in sorted_rbds:
                 rbd_info = rbd_data.get(rbd)
-                
                 change_info = changes.get(route_key, {}).get(rbd) if changes else None
                 change_type = change_info.get('type') if change_info else None
                 
@@ -523,18 +668,42 @@ def _write_individual_tables_sheet(
                     ow = change_info.get('old_ow_fare')
                     rt = change_info.get('old_rt_fare')
                 
-                ws.cell(row=row, column=col_offset, value=rbd).font = Font(
-                    name='Calibri', bold=True)
+                ws.cell(row=row, column=col_offset, value=rbd).font = Font(name='Calibri', bold=True)
                 ws.cell(row=row, column=col_offset).border = THIN_BORDER
                 
+                # Base OW
                 _write_fare_cell(ws, row, col_offset + 1, ow, change_type)
-                _write_fare_cell(ws, row, col_offset + 2, rt, change_type)
+                
+                current_data_col = col_offset + 2
+                if has_yq:
+                    ow_yq_val = (ow + yq_ow_usd) if ow else None
+                    _write_fare_cell(ws, row, current_data_col, ow_yq_val, None)
+                    current_data_col += 1
+                
+                # Gross OW
+                ow_gross_val = ((ow * exchange_rate) + tax_ow) if ow else None
+                _write_fare_cell(ws, row, current_data_col, ow_gross_val, None)
+                current_data_col += 1
+                
+                # Base RT
+                _write_fare_cell(ws, row, current_data_col, rt, change_type)
+                current_data_col += 1
+                
+                if has_yq:
+                    rt_yq_val = (rt + yq_rt_usd) if rt else None
+                    _write_fare_cell(ws, row, current_data_col, rt_yq_val, None)
+                    current_data_col += 1
+                
+                # Gross RT
+                rt_gross_val = ((rt * exchange_rate) + tax_rt) if rt else None
+                _write_fare_cell(ws, row, current_data_col, rt_gross_val, None)
+                
                 row += 1
             
             table_height = row - table_start_row
             max_rows_in_group = max(max_rows_in_group, table_height)
             
-            col_offset += TABLE_WIDTH + GAP
+            col_offset += this_table_width + GAP
         
         # Move to next section (below the tallest table)
         current_row = table_start_row + max_rows_in_group + 2

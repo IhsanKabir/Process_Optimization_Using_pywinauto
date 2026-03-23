@@ -1,7 +1,28 @@
+# Python
 __pycache__/
 *.pyc
-data/logs/
-data/raw/
-data/reports/
-data/archive/
-.DS_Store
+
+# Local Data and Reports
+data/
+!data/raw/
+!data/reports/
+!data/archive/
+!data/logs/
+data/raw/*
+data/reports/*
+data/archive/*
+data/logs/*
+
+# Configs and Scripts (Local)
+config.json
+commands.txt
+
+# Temp & Debug Files
+*.log
+*.png
+tree_dump.txt
+test_*.py
+*probe*.py
+*debug*.py
+get_d_coords.py
+find_d_button.py

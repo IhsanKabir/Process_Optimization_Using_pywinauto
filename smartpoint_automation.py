@@ -156,19 +156,20 @@ class SmartpointAutomation:
         if not self.window:
             return ""
             
-        # Get window coordinates — click in the terminal body area
+        # Get window coordinates — click in a SAFE area (top-left)
+        # NEVER click in the center: FS results have clickable D/R/+1 links there
+        # that trigger "Unable to display Branded Fares" dialogs
         try:
             rect = self.window.rectangle()
-            center_x = rect.left + (rect.width() // 2)
-            # Click in the middle vertically (the terminal text area)
-            center_y = rect.top + (rect.height() // 2)
+            safe_x = rect.left + 50   # Far left — no interactive links here
+            safe_y = rect.top + 30    # Near top — above any FS result content
         except Exception:
             screen_width, screen_height = pyautogui.size()
-            center_x = screen_width // 2
-            center_y = screen_height // 2
+            safe_x = 50
+            safe_y = 50
         
-        # Click to focus the terminal area
-        pyautogui.click(x=center_x, y=center_y, duration=0.2)
+        # Click to focus the terminal area (safe position)
+        pyautogui.click(x=safe_x, y=safe_y, duration=0.2)
         time.sleep(0.3)
         
         # Select all + copy
@@ -432,6 +433,200 @@ class SmartpointAutomation:
         self.logger.debug(f"      Accumulated {len(all_pages_text)} pages, {len(combined)} total chars.")
         
         return combined
+
+    def run_fs_command(self, src: str, dst: str, date: str, airline: str) -> str:
+        """
+        Run an FS (Flight Shopping) command.
+        Example: FSDAC28MAYMLE/BS
+        
+        Returns the raw terminal output showing the Pricing Options.
+        """
+        if not self.focus():
+            return ""
+
+        command = f"FS{src}{date}{dst}/{airline}"
+        self.logger.info(f"    Extracting FS pricing: {command}")
+        
+        pyautogui.typewrite(command, interval=0.05)
+        pyautogui.press('enter')
+        time.sleep(10.0)  # FS results can be very slow to load completely
+        
+        return self._copy_terminal_text()
+        
+    def expand_fs_tax_breakdown(self, tabs_to_press: int) -> str:
+        """
+        Press Tab 'tabs_to_press' times to reach the 'D' (Tax Breakdown) 
+        button for a specific Pricing Option in an FS display, and press Enter.
+        
+        Returns the expanded terminal text containing YQ and Tax Breakdown.
+        """
+        if not self.focus():
+            return ""
+            
+        self.logger.debug(f"      Tabbing {tabs_to_press} times to reach 'D' button...")
+        
+        # Reset tab position by clicking the terminal to ensure focus is at the top
+        self.focus() 
+        pyautogui.press('escape')
+        time.sleep(0.2)
+        
+        for _ in range(tabs_to_press):
+            pyautogui.press('tab', interval=0.05)
+            
+        pyautogui.press('enter')
+        time.sleep(4.0)  # Wait for the inline tax breakdown to expand
+        return self._copy_terminal_text()
+
+    def click_d_button_via_text(self, option_index: int, raw_text: str, y_offset: int = 0) -> str:
+        """
+        Finds the 'D' button by scanning the screen for green/cyan terminal text using numpy.
+        ClearType-aware: uses a relaxed color filter that catches anti-aliased text pixels.
+        Identifies D buttons as thin pixel clusters (width <= 10px) at a consistent X position.
+        """
+        if not self.focus():
+            return ""
+            
+        self.logger.info(f"      [COLOR SCAN] Finding 'D' button for Option {option_index + 1}...")
+        
+        # CLEAR TEXT SELECTION: Ctrl+A highlight turns the background blue, 
+        # which breaks the color scanner. We must click a safe area and press Escape.
+        import pyautogui
+        try:
+            rect = self.window.rectangle()
+            # Click bottom-left corner of the terminal (usually safe/empty)
+            safe_x = rect.left + 50
+            safe_y = rect.bottom - 30
+        except Exception:
+            safe_x, safe_y = 50, 1000
+            
+        pyautogui.click(x=safe_x, y=safe_y)
+        pyautogui.press('escape', presses=3, interval=0.1)
+        time.sleep(0.5)
+        
+        import numpy as np
+        from PIL import ImageGrab
+        
+        # Take a screenshot and convert to numpy array
+        screenshot = ImageGrab.grab()
+        # Save debug screenshot so we can see what the scanner sees
+        screenshot.save("debug_cyan_scan.png")
+        
+        img = np.array(screenshot)
+        r_ch, g_ch, b_ch = img[:,:,0], img[:,:,1], img[:,:,2]
+        
+        # ClearType-aware filter for green/cyan terminal text
+        # Background: RGB(0,53,48) — max=53. Text pixels are significantly brighter.
+        mask = (
+            (np.maximum(g_ch, b_ch) > 100) &  # Brighter than background
+            (g_ch > r_ch) &                     # Green-dominated (not white/yellow)
+            ((g_ch.astype(int) + b_ch.astype(int)) > 200)  # Combined brightness
+        )
+        
+        cyan_ys, cyan_xs = np.where(mask)
+        self.logger.debug(f"      Found {len(cyan_xs)} green/cyan pixels on screen.")
+        
+        if len(cyan_xs) == 0:
+            self.logger.error("      [ERROR] No green/cyan pixels found.")
+            return ""
+            
+        # Filter out vertical lines (borders/scrollbars) that bridge rows together
+        import collections
+        x_counts = collections.Counter(cyan_xs)
+        valid_x = set(x for x, count in x_counts.items() if count < 100)
+        
+        # Group into horizontal rows (within 8px vertically)
+        positions = [(int(x), int(y)) for x, y in zip(cyan_xs, cyan_ys) if x in valid_x]
+        positions.sort(key=lambda p: p[1])
+        
+        rows = []
+        if positions:
+            current_row = [positions[0]]
+            for pos in positions[1:]:
+                if pos[1] - current_row[-1][1] <= 8:
+                    current_row.append(pos)
+                else:
+                    rows.append(current_row)
+                    current_row = [pos]
+            rows.append(current_row)
+        
+        # Sub-cluster analysis: split each row into horizontal sub-clusters
+        all_thin = []  # (center_x, center_y, width)
+        for row in rows:
+            row.sort(key=lambda p: p[0])
+            sub_clusters = []
+            cur = [row[0]]
+            for p in row[1:]:
+                if p[0] - cur[-1][0] <= 25:
+                    cur.append(p)
+                else:
+                    sub_clusters.append(cur)
+                    cur = [p]
+            sub_clusters.append(cur)
+            
+            for sc in sub_clusters:
+                sc_left = min(p[0] for p in sc)
+                sc_right = max(p[0] for p in sc)
+                sc_width = sc_right - sc_left
+                if 4 <= sc_width <= 20:  # Single character width (D or R) 
+                    cx = (sc_left + sc_right) // 2
+                    cy = sum(p[1] for p in sc) // len(sc)
+                    all_thin.append((cx, cy, sc_width))
+        
+        self.logger.debug(f"      Found {len(all_thin)} thin clusters (width 4-20px).")
+        
+        # Group thin clusters by X position (within 5px) to find the D column
+        # D buttons all appear at the same X coordinate across options
+        from collections import Counter
+        x_groups = Counter()
+        for cx, cy, w in all_thin:
+            x_groups[(cx // 10) * 10] += 1  # Round to nearest 10px to be safe
+        
+        if not x_groups:
+            self.logger.error("      [ERROR] No thin clusters found.")
+            return ""
+        
+        # The D button is the RIGHTMOST column of thin clusters.
+        # Find all columns that have at least 3 members (likely a column of buttons)
+        valid_columns = [x for x, count in x_groups.items() if count >= 3]
+        
+        # If none have 3 (maybe only 1 or 2 options displayed), just take the rightmost one
+        if not valid_columns:
+            valid_columns = [x for x, count in x_groups.items()]
+            
+        # The D column is the one largest X value (furthest right on screen)
+        target_x = max(valid_columns)
+        
+        # Filter to thin clusters at that X position (within 10px)
+        d_buttons = [(cx, cy) for cx, cy, w in all_thin 
+                     if abs(cx - target_x) <= 15]
+        d_buttons.sort(key=lambda p: p[1])  # Sort by Y (top to bottom)
+        
+        self.logger.debug(f"      D-button column at X~{target_x}: {len(d_buttons)} buttons found.")
+        for i, (dx, dy) in enumerate(d_buttons):
+            self.logger.debug(f"        [{i}] X={dx}, Y={dy}")
+        
+        if option_index < len(d_buttons):
+            click_x, click_y = d_buttons[option_index]
+            self.logger.info(f"      [COLOR SCAN] Clicking Option {option_index + 1} D at X={click_x}, Y={click_y}")
+            
+            # Dismiss any open dialog boxes first
+            try:
+                dialog = self.window.child_window(control_type="Window")
+                if dialog.exists(timeout=0.5):
+                    self.logger.warning("      [!] Dialog box detected - dismissing.")
+                    pyautogui.press('escape')
+                    time.sleep(0.5)
+            except Exception:
+                pass
+            
+            pyautogui.moveTo(click_x, click_y, duration=0.4)
+            pyautogui.click()
+            
+            time.sleep(5.0)
+            return self._copy_terminal_text()
+        else:
+            self.logger.error(f"      [ERROR] Only found {len(d_buttons)} D buttons, need index {option_index}.")
+            return ""
     
     def return_to_tax_list(self, country_code: str):
         """Re-send FTAX-{CC} to return to the tax type list page."""
