@@ -168,6 +168,7 @@ def main():
     arg_parser.add_argument('--auto', action='store_true', help='Extract data from live Smartpoint')
     arg_parser.add_argument('--limit', type=int, default=0, help='Limit commands (testing)')
     arg_parser.add_argument('--route', type=str, help='Filter commands to a specific route (e.g. DAC-MLE)')
+    arg_parser.add_argument('--airline', type=str, help='Filter to specific airline(s), comma-separated (e.g. BG or BG,BS)')
     arg_parser.add_argument('--only-fd', action='store_true', help='Extract only basic Fares (skip YQ/Currency FS command)')
     arg_parser.add_argument('--only-yq', action='store_true', help='Extract only YQ and Tax Breakdown (skip Fares)')
     arg_parser.add_argument('--only-currency', action='store_true', help='Extract only exchange rates (alias for --only-yq)')
@@ -213,6 +214,10 @@ def main():
                     srf2 = f"{rt[3:]}{rt[:3]}"
                     commands = [c for c in commands if srf1 in c['command'] or srf2 in c['command']]
                 logger.info(f"  [FILTER] Limited to route {args.route}: {len(commands)} commands remaining")
+            if args.airline:
+                airlines = [a.strip().upper() for a in args.airline.split(',')]
+                commands = [c for c in commands if any(f'/{al}' in c['command'].upper() for al in airlines)]
+                logger.info(f"  [FILTER] Limited to airline(s) {args.airline}: {len(commands)} commands remaining")
             if args.limit > 0:
                 commands = commands[:args.limit]
                 logger.info(f"  [TESTING] Limited to first {args.limit} commands")
@@ -337,8 +342,8 @@ def main():
                             logger.warning(f"    Attempt {attempt} failed: {e}")
                         
                         if attempt < MAX_RETRIES:
-                            logger.info(f"    Retrying in 3s...")
-                            _time.sleep(3)
+                            logger.info(f"    Retrying in 1.5s...")
+                            _time.sleep(1.5)
                             automation.refresh_terminal()
                     
                     if terminal_text and len(terminal_text.strip()) > 50:
@@ -378,8 +383,8 @@ def main():
                             
                             # Freshness check: ensures terminal actually refreshed
                             if date_str.upper() not in fs_result.upper():
-                                logger.warning(f"      [!] Screen hasn't updated to {date_str} yet. Waiting 4s...")
-                                _time.sleep(4)
+                                logger.warning(f"      [!] Screen hasn't updated to {date_str} yet. Waiting 1.5s...")
+                                _time.sleep(1.5)
                                 fs_result = automation._copy_terminal_text()
 
                             # Log raw results for diagnostics
@@ -393,14 +398,14 @@ def main():
                             options = list(options_iter)
                             
                             if not options:
-                                if fs_result and ("NO FARES FOUND" in fs_result.upper() or "CHECK ACTION CODE" in fs_result.upper()):
-                                    logger.warning(f"      [!] No FS results for {date_str}. Advancing...")
-                                    fs_date_offset += 1
-                                    _time.sleep(1)
-                                    continue
+                                if fs_result and any(kw in fs_result.upper() for kw in
+                                                     ["NO FARES FOUND", "CHECK ACTION CODE", "INVALID"]):
+                                    logger.warning(f"      [!] No valid FS results for {date_str}. Skipping.")
+                                    break  # Don't retry — move on
                                 else:
-                                    logger.warning(f"      [!] Waiting for terminal content...")
-                                    _time.sleep(2)
+                                    logger.warning(f"      [!] Waiting for terminal content (offset {fs_date_offset})...")
+                                    fs_date_offset += 1
+                                    _time.sleep(0.5)
                                     continue
 
                             target_option_index = -1
@@ -427,21 +432,20 @@ def main():
                             if target_option_index == -1:
                                 logger.warning(f"      [!] No pure {airline} options found on {date_str}. (Tried {len(options)} items)")
                                 fs_date_offset += 1
-                                _time.sleep(1)
+                                _time.sleep(0.5)
                                 continue
 
-                            fs_expanded = ""
-                            for y_offset in [0, -10, 10, -20, 20]:
-                                logger.debug(f"      Attempting 'D' button click with Y-offset: {y_offset}px")
-                                current_expanded = automation.click_d_button_via_text(target_option_index, fs_result, y_offset=y_offset)
-                                
-                                if current_expanded and ("EQUBDT" in current_expanded.replace(" ", "") or "TAXES" in current_expanded):
-                                    logger.info(f"      [✓] Successfully expanded tax details via click!")
-                                    fs_expanded = current_expanded
-                                    break
-                                else:
-                                    logger.debug("        Click did not expand 'D'. Retrying with different Y-offset...")
-                            break  # Exit the while loop after attempting all y_offsets
+                            # Click the D button using text-to-coordinate mapping
+                            fs_expanded = automation.click_d_button(target_option_index, fs_result)
+                            
+                            # Validate: D expansion should contain tax/fare data
+                            D_KEYWORDS = ["EQU", "TAXES", "TAX", "YQ", "FARE", "BASIS"]
+                            if fs_expanded and any(kw in fs_expanded.upper() for kw in D_KEYWORDS):
+                                logger.info(f"      [✓] Tax breakdown extracted via D-click")
+                            else:
+                                logger.warning(f"      [!] D-click did not return expected tax data.")
+                                fs_expanded = ""
+                            break  # Exit the date-stepping while loop
                             
                         if fs_expanded and len(fs_expanded.strip()) > 50:
                             raw_fs_texts[file_key] = fs_expanded

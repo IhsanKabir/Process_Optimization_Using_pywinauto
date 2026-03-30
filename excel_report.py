@@ -275,12 +275,13 @@ def _write_section(
 
 # ── Cell helpers ────────────────────────────────────────
 def _fmt_fare(fare):
-    """Format fare: 1800.0 → '1,800', 1800.50 → '1,800.50', None → ''."""
-    if fare is None:
+    """Format fare: 1800.0 → '1,800', None → ''."""
+    if fare is None or fare == "":
         return ""
-    if fare == int(fare):
-        return f"{int(fare):,}"
-    return f"{fare:,.2f}"
+    try:
+        return f"{int(round(float(fare))):,}"
+    except (ValueError, TypeError):
+        return str(fare)
 
 
 def _write_fare_cell(ws, row, col, fare, change_type):
@@ -600,14 +601,20 @@ def _write_individual_tables_sheet(
             row += 1
             
             # Tax & Charge Summary Row (User request: Add at the top)
-            yq_str = f"YQ:{yq_charge} YR:{yr_charge} Q:{q_charge}" if yq_total > 0 else "None"
+            yq_str = f"YQ:{int(yq_charge)} YR:{int(yr_charge)} Q:{int(q_charge)}" if yq_total > 0 else "None"
             tax_map = fs_taxes.get('tax_breakdown', {})
-            tax_breakdown_str = " ".join([f"{k}{v}" for k, v in tax_map.items()])
-            total_tax_val = fs_taxes.get('total_taxes', 0)
+            tax_breakdown_str = " ".join([f"{k}{int(float(v)) if str(v).replace('.', '', 1).isdigit() else v}" for k, v in tax_map.items()])
+            total_tax_val = int(fs_taxes.get('total_taxes', 0))
             
-            sum_text = f"Charges (BDT): {yq_str} | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): {total_tax_val}"
-            summary_cell = ws.cell(row=row, column=col_offset, value=sum_text)
-            summary_cell.font = Font(name='Calibri', size=9, italic=True)
+            rt_val = CellRichText(
+                TextBlock(InlineFont(sz=9, i=True), "Charges (BDT): "),
+                TextBlock(InlineFont(sz=9, b=True, i=True, color='FF6600'), yq_str),
+                TextBlock(InlineFont(sz=9, i=True), f" | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): "),
+                TextBlock(InlineFont(sz=9, b=True, i=True, color='CC0000'), str(total_tax_val))
+            )
+            
+            summary_cell = ws.cell(row=row, column=col_offset)
+            summary_cell.value = rt_val
             ws.merge_cells(start_row=row, start_column=col_offset,
                            end_row=row, end_column=col_offset + this_table_width - 1)
             row += 1
