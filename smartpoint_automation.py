@@ -25,6 +25,7 @@ class SmartpointAutomation:
         self.connected = False
         self.logged_in = False
         self.logger = logging.getLogger('travelport.automation')
+        self._cached_terminal_rect = None  # Cache for SmartRichTextBox rect
         
         # Ensure PyAutoGUI fail-safe is enabled. 
         # User can slam mouse to any corner of the screen to throw FailSafeException and abort.
@@ -69,11 +70,47 @@ class SmartpointAutomation:
                 user32.SetForegroundWindow(hwnd)
                 
             self.window.set_focus()
-            time.sleep(1.0) # Allow plenty of time for window to come forward
+            time.sleep(0.3) # Brief wait for window to come forward
             return True
         except Exception as e:
             self.logger.info(f"  [ERROR] Could not focus Smartpoint window: {e}")
             return False
+    
+    def _get_terminal_rect(self):
+        """
+        Get the bounding rectangle of the main terminal text area (SmartRichTextBox).
+        
+        Caches the result after the first successful scan to avoid repeated
+        slow UI tree walks (~2-5s each via descendants()).
+        """
+        if self._cached_terminal_rect:
+            return self._cached_terminal_rect
+        
+        try:
+            best_rect = None
+            best_area = 0
+            for doc in self.window.descendants(control_type="Document"):
+                try:
+                    if doc.element_info.automation_id == "SmartRichTextBox":
+                        r = doc.rectangle()
+                        area = r.width() * r.height()
+                        if area > best_area and r.width() > 100 and r.height() > 100:
+                            best_rect = r
+                            best_area = area
+                except Exception:
+                    pass
+            
+            if best_rect:
+                self.logger.debug(f"      [RECT] Terminal pane: L={best_rect.left} T={best_rect.top} "
+                                f"R={best_rect.right} B={best_rect.bottom}")
+                self._cached_terminal_rect = best_rect
+                return best_rect
+        except Exception as e:
+            self.logger.debug(f"      [RECT] Error finding SmartRichTextBox: {e}")
+        
+        # Fallback: use window rect (don't cache this)
+        self.logger.debug("      [RECT] Falling back to window rectangle")
+        return self.window.rectangle()
 
     def login(self, username: str, password: str, pcc: str | None = None) -> bool:
         """
@@ -137,9 +174,9 @@ class SmartpointAutomation:
         
         # Sending 'I' completely refreshes the Travelport Smartpoint terminal
         print("  [DEBUG] Refreshing terminal with 'I' command...")
-        pyautogui.typewrite("I", interval=0.05)
+        pyautogui.typewrite("I", interval=0.03)
         pyautogui.press('enter')
-        time.sleep(2.0) # Wait for refresh to complete
+        time.sleep(1.0) # Wait for refresh to complete
 
     def refresh_terminal(self):
         """Alias for clear_screen for compatibility."""
@@ -148,7 +185,7 @@ class SmartpointAutomation:
     def _copy_terminal_text(self) -> str:
         """Helper to copy text from the terminal via clipboard using mouse automation."""
         pyperclip.copy("")
-        time.sleep(0.3)
+        time.sleep(0.1)
         
         # Ensure focus hasn't been lost
         self.focus()
@@ -169,21 +206,21 @@ class SmartpointAutomation:
             safe_y = 50
         
         # Click to focus the terminal area (safe position)
-        pyautogui.click(x=safe_x, y=safe_y, duration=0.2)
-        time.sleep(0.3)
+        pyautogui.click(x=safe_x, y=safe_y, duration=0.1)
+        time.sleep(0.15)
         
         # Select all + copy
-        pyautogui.hotkey('ctrl', 'a', interval=0.1)
-        time.sleep(0.8)
-        pyautogui.hotkey('ctrl', 'c', interval=0.1)
-        time.sleep(1.0)
+        pyautogui.hotkey('ctrl', 'a', interval=0.05)
+        time.sleep(0.3)
+        pyautogui.hotkey('ctrl', 'c', interval=0.05)
+        time.sleep(0.5)
         
         text = pyperclip.paste()
         self.logger.debug(f"      [DEBUG] Extracted {len(text)} characters from clipboard")
         
         # Click once to deselect
         pyautogui.press('escape')
-        time.sleep(0.2)
+        time.sleep(0.1)
             
         return text
         
@@ -215,32 +252,45 @@ class SmartpointAutomation:
 
         self.logger.debug(f"    Running: {command}")
         
-        # Send the initial command using PyAutoGUI
-        pyautogui.typewrite(command, interval=0.05)
+        # Send 'I' first to clear any previous terminal state cleanly
+        pyautogui.typewrite("I", interval=0.03)
+        pyautogui.press('enter')
+        time.sleep(1.0)
+        
+        # Send the actual command
+        pyautogui.typewrite(command, interval=0.03)
         pyautogui.press('enter')
         
         # Wait for the terminal to respond
-        time.sleep(4.0) 
+        time.sleep(2.0)
         
         # Capture initial response
         initial_text = self._copy_terminal_text()
         
+        # If terminal returned INVALID immediately, stop — no point retrying
+        if self._has_invalid(initial_text):
+            self.logger.warning(f"    [!] Command returned INVALID immediately: {command}")
+            return initial_text
+        
         # Check for "CURRENCY FARES EXISTS" (e.g., "BDT CURRENCY FARES EXISTS")
-        # This means no fares in the requested currency; we need to switch
+        # This means no fares in the requested currency; we must CLICK the link
+        # (typed commands like FD*BDT do not work for this redirect)
         currency_match = self._has_currency_redirect(initial_text)
         if currency_match:
-            self.logger.debug(f"      [DEBUG] '{currency_match} CURRENCY FARES EXISTS' detected. Switching currency...")
-            # Type FD*{CURRENCY} to redisplay in the alternate currency
-            redirect_cmd = f"FD*{currency_match}"
-            pyautogui.typewrite(redirect_cmd, interval=0.05)
-            pyautogui.press('enter')
-            time.sleep(4.0)
+            self.logger.debug(f"      [DEBUG] '{currency_match} CURRENCY FARES EXISTS' detected. Clicking link...")
+            clicked_text = self.click_currency_link(initial_text)
+            if clicked_text and clicked_text.strip() != initial_text.strip():
+                initial_text = clicked_text
+                self.logger.debug(f"      [DEBUG] Currency link clicked. Re-captured {len(initial_text)} chars.")
+            else:
+                self.logger.warning(f"      [WARNING] Currency link click did not change screen.")
         
         current_page = 1
         previous_md_text = initial_text
         
-        # Pagination loop: keep sending MD until END appears
-        full_text = initial_text
+        # Pagination loop: ACCUMULATE all pages into full_text
+        # Critical: use += not = so page 1 fares aren't lost when MD scrolls to page 2
+        all_pages = [initial_text]
         while current_page < max_pages:
             # Capture what's currently on screen
             screen_text = self._copy_terminal_text()
@@ -248,59 +298,52 @@ class SmartpointAutomation:
             # Check if END is present anywhere in the captured text
             if self._has_end_signal(screen_text):
                 self.logger.debug("      [DEBUG] 'END' signal detected. Pagination complete.")
+                all_pages.append(screen_text)
                 break
             
             # No END found — we need to paginate with MD
             self.logger.debug(f"      Page {current_page}: No 'END' found. Sending MD...")
-            pyautogui.typewrite("MD", interval=0.05)
+            pyautogui.typewrite("MD", interval=0.03)
             pyautogui.press('enter')
-            time.sleep(3.0)  # Wait for MD response
+            time.sleep(1.5)  # Wait for MD response
             
-            # Check if MD returned "INVALID" (no more data to paginate)
+            # Check if MD returned "INVALID" (no more data)
             md_response = self._copy_terminal_text()
             
             if self._has_invalid(md_response):
                 self.logger.debug("      [DEBUG] MD returned 'INVALID'. No more data to paginate.")
-                break
+                break  # Don't add INVALID page to results
             
             # Detect stuck screen: same text as previous MD
             if md_response.strip() == previous_md_text.strip():
                 self.logger.debug("      [DEBUG] Same text as previous page. Stopping pagination.")
                 break
             previous_md_text = md_response
-                
-            full_text = md_response
             
             # After MD, Smartpoint may show "«More Fares»" or "«More Flights»" prompt
-            # We need to check and press Enter to confirm
             if self._has_more_prompt(md_response):
                 self.logger.debug("      [DEBUG] '«More Fares/Flights»' prompt detected. Pressing Enter...")
                 pyautogui.press('enter')
-                time.sleep(3.0)  # Wait for remaining data to load
-                full_text = self._copy_terminal_text()
+                time.sleep(1.5)
+                md_response = self._copy_terminal_text()
             
+            all_pages.append(md_response)
             current_page += 1
         
         if current_page >= max_pages and max_pages > 1:
             self.logger.debug(f"      [WARNING] Reached max_pages ({max_pages}). Stopping.")
         
-        # Final capture — now the full data (including paginated results) should be on screen
-        # Note: We rely on `full_text` being updated during pagination. If `max_pages=1`, it's just `initial_text`.
-        if self._has_invalid(self._copy_terminal_text()) and not self._has_invalid(initial_text):
-            # If the screen is currently INVALID but our initial response wasn't, 
-            # we likely paged too far. Let's return the last valid text.
-            pass
-        else:
-            full_text = self._copy_terminal_text()
+        # Join all pages — use separator so parser can handle overlapping headers
+        full_text = "\n--- PAGE BREAK ---\n".join(all_pages)
         
         # Check for unsaleable fares
         # If "UNSALEABLE FARES MAY EXIST" appears, we send the FU* command
         # which drops down the unsaleable fares inline (with O-prefixed line numbers)
         if "UNSALEABLE FARES MAY EXIST" in full_text.upper():
             self.logger.debug("      [DEBUG] 'UNSALEABLE FARES' detected. Sending FU* command...")
-            pyautogui.typewrite("FU*", interval=0.05)
+            pyautogui.typewrite("FU*", interval=0.03)
             pyautogui.press('enter')
-            time.sleep(4.0)  # Wait for unsaleable fares to load
+            time.sleep(2.0)  # Wait for unsaleable fares to load
             
             # Re-capture and paginate through unsaleable fares if needed
             full_text = self._copy_terminal_text()
@@ -308,9 +351,9 @@ class SmartpointAutomation:
             while fu_page < 5:  # Unsaleable fares rarely exceed a few pages
                 if self._has_end_signal(full_text):
                     break
-                pyautogui.typewrite("MD", interval=0.05)
+                pyautogui.typewrite("MD", interval=0.03)
                 pyautogui.press('enter')
-                time.sleep(3.0)
+                time.sleep(1.5)
                 fu_response = self._copy_terminal_text()
                 if self._has_invalid(fu_response) or fu_response.strip() == full_text.strip():
                     break
@@ -341,9 +384,9 @@ class SmartpointAutomation:
         # Try direct command first (simpler and more reliable)
         direct_cmd = f"FTAX-{country_code}/{tax_code}"
         self.logger.debug(f"      Trying direct command: {direct_cmd}")
-        pyautogui.typewrite(direct_cmd, interval=0.05)
+        pyautogui.typewrite(direct_cmd, interval=0.03)
         pyautogui.press('enter')
-        time.sleep(4.0)
+        time.sleep(2.0)
         
         first_page = self._copy_terminal_text()
         
@@ -352,15 +395,15 @@ class SmartpointAutomation:
             self.logger.debug(f"      Direct command returned INVALID. Falling back to Tab navigation (index {tax_index})...")
             # Re-send the list command to get back to the tax list
             list_cmd = f"FTAX-{country_code}"
-            pyautogui.typewrite(list_cmd, interval=0.05)
+            pyautogui.typewrite(list_cmd, interval=0.03)
             pyautogui.press('enter')
-            time.sleep(4.0)
+            time.sleep(2.0)
             
             # Tab to the correct link
             for _ in range(tax_index):
-                pyautogui.press('tab', interval=0.1)
+                pyautogui.press('tab', interval=0.05)
             pyautogui.press('enter')
-            time.sleep(4.0)
+            time.sleep(2.0)
             first_page = self._copy_terminal_text()
             
             if self._has_invalid(first_page):
@@ -393,9 +436,9 @@ class SmartpointAutomation:
             
             # Send MD
             self.logger.debug(f"      Page {current_page}: Sending MD...")
-            pyautogui.typewrite("MD", interval=0.05)
+            pyautogui.typewrite("MD", interval=0.03)
             pyautogui.press('enter')
-            time.sleep(3.0)
+            time.sleep(1.5)
             
             page_text = self._copy_terminal_text()
             
@@ -408,7 +451,7 @@ class SmartpointAutomation:
             if page_text.strip() == previous_text.strip():
                 # Retry once with a longer wait before declaring stuck
                 self.logger.debug("      Same text detected. Waiting 2s and retrying...")
-                time.sleep(2.0)
+                time.sleep(1.0)
                 page_text = self._copy_terminal_text()
                 if page_text.strip() == previous_text.strip():
                     self.logger.debug("      Stuck: same content after retry. Stopping.")
@@ -417,7 +460,7 @@ class SmartpointAutomation:
             # Handle «More Fares/Flights» prompt
             if self._has_more_prompt(page_text):
                 pyautogui.press('enter')
-                time.sleep(3.0)
+                time.sleep(1.5)
                 page_text = self._copy_terminal_text()
             
             all_pages_text.append(page_text)
@@ -447,11 +490,66 @@ class SmartpointAutomation:
         command = f"FS{src}{date}{dst}/{airline}"
         self.logger.info(f"    Extracting FS pricing: {command}")
         
-        pyautogui.typewrite(command, interval=0.05)
+        pyautogui.typewrite(command, interval=0.03)
         pyautogui.press('enter')
-        time.sleep(10.0)  # FS results can be very slow to load completely
+        time.sleep(5.0)  # Wait for FS results to load
         
         return self._copy_terminal_text()
+    
+    def run_fq_command(self, option_number: int) -> str:
+        """
+        Run FQ*{N} to get the full fare quote / tax breakdown for a Pricing Option.
+        
+        This replaces the fragile 'D' button click approach. After an FS command
+        has loaded Pricing Options on screen, typing FQ*{N} (where N is the 
+        pricing option number) returns the same tax breakdown data that clicking
+        the 'D' button would show.
+        
+        Args:
+            option_number: The Pricing Option number (1-based, as shown on screen)
+            
+        Returns:
+            Raw terminal text containing base fare, equiv fare, YQ, taxes, total.
+        """
+        if not self.focus():
+            return ""
+        
+        fq_cmd = f"FQ*{option_number}"
+        self.logger.info(f"      Extracting tax breakdown: {fq_cmd}")
+        
+        pyautogui.typewrite(fq_cmd, interval=0.05)
+        pyautogui.press('enter')
+        time.sleep(5.0)  # Wait for fare quote to load
+        
+        result = self._copy_terminal_text()
+        
+        # If FQ* returned INVALID, this option might not support it
+        if self._has_invalid(result):
+            self.logger.warning(f"      FQ*{option_number} returned INVALID. Trying FQP*{option_number}...")
+            # Fallback: try FQP* (pricing-specific variant)
+            pyautogui.typewrite(f"FQP*{option_number}", interval=0.05)
+            pyautogui.press('enter')
+            time.sleep(5.0)
+            result = self._copy_terminal_text()
+        
+        # Paginate if needed (fare quotes can span multiple pages)
+        page = 1
+        while page < 5:
+            if self._has_end_signal(result):
+                break
+            if self._has_invalid(result):
+                break
+            pyautogui.typewrite("MD", interval=0.05)
+            pyautogui.press('enter')
+            time.sleep(3.0)
+            md_result = self._copy_terminal_text()
+            if self._has_invalid(md_result) or md_result.strip() == result.strip():
+                break
+            result = md_result
+            page += 1
+        
+        self.logger.debug(f"      FQ result: {len(result)} chars captured.")
+        return result
         
     def expand_fs_tax_breakdown(self, tabs_to_press: int) -> str:
         """
@@ -477,156 +575,222 @@ class SmartpointAutomation:
         time.sleep(4.0)  # Wait for the inline tax breakdown to expand
         return self._copy_terminal_text()
 
-    def click_d_button_via_text(self, option_index: int, raw_text: str, y_offset: int = 0) -> str:
+    def _text_line_to_pixel(self, text: str, target_line_idx: int, 
+                             char_idx: int = None, x_ratio: float = 0.5):
         """
-        Finds the 'D' button by scanning the screen for green/cyan terminal text using numpy.
-        ClearType-aware: uses a relaxed color filter that catches anti-aliased text pixels.
-        Identifies D buttons as thin pixel clusters (width <= 10px) at a consistent X position.
+        Convert a text line number to pixel screen coordinates.
+        
+        Uses FIXED line height (~18px) based on the terminal's monospaced font,
+        NOT calculated from total text lines (which would be wrong when the 
+        terminal has many blank lines below the content).
+        
+        Args:
+            text: The full terminal text (from Ctrl+A, Ctrl+C)
+            target_line_idx: 0-based index of the target line in the text
+            char_idx: Optional character column index for precise X positioning
+            x_ratio: Fallback horizontal position (0.0=left, 1.0=right) if char_idx not given
+            
+        Returns:
+            (pixel_x, pixel_y) screen coordinates
         """
+        # Use the SmartRichTextBox rect, NOT the window rect
+        rect = self._get_terminal_rect()
+        
+        # Fixed line height for Smartpoint terminal font
+        # Empirically measured: probe y=237, terminal top=82, D on line 7
+        # 82 + 5 + 7.5*20 = 237 → LINE_HEIGHT=20, padding=5
+        LINE_HEIGHT = 20
+        
+        # Content starts ~5px below the terminal pane top edge
+        content_top = rect.top + 5
+        
+        # Y: center of the target line
+        pixel_y = int(content_top + (target_line_idx + 0.5) * LINE_HEIGHT)
+        
+        # X: from character column if available, otherwise from ratio
+        if char_idx is not None:
+            # Use the actual line length to determine column count
+            # (the terminal column count changes when window is resized)
+            lines = text.split('\n')
+            if target_line_idx < len(lines):
+                line_len = max(len(lines[target_line_idx]), 1)
+                # Position D as a proportion of the line length
+                x_ratio_from_char = char_idx / line_len
+                pixel_x = int(rect.left + rect.width() * x_ratio_from_char)
+            else:
+                pixel_x = int(rect.left + rect.width() * x_ratio)
+        else:
+            pixel_x = int(rect.left + rect.width() * x_ratio)
+        
+        return (pixel_x, pixel_y)
+    
+    def click_element_by_text_position(self, text: str, search_pattern: str, 
+                                        x_ratio: float = 0.5, occurrence: int = 0,
+                                        y_offsets: list = None) -> str:
+        """
+        Find text in the terminal output, calculate its screen position, and click it.
+        
+        Uses fixed line height (18px) and regex to find the target line,
+        then clicks with retry offsets for tolerance.
+        """
+        import re
+        
         if not self.focus():
             return ""
-            
-        self.logger.info(f"      [COLOR SCAN] Finding 'D' button for Option {option_index + 1}...")
         
-        # CLEAR TEXT SELECTION: Ctrl+A highlight turns the background blue, 
-        # which breaks the color scanner. We must click a safe area and press Escape.
-        import pyautogui
-        try:
-            rect = self.window.rectangle()
-            # Click bottom-left corner of the terminal (usually safe/empty)
-            safe_x = rect.left + 50
-            safe_y = rect.bottom - 30
-        except Exception:
-            safe_x, safe_y = 50, 1000
-            
-        pyautogui.click(x=safe_x, y=safe_y)
-        pyautogui.press('escape', presses=3, interval=0.1)
-        time.sleep(0.5)
+        if y_offsets is None:
+            y_offsets = [0, -9, 9, -18, 18]
         
-        import numpy as np
-        from PIL import ImageGrab
+        # Clear any text selection first
+        pyautogui.press('escape', presses=2, interval=0.05)
+        time.sleep(0.15)
         
-        # Take a screenshot and convert to numpy array
-        screenshot = ImageGrab.grab()
-        # Save debug screenshot so we can see what the scanner sees
-        screenshot.save("debug_cyan_scan.png")
+        # Find matching lines
+        lines = text.split('\n')
+        matching_lines = []
+        for idx, line in enumerate(lines):
+            if re.search(search_pattern, line, re.IGNORECASE):
+                matching_lines.append(idx)
         
-        img = np.array(screenshot)
-        r_ch, g_ch, b_ch = img[:,:,0], img[:,:,1], img[:,:,2]
-        
-        # ClearType-aware filter for green/cyan terminal text
-        # Background: RGB(0,53,48) — max=53. Text pixels are significantly brighter.
-        mask = (
-            (np.maximum(g_ch, b_ch) > 100) &  # Brighter than background
-            (g_ch > r_ch) &                     # Green-dominated (not white/yellow)
-            ((g_ch.astype(int) + b_ch.astype(int)) > 200)  # Combined brightness
-        )
-        
-        cyan_ys, cyan_xs = np.where(mask)
-        self.logger.debug(f"      Found {len(cyan_xs)} green/cyan pixels on screen.")
-        
-        if len(cyan_xs) == 0:
-            self.logger.error("      [ERROR] No green/cyan pixels found.")
-            return ""
-            
-        # Filter out vertical lines (borders/scrollbars) that bridge rows together
-        import collections
-        x_counts = collections.Counter(cyan_xs)
-        valid_x = set(x for x, count in x_counts.items() if count < 100)
-        
-        # Group into horizontal rows (within 8px vertically)
-        positions = [(int(x), int(y)) for x, y in zip(cyan_xs, cyan_ys) if x in valid_x]
-        positions.sort(key=lambda p: p[1])
-        
-        rows = []
-        if positions:
-            current_row = [positions[0]]
-            for pos in positions[1:]:
-                if pos[1] - current_row[-1][1] <= 8:
-                    current_row.append(pos)
-                else:
-                    rows.append(current_row)
-                    current_row = [pos]
-            rows.append(current_row)
-        
-        # Sub-cluster analysis: split each row into horizontal sub-clusters
-        all_thin = []  # (center_x, center_y, width)
-        for row in rows:
-            row.sort(key=lambda p: p[0])
-            sub_clusters = []
-            cur = [row[0]]
-            for p in row[1:]:
-                if p[0] - cur[-1][0] <= 25:
-                    cur.append(p)
-                else:
-                    sub_clusters.append(cur)
-                    cur = [p]
-            sub_clusters.append(cur)
-            
-            for sc in sub_clusters:
-                sc_left = min(p[0] for p in sc)
-                sc_right = max(p[0] for p in sc)
-                sc_width = sc_right - sc_left
-                if 4 <= sc_width <= 20:  # Single character width (D or R) 
-                    cx = (sc_left + sc_right) // 2
-                    cy = sum(p[1] for p in sc) // len(sc)
-                    all_thin.append((cx, cy, sc_width))
-        
-        self.logger.debug(f"      Found {len(all_thin)} thin clusters (width 4-20px).")
-        
-        # Group thin clusters by X position (within 5px) to find the D column
-        # D buttons all appear at the same X coordinate across options
-        from collections import Counter
-        x_groups = Counter()
-        for cx, cy, w in all_thin:
-            x_groups[(cx // 10) * 10] += 1  # Round to nearest 10px to be safe
-        
-        if not x_groups:
-            self.logger.error("      [ERROR] No thin clusters found.")
+        if not matching_lines:
+            self.logger.error(f"      [CLICK] Pattern '{search_pattern}' not found in {len(lines)} lines")
             return ""
         
-        # The D button is the RIGHTMOST column of thin clusters.
-        # Find all columns that have at least 3 members (likely a column of buttons)
-        valid_columns = [x for x, count in x_groups.items() if count >= 3]
+        if occurrence >= len(matching_lines):
+            self.logger.error(f"      [CLICK] Only {len(matching_lines)} matches, need #{occurrence}")
+            return ""
         
-        # If none have 3 (maybe only 1 or 2 options displayed), just take the rightmost one
-        if not valid_columns:
-            valid_columns = [x for x, count in x_groups.items()]
+        target_line = matching_lines[occurrence]
+        base_x, base_y = self._text_line_to_pixel(text, target_line, x_ratio=x_ratio)
+        
+        self.logger.info(f"      [CLICK] Line {target_line} -> ({base_x}, {base_y})")
+        
+        text_before = text
+        for offset in y_offsets:
+            click_y = base_y + offset
+            self.logger.debug(f"      [CLICK] Trying ({base_x}, {click_y}) [offset={offset}]")
             
-        # The D column is the one largest X value (furthest right on screen)
-        target_x = max(valid_columns)
-        
-        # Filter to thin clusters at that X position (within 10px)
-        d_buttons = [(cx, cy) for cx, cy, w in all_thin 
-                     if abs(cx - target_x) <= 15]
-        d_buttons.sort(key=lambda p: p[1])  # Sort by Y (top to bottom)
-        
-        self.logger.debug(f"      D-button column at X~{target_x}: {len(d_buttons)} buttons found.")
-        for i, (dx, dy) in enumerate(d_buttons):
-            self.logger.debug(f"        [{i}] X={dx}, Y={dy}")
-        
-        if option_index < len(d_buttons):
-            click_x, click_y = d_buttons[option_index]
-            self.logger.info(f"      [COLOR SCAN] Clicking Option {option_index + 1} D at X={click_x}, Y={click_y}")
-            
-            # Dismiss any open dialog boxes first
-            try:
-                dialog = self.window.child_window(control_type="Window")
-                if dialog.exists(timeout=0.5):
-                    self.logger.warning("      [!] Dialog box detected - dismissing.")
-                    pyautogui.press('escape')
-                    time.sleep(0.5)
-            except Exception:
-                pass
-            
-            pyautogui.moveTo(click_x, click_y, duration=0.4)
+            pyautogui.moveTo(base_x, click_y, duration=0.1)
             pyautogui.click()
+            time.sleep(2.0)
             
-            time.sleep(5.0)
-            return self._copy_terminal_text()
-        else:
-            self.logger.error(f"      [ERROR] Only found {len(d_buttons)} D buttons, need index {option_index}.")
+            result = self._copy_terminal_text()
+            if result.strip() != text_before.strip():
+                self.logger.info(f"      [CLICK] ✓ Screen changed at offset={offset}")
+                return result
+        
+        self.logger.warning(f"      [CLICK] All offsets tried, screen unchanged.")
+        return self._copy_terminal_text()
+    
+    def click_d_button(self, option_index: int, fs_text: str) -> str:
+        """
+        Click the 'D' (Details) button for a specific Pricing Option in FS results.
+        
+        Finds the D button by looking for lines containing the "D  R" pattern
+        (which appears on the «BOOK» +TQ line of each Pricing Option), then
+        calculates the exact pixel position from the character column.
+        """
+        import re
+        
+        if not self.focus():
             return ""
+        
+        lines = fs_text.split('\n')
+        
+        # Strategy: Find lines containing «BOOK» or +TQ — these markers are
+        # always on the same line as the D button. Using "D  R" is unreliable
+        # because the clipboard sometimes splits D and R across lines.
+        d_button_lines = []
+        for idx, line in enumerate(lines):
+            if '+TQ' in line or '«BOOK»' in line or '\xabBOOK\xbb' in line:
+                d_button_lines.append(idx)
+        
+        self.logger.info(f"      [D-CLICK] Found {len(d_button_lines)} BOOK/+TQ lines: {d_button_lines}")
+        
+        if not d_button_lines:
+            # Fallback: search for lines near PRICING OPTION headers
+            self.logger.warning("      [D-CLICK] No 'D  R' pattern found. Trying PRICING OPTION fallback...")
+            option_headers = []
+            for idx, line in enumerate(lines):
+                if re.search(r'PRICING\s+OPTION\s+\d+', line, re.IGNORECASE):
+                    option_headers.append(idx)
+            
+            if option_index < len(option_headers):
+                target_line = option_headers[option_index] + 4
+            else:
+                self.logger.error(f"      [D-CLICK] Cannot locate D button for option {option_index}")
+                return ""
+        else:
+            if option_index >= len(d_button_lines):
+                self.logger.error(f"      [D-CLICK] Only {len(d_button_lines)} D buttons, need index {option_index}")
+                return ""
+            
+            target_line = d_button_lines[option_index]
+        
+        # Use empirically measured x_ratio for D button position.
+        # Clipboard char positions don't map 1:1 to pixels (measured 0.907 vs actual 0.856).
+        # The D button is consistently at ~85.5% of terminal width.
+        D_X_RATIO = 0.855
+        base_x, base_y = self._text_line_to_pixel(fs_text, target_line, x_ratio=D_X_RATIO)
+        
+        self.logger.info(f"      [D-CLICK] Option {option_index+1}: line {target_line}, "
+                        f"click at ({base_x}, {base_y})")
+        
+        # Clear selection
+        pyautogui.press('escape', presses=2, interval=0.05)
+        time.sleep(0.15)
+        
+        # Try clicking with combined X and Y offsets for tolerance
+        text_before = fs_text
+        offsets = [
+            (0, 0), (-15, 0), (15, 0),     # Same line, shift X
+            (0, -9), (0, 9),                 # One line up/down, same X
+            (-15, -9), (15, -9),             # One line up, shift X
+            (-15, 9), (15, 9),               # One line down, shift X
+        ]
+        
+        for x_off, y_off in offsets:
+            click_x = base_x + x_off
+            click_y = base_y + y_off
+            self.logger.debug(f"      [D-CLICK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]")
+            
+            pyautogui.moveTo(click_x, click_y, duration=0.1)
+            pyautogui.click()
+            time.sleep(2.0)
+            
+            result = self._copy_terminal_text()
+            
+            if result.strip() != text_before.strip():
+                upper = result.upper()
+                # D expansion shows: FARE COMPONENT BASIS, tax codes (YQ, BD, etc.), EQU, etc.
+                if any(kw in upper for kw in ["EQU", "TAXES", "TAX", "YQ", "FARE COMPONENT", "BASIS"]):
+                    self.logger.info(f"      [D-CLICK] ✓ Tax breakdown at offset=({x_off},{y_off})")
+                    return result
+                else:
+                    self.logger.debug(f"      [D-CLICK] Screen changed but no tax/fare data. Sending 'I' to reset...")
+                    pyautogui.typewrite("I", interval=0.03)
+                    pyautogui.press('enter')
+                    time.sleep(1.5)
+                    text_before = self._copy_terminal_text()
+                    if "PRICING OPTION" not in text_before.upper():
+                        self.logger.warning(f"      [D-CLICK] Could not recover FS display. Aborting.")
+                        return ""
+        
+        self.logger.warning(f"      [D-CLICK] Could not expand tax details after all attempts.")
+        return self._copy_terminal_text()
+    
+    def click_currency_link(self, fd_text: str) -> str:
+        """
+        Click the 'BDT CURRENCY FARES EXISTS' hyperlink.
+        The link spans the full text, so we click in the middle.
+        """
+        return self.click_element_by_text_position(
+            text=fd_text,
+            search_pattern=r'CURRENCY\s+FARES?\s+EXISTS?',
+            x_ratio=0.3,  # Click left-center of the text
+            occurrence=0,
+            y_offsets=[0, -9, 9, -18, 18]
+        )
     
     def return_to_tax_list(self, country_code: str):
         """Re-send FTAX-{CC} to return to the tax type list page."""

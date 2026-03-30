@@ -265,7 +265,9 @@ DACCGP
   4  BG  80.00    NOW      N                            R  EH
 END"""
     
-    fares = parse_fare_display(sample)
+    result = parse_fare_display(sample)
+    fares = result['fares']
+    print(f"  Currency: {result['currency']}")
     for f in fares:
         rt_marker = "RT" if f['is_rt'] else "OW"
         print(f"  Line {f['line']}: {f['airline']} {f['rbd']} ${f['fare']:.2f} {rt_marker} ({f['fare_basis']})")
