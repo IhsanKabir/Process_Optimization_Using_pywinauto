@@ -201,17 +201,25 @@ def main():
             sys.exit(1)
 
     log_file = setup_logging()
-    
+
     logger.info("=" * 60)
     logger.info(f"  TRAVELPORT {'TAX' if args.tax else 'FARE'} AUTOMATION TOOL")
     logger.info(f"  {datetime.now().strftime('%d-%b-%Y %H:%M')}")
     logger.info("=" * 60)
     logger.info("")
-    
-    # [1/4] Config
-    logger.info("[1/4] Loading configuration...")
-    config = load_config(args.config)
-    logger.info("  Config loaded ✓")
+
+    try:
+        # [1/4] Config
+        logger.info("[1/4] Loading configuration...")
+        config = load_config(args.config)
+        logger.info("  Config loaded ✓")
+    except ConfigurationError as e:
+        logger.error(f"  Configuration error: {e}")
+        logger.error("  Please check your config.json file and try again.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"  Unexpected error loading configuration: {e}")
+        sys.exit(1)
     
     # Route Commands or Tax Airports
     commands = []
