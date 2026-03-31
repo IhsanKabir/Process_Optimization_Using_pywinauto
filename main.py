@@ -34,6 +34,17 @@ from change_detector import (
     load_latest_snapshot,
     format_change_summary
 )
+from exceptions import ConfigurationError, ValidationError
+from validators import validate_config, validate_limit, sanitize_command
+from credential_manager import CredentialManager
+from constants import MAX_RETRIES_COMMAND, MAX_FS_DATE_STEPS, FS_DATE_OFFSET_START
+
+# Try to load .env file if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, skip
 
 logger = logging.getLogger('travelport')
 
@@ -70,19 +81,24 @@ def setup_logging():
 
 def load_config(config_path: str) -> dict:
     """Load and validate configuration from JSON file."""
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-    
-    # Config validation
-    required_keys = ['commands_file', 'airline_names', 'city_names', 'rbd_sort_order']
-    missing = [k for k in required_keys if k not in config]
-    if missing:
-        logger.warning(f"  Config missing keys: {', '.join(missing)} — using defaults")
-    
-    if not config.get('domestic_airports'):
-        logger.warning("  Config missing 'domestic_airports' — defaulting to ['DAC']")
-        config['domestic_airports'] = ['DAC']
-    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        logger.error(f"  Config file not found: {config_path}")
+        raise ConfigurationError(f"Config file not found: {config_path}")
+    except json.JSONDecodeError as e:
+        logger.error(f"  Invalid JSON in config file: {e}")
+        raise ConfigurationError(f"Invalid JSON in config file: {e}")
+
+    # Validate configuration using validators module
+    try:
+        config = validate_config(config)
+        logger.debug("  Configuration validated successfully")
+    except ConfigurationError as e:
+        logger.error(f"  Configuration validation failed: {e}")
+        raise
+
     return config
 
 
@@ -172,24 +188,38 @@ def main():
     arg_parser.add_argument('--only-fd', action='store_true', help='Extract only basic Fares (skip YQ/Currency FS command)')
     arg_parser.add_argument('--only-yq', action='store_true', help='Extract only YQ and Tax Breakdown (skip Fares)')
     arg_parser.add_argument('--only-currency', action='store_true', help='Extract only exchange rates (alias for --only-yq)')
-    arg_parser.add_argument('--username', help='Smartpoint username')
-    arg_parser.add_argument('--password', help='Smartpoint password')
-    arg_parser.add_argument('--pcc', help='Pseudo City Code')
     arg_parser.add_argument('--tax', action='store_true', help='Extract Tax (FTAX) data instead of fares')
-    
+
     args = arg_parser.parse_args()
+
+    # Validate limit argument
+    if args.limit:
+        try:
+            args.limit = validate_limit(args.limit)
+        except ValidationError as e:
+            logger.error(f"  {e}")
+            sys.exit(1)
+
     log_file = setup_logging()
-    
+
     logger.info("=" * 60)
     logger.info(f"  TRAVELPORT {'TAX' if args.tax else 'FARE'} AUTOMATION TOOL")
     logger.info(f"  {datetime.now().strftime('%d-%b-%Y %H:%M')}")
     logger.info("=" * 60)
     logger.info("")
-    
-    # [1/4] Config
-    logger.info("[1/4] Loading configuration...")
-    config = load_config(args.config)
-    logger.info("  Config loaded ✓")
+
+    try:
+        # [1/4] Config
+        logger.info("[1/4] Loading configuration...")
+        config = load_config(args.config)
+        logger.info("  Config loaded ✓")
+    except ConfigurationError as e:
+        logger.error(f"  Configuration error: {e}")
+        logger.error("  Please check your config.json file and try again.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"  Unexpected error loading configuration: {e}")
+        sys.exit(1)
     
     # Route Commands or Tax Airports
     commands = []
@@ -316,14 +346,25 @@ def main():
             if not automation.connect():
                 logger.error("  Please ensure Smartpoint is open and the title matches.")
                 sys.exit(1)
-            
-            if args.username and args.password:
-                automation.login(args.username, args.password, args.pcc)
-            
+
+            # Try to get credentials from environment
+            username, password, pcc = CredentialManager.get_credentials()
+            if username and password:
+                logger.info("  Credentials loaded from environment")
+                try:
+                    automation.login(username, password, pcc)
+                except Exception as e:
+                    logger.error(f"  Login failed: {e}")
+                    sys.exit(1)
+            else:
+                logger.info("  No credentials found - continuing without login")
+                logger.info("  To enable automatic login, set environment variables:")
+                logger.info("    SMARTPOINT_USERNAME, SMARTPOINT_PASSWORD, SMARTPOINT_PCC")
+
             logger.debug("  Initializing terminal state...")
             automation.refresh_terminal()
             
-            MAX_RETRIES = 3
+            MAX_RETRIES = MAX_RETRIES_COMMAND
             logger.info(f"  Executing {len(commands)} commands...")
             for i, cmd in enumerate(commands, 1):
                 logger.info(f"  [{i}/{len(commands)}] {cmd['command']}")
@@ -372,8 +413,8 @@ def main():
                         airline = base_cmd.split('/')[1][:2]
                         
                         fs_expanded = ""
-                        fs_date_offset = 7
-                        max_fs_date_steps = 14
+                        fs_date_offset = FS_DATE_OFFSET_START
+                        max_fs_date_steps = MAX_FS_DATE_STEPS
                         
                         while fs_date_offset <= max_fs_date_steps:
                             date_str = (datetime.now() + timedelta(days=fs_date_offset)).strftime('%d%b').upper()

@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Travelport Automation Configuration",
+  "description": "Configuration schema for Travelport Smartpoint automation",
+  "type": "object",
+  "required": [
+    "commands_file",
+    "airline_names",
+    "city_names",
+    "rbd_sort_order"
+  ],
+  "properties": {
+    "commands_file": {
+      "type": "string",
+      "description": "Path to commands.txt file containing FD commands to execute",
+      "examples": ["commands.txt"]
+    },
+    "excel_output_filename": {
+      "type": "string",
+      "description": "Template for output Excel filename. Use {date} placeholder for timestamp.",
+      "default": "fare_report_{date}.xlsx",
+      "examples": ["fare_report_{date}.xlsx", "output_{date}.xlsx"]
+    },
+    "rbd_sort_order": {
+      "type": "array",
+      "description": "Preferred order for sorting RBDs (booking classes) in reports",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]$"
+      },
+      "uniqueItems": true,
+      "minItems": 1,
+      "examples": [["F", "A", "J", "C", "D", "Y", "B", "M", "H", "K", "Q"]]
+    },
+    "domestic_airports": {
+      "type": "array",
+      "description": "List of domestic airport codes for grouping routes",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]{3}$"
+      },
+      "uniqueItems": true,
+      "default": ["DAC"],
+      "examples": [["DAC", "CGP", "ZYL", "CXB"]]
+    },
+    "airline_names": {
+      "type": "object",
+      "description": "Mapping of airline codes to full names",
+      "patternProperties": {
+        "^[A-Z0-9]{2}$": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "examples": [{
+        "BG": "Biman Bangladesh",
+        "BS": "US-Bangla",
+        "UL": "SriLankan"
+      }]
+    },
+    "city_names": {
+      "type": "object",
+      "description": "Mapping of airport/city codes to full names",
+      "patternProperties": {
+        "^[A-Z]{3}$": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false,
+      "examples": [{
+        "DAC": "Dhaka",
+        "MLE": "Male",
+        "CGP": "Chittagong"
+      }]
+    },
+    "tax_airports": {
+      "type": "object",
+      "description": "Airports to extract tax information for (FTAX command)",
+      "patternProperties": {
+        "^[A-Z]{3}$": {
+          "type": "object",
+          "required": ["country"],
+          "properties": {
+            "country": {
+              "type": "string",
+              "pattern": "^[A-Z]{2}$",
+              "description": "2-letter country code"
+            },
+            "name": {
+              "type": "string",
+              "description": "Full name of the airport/city"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "examples": [{
+        "SIN": {
+          "country": "SG",
+          "name": "Singapore"
+        },
+        "MLE": {
+          "country": "MV",
+          "name": "Maldives"
+        }
+      }]
+    }
+  }
+}
