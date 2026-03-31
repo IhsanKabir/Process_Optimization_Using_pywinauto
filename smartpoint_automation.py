@@ -262,7 +262,7 @@ class SmartpointAutomation:
         pyautogui.press('enter')
         
         # Wait for the terminal to respond
-        time.sleep(2.0)
+        time.sleep(1.0)
         
         # Capture initial response
         initial_text = self._copy_terminal_text()
@@ -310,7 +310,7 @@ class SmartpointAutomation:
                 self.logger.debug(f"      Page {current_page}: No 'More' link found. Sending MD...")
                 pyautogui.typewrite("MD", interval=0.03)
                 pyautogui.press('enter')
-                time.sleep(1.5)  # Wait for MD response
+                time.sleep(0.8)  # Wait for MD response
                 md_response = self._copy_terminal_text()
             
             # Check if MD/click returned "INVALID" (no more data)
@@ -348,22 +348,24 @@ class SmartpointAutomation:
             pyautogui.typewrite("FU*", interval=0.03)
             pyautogui.press('enter')
             time.sleep(2.0)  # Wait for unsaleable fares to load
-            
             # Re-capture and paginate through unsaleable fares if needed
-            full_text = self._copy_terminal_text()
+            fu_pages = [self._copy_terminal_text()]
             fu_page = 1
             while fu_page < 5:  # Unsaleable fares rarely exceed a few pages
-                if self._has_end_signal(full_text):
+                if self._has_end_signal(fu_pages[-1]):
                     break
                 pyautogui.typewrite("MD", interval=0.03)
                 pyautogui.press('enter')
-                time.sleep(1.5)
+                time.sleep(0.8)
                 fu_response = self._copy_terminal_text()
-                if self._has_invalid(fu_response) or fu_response.strip() == full_text.strip():
+                if self._has_invalid(fu_response) or fu_response.strip() == fu_pages[-1].strip():
                     break
-                full_text = fu_response
+                fu_pages.append(fu_response)
                 fu_page += 1
-            self.logger.debug("      [DEBUG] Unsaleable fares captured.")
+            
+            # CRITICAL FIX: Append the unsaleable text instead of overwriting the full data array!
+            full_text += "\n--- UNSALEABLE FARES BREAK ---\n" + "\n--- PAGE BREAK ---\n".join(fu_pages)
+            self.logger.debug(f"      [DEBUG] Unsaleable fares captured ({len(fu_pages)} pages appended).")
         return full_text
     
     def run_ftax_command(self, country_code: str, tax_code: str, tax_index: int = 1, max_pages: int = 50) -> str:
@@ -496,7 +498,7 @@ class SmartpointAutomation:
         
         pyautogui.typewrite(command, interval=0.03)
         pyautogui.press('enter')
-        time.sleep(5.0)  # Wait for FS results to load
+        time.sleep(2.5)  # Wait for FS results to load
         
         return self._copy_terminal_text()
     
@@ -523,7 +525,7 @@ class SmartpointAutomation:
         
         pyautogui.typewrite(fq_cmd, interval=0.05)
         pyautogui.press('enter')
-        time.sleep(5.0)  # Wait for fare quote to load
+        time.sleep(2.5)  # Wait for fare quote to load
         
         result = self._copy_terminal_text()
         
@@ -533,7 +535,7 @@ class SmartpointAutomation:
             # Fallback: try FQP* (pricing-specific variant)
             pyautogui.typewrite(f"FQP*{option_number}", interval=0.05)
             pyautogui.press('enter')
-            time.sleep(5.0)
+            time.sleep(2.5)
             result = self._copy_terminal_text()
         
         # Paginate if needed (fare quotes can span multiple pages)
@@ -545,7 +547,7 @@ class SmartpointAutomation:
                 break
             pyautogui.typewrite("MD", interval=0.05)
             pyautogui.press('enter')
-            time.sleep(3.0)
+            time.sleep(1.5)
             md_result = self._copy_terminal_text()
             if self._has_invalid(md_result) or md_result.strip() == result.strip():
                 break
@@ -576,7 +578,7 @@ class SmartpointAutomation:
             pyautogui.press('tab', interval=0.05)
             
         pyautogui.press('enter')
-        time.sleep(4.0)  # Wait for the inline tax breakdown to expand
+        time.sleep(1.5)  # Wait for the inline tax breakdown to expand
         return self._copy_terminal_text()
 
     def _text_line_to_pixel(self, text: str, target_line_idx: int, 
@@ -676,7 +678,7 @@ class SmartpointAutomation:
             
             pyautogui.moveTo(base_x, click_y, duration=0.1)
             pyautogui.click()
-            time.sleep(2.0)
+            time.sleep(0.8)
             
             result = self._copy_terminal_text()
             if result.strip() != text_before.strip():
@@ -760,7 +762,7 @@ class SmartpointAutomation:
             
             pyautogui.moveTo(click_x, click_y, duration=0.1)
             pyautogui.click()
-            time.sleep(2.0)
+            time.sleep(0.8)
             
             result = self._copy_terminal_text()
             
@@ -880,7 +882,7 @@ class SmartpointAutomation:
         self.logger.debug(f"      Returning to tax list: {list_cmd}")
         pyautogui.typewrite(list_cmd, interval=0.05)
         pyautogui.press('enter')
-        time.sleep(4.0)
+        time.sleep(1.5)
     
     def _has_end_signal(self, text: str) -> bool:
         """Check if the terminal text contains the END signal in its last lines."""
