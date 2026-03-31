@@ -1,8 +1,23 @@
 # Process Optimization Using pywinauto
 
-A Python-based automation solution I built to control the Travelport Smartpoint terminal, extract complex Global Distribution System (GDS) data, and structure the output into clean Excel reports.
+A Python-based automation solution for controlling the Travelport Smartpoint terminal, extracting complex Global Distribution System (GDS) data, and structuring the output into clean Excel reports.
 
-The main motivation behind this project was to eliminate the heavy manual burden of constantly querying GDS systems by hand. Scraping an archaic terminal application requires robust UI automation and complex regex parsing, especially since the data spans across multiple paginated screens built on 1960s-era terminal protocols. 
+[![CI Tests](https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/actions/workflows/test.yml/badge.svg)](https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/actions/workflows/test.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
+## Overview
+
+The main motivation behind this project was to eliminate the heavy manual burden of constantly querying GDS systems by hand. Scraping an archaic terminal application requires robust UI automation and complex regex parsing, especially since the data spans across multiple paginated screens built on 1960s-era terminal protocols.
+
+### Key Features
+
+- **Automated GDS Data Extraction**: Extracts fare and tax data from Travelport Smartpoint terminal
+- **Intelligent Pagination**: Handles complex multi-page terminal output automatically
+- **Secure Credential Management**: Environment variable-based authentication (no passwords in command line)
+- **Excel Report Generation**: Creates formatted Excel reports with change tracking
+- **Comprehensive Testing**: 25+ unit tests with CI/CD integration
+- **Input Validation**: Validates all inputs to prevent injection attacks
+- **Configuration Management**: Environment-specific configs with JSON schema validation 
 
 ## End-to-End Pipeline
 
@@ -47,21 +62,40 @@ graph TD
 ## Project Structure
 
 ```text
-travelport-automation/
-├── main.py                     # Primary orchestrator and CLI entry point
-├── config.json                 # Target routes, airlines, airports, and settings
-├── smartpoint_automation.py    # pywinauto/pyautogui logic for terminal interaction
-├── fare_parser.py              # Regex logic for extracting standard public/private fares
-├── tax_parser.py               # Complex multi-page syntax parsing for tax exemptions
-├── report_generator.py         # Formats scraped fare datasets into Excel worksheets
-├── tax_report.py               # Formats categorized airport taxes into Excel
-├── README.md                   # Project documentation
-├── requirements.txt            # Python dependencies (pywinauto, pyautogui, openpyxl)
-├── data/
-│   ├── raw/                    # Automatically saved terminal strings (for debugging)
-│   ├── logs/                   # System execution logs
-│   ├── archive/                # Historical snapshot storage for delta comparisons
-│   └── reports/                # Generated timestamped .xlsx output files
+Process_Optimization_Using_pywinauto/
+├── main.py                      # Primary orchestrator and CLI entry point
+├── config.json                  # Configuration (not in git - create from example)
+├── config_schema.json           # JSON schema for config validation
+├── config_manager.py            # Configuration management with env support
+├── constants.py                 # Centralized constants and magic numbers
+├── smartpoint_automation.py     # UI automation logic (pywinauto/pyautogui)
+├── parser.py                    # Fare display parsing (regex-based)
+├── tax_parser.py                # Tax detail parsing (FTAX commands)
+├── tax_breakdown_parser.py      # FS tax breakdown parsing
+├── excel_report.py              # Excel report generation
+├── tax_report.py                # Tax-specific Excel reports
+├── change_detector.py           # Fare change detection and tracking
+├── exceptions.py                # Custom exception hierarchy
+├── validators.py                # Input validation functions
+├── credential_manager.py        # Secure credential management
+├── requirements.txt             # Production dependencies
+├── requirements-dev.txt         # Development dependencies
+├── pytest.ini                   # Pytest configuration
+├── README.md                    # This file
+├── CONFIG.md                    # Configuration guide
+├── TROUBLESHOOTING.md           # Troubleshooting guide
+├── .github/workflows/test.yml   # CI/CD pipeline
+├── tests/                       # Test suite
+│   ├── test_parser.py          # Parser tests
+│   ├── test_validators.py      # Validator tests
+│   ├── test_change_detector.py # Change detection tests
+│   └── fixtures/               # Test data and fixtures
+├── data/                        # Data directory (in .gitignore)
+│   ├── raw/                    # Raw terminal output (debugging)
+│   ├── logs/                   # Execution logs
+│   ├── archive/                # Historical snapshots (change tracking)
+│   └── reports/                # Generated Excel reports
+└── build/                       # Build artifacts (in .gitignore)
 ```
 
 ## Core Capabilities
@@ -81,28 +115,163 @@ I am actively adding new features to the pipeline, including:
 ## Setup Requirements
 
 The execution environment requires:
-- A Windows machine actively logged into Travelport Smartpoint.
-- An authenticated GDS session with active focus on the primary terminal window.
-- Python 3.10+ installed.
+- **Windows OS** with active Travelport Smartpoint session
+- **Python 3.10+**
+- An authenticated GDS session with active focus on the primary terminal window
 
-Dependencies can be installed via:
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto.git
+cd Process_Optimization_Using_pywinauto
+```
+
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
+3. Set up configuration:
+```bash
+# Copy example config
+cp config.dev.json.example config.json
+
+# Edit config.json with your settings
+```
+
+4. (Optional) Set up credentials via environment variables:
+```powershell
+# Windows PowerShell
+$env:SMARTPOINT_USERNAME="your_username"
+$env:SMARTPOINT_PASSWORD="your_password"
+$env:SMARTPOINT_PCC="your_pcc"  # Optional
+```
+
+Or create a `.env` file:
+```bash
+pip install python-dotenv
+```
+
+```env
+# .env file
+SMARTPOINT_USERNAME=your_username
+SMARTPOINT_PASSWORD=your_password
+SMARTPOINT_PCC=your_pcc
+```
+
+### Development Setup
+
+For development and testing:
+```bash
+pip install -r requirements-dev.txt
+```
+
 ## Running the Tool
 
-To run the standard Fare extraction pipeline:
+### Basic Usage
+
+**Fare extraction** (automatic mode):
 ```bash
 python main.py --auto
 ```
 
-To run the Tax extraction pipeline:
+**Tax extraction**:
 ```bash
 python main.py --tax --auto
 ```
 
-For quick testing on a single route or airport without waiting for the full batch:
+**Testing with limited routes**:
 ```bash
-python main.py --tax --auto --limit 1
+python main.py --auto --limit 5
 ```
+
+**Filter by specific route**:
+```bash
+python main.py --auto --route DAC-MLE
+```
+
+**Filter by airline**:
+```bash
+python main.py --auto --airline BG,BS
+```
+
+### Advanced Options
+
+```bash
+# Skip change detection
+python main.py --auto --no-changes
+
+# Custom output file
+python main.py --auto --output custom_report.xlsx
+
+# Extract only currency data (skip fares)
+python main.py --auto --only-currency
+
+# Manual mode (process existing raw files)
+python main.py
+```
+
+See `python main.py --help` for all options.
+
+## Configuration
+
+Configuration is managed through `config.json` (see [`CONFIG.md`](CONFIG.md) for details):
+
+- **Environment-specific configs**: Use `APP_ENV` variable to load `config.dev.json`, `config.prod.json`, etc.
+- **JSON Schema validation**: Automatic validation against `config_schema.json`
+- **Secure credentials**: Never store passwords in config files - use environment variables
+
+Example config structure:
+```json
+{
+  "commands_file": "commands.txt",
+  "airline_names": {"BG": "Biman Bangladesh"},
+  "city_names": {"DAC": "Dhaka"},
+  "rbd_sort_order": ["F", "A", "J", "C", "Y"],
+  "domestic_airports": ["DAC", "CGP"],
+  "tax_airports": {
+    "SIN": {"country": "SG", "name": "Singapore"}
+  }
+}
+```
+
+## Testing
+
+Run the test suite:
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=. --cov-report=html
+
+# Run specific test file
+pytest tests/test_parser.py -v
+
+# Run linting
+flake8 .
+black --check .
+mypy *.py
+bandit -r .
+```
+
+## Troubleshooting
+
+Common issues and solutions are documented in [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md):
+
+- Connection issues
+- Clicking/UI interaction problems
+- Data extraction failures
+- Configuration errors
+- Performance issues
+
+## Security Notes
+
+- **Never commit credentials** to version control
+- Use environment variables for sensitive data
+- The `.env` file is in `.gitignore` for your protection
+- CLI password arguments have been removed for security
+- All inputs are validated and sanitized
+
+## Project Architecture
