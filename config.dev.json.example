@@ -1,0 +1,19 @@
+{
+  "commands_file": "commands.dev.txt",
+  "excel_output_filename": "fare_report_dev_{date}.xlsx",
+  "rbd_sort_order": ["F", "A", "J", "C", "D", "Y"],
+  "domestic_airports": ["DAC"],
+  "airline_names": {
+    "BG": "Biman Bangladesh"
+  },
+  "city_names": {
+    "DAC": "Dhaka",
+    "CGP": "Chittagong"
+  },
+  "tax_airports": {
+    "SIN": {
+      "country": "SG",
+      "name": "Singapore"
+    }
+  }
+}
