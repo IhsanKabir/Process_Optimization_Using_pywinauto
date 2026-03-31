@@ -26,3 +26,19 @@ test_*.py
 *debug*.py
 get_d_coords.py
 find_d_button.py
+fs_debug.log
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
