@@ -242,7 +242,26 @@ def _write_section(
 
     # Data rows
     for rbd in sorted_rbds:
-        ws.cell(row=row, column=1, value=rbd).font = Font(name='Calibri', bold=True)
+        # Determine if this RBD is unsaleable anywhere across the entries
+        is_unsaleable = False
+        for airline, domestic, route_key, route_info in entries:
+            rbd_data = route_info.get('rbd_data', route_info) if isinstance(route_info, dict) else route_info
+            if isinstance(rbd_data, dict):
+                ri = rbd_data.get(rbd)
+                if isinstance(ri, dict):
+                    if "(Unsaleable)" in str(ri.get('ow_fare_basis', '')) or "(Unsaleable)" in str(ri.get('rt_fare_basis', '')):
+                        is_unsaleable = True
+                        break
+        
+        if is_unsaleable:
+            rt_val = CellRichText(
+                TextBlock(InlineFont(sz=11, b=True), rbd),
+                TextBlock(InlineFont(sz=8, b=False, vertAlign='subscript', color='666666'), "(Unsaleable)")
+            )
+            ws.cell(row=row, column=1, value=rt_val)
+        else:
+            ws.cell(row=row, column=1, value=rbd).font = Font(name='Calibri', bold=True)
+            
         ws.cell(row=row, column=1).border = THIN_BORDER
 
         col = 2
@@ -675,7 +694,21 @@ def _write_individual_tables_sheet(
                     ow = change_info.get('old_ow_fare')
                     rt = change_info.get('old_rt_fare')
                 
-                ws.cell(row=row, column=col_offset, value=rbd).font = Font(name='Calibri', bold=True)
+                # Check if this specific table's RBD is unsaleable
+                is_unsaleable = False
+                if isinstance(rbd_info, dict):
+                    if "(Unsaleable)" in str(rbd_info.get('ow_fare_basis', '')) or "(Unsaleable)" in str(rbd_info.get('rt_fare_basis', '')):
+                        is_unsaleable = True
+                
+                if is_unsaleable:
+                    rt_val = CellRichText(
+                        TextBlock(InlineFont(sz=11, b=True), rbd),
+                        TextBlock(InlineFont(sz=8, b=False, vertAlign='subscript', color='666666'), "(Unsaleable)")
+                    )
+                    ws.cell(row=row, column=col_offset, value=rt_val)
+                else:
+                    ws.cell(row=row, column=col_offset, value=rbd).font = Font(name='Calibri', bold=True)
+                    
                 ws.cell(row=row, column=col_offset).border = THIN_BORDER
                 
                 # Base OW

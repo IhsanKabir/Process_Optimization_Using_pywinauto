@@ -129,23 +129,15 @@ def parse_fare_display(raw_text: str) -> dict:
         if not stripped:
             continue
             
-        # Detect unsellable section from two possible markers:
-        # 1. "UNSALEABLE FARES MAY EXIST" banner (from main fare display)
-        # 2. "UNSALEABLE FARES" header (from FU* command output)
-        if "UNSALEABLE FARES" in upper_stripped:
-            # Only set unsellable if this is the actual section header, not just the warning
-            # The FU* output has "UNSALEABLE FARES" as a distinct header line
-            if "MAY EXIST" not in upper_stripped:
-                is_unsellable_section = True
-            
-        # Reset unsellable flag when we re-enter the normal PUBLIC FARES section
-        if "PUBLIC FARES" in upper_stripped and is_unsellable_section:
-            is_unsellable_section = False
+        # Detect strict unsaleable section break injected by automation
+        if "--- UNSALEABLE FARES BREAK ---" in upper_stripped:
+            is_unsellable_section = True
+            continue
             
         # Skip non-fare lines
         if upper_stripped in ('END', 'MD'):
             continue
-        # Match lines starting with a digit or O followed by digits
+        # Match lines starting with a digit (and properly handle leading zeroes like '030')
         if not re.match(r'^\s*O?\d+\s+', line):
             continue
         
