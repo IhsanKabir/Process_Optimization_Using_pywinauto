@@ -301,16 +301,19 @@ class SmartpointAutomation:
                 all_pages.append(screen_text)
                 break
             
-            # No END found — we need to paginate with MD
-            self.logger.debug(f"      Page {current_page}: No 'END' found. Sending MD...")
-            pyautogui.typewrite("MD", interval=0.03)
-            pyautogui.press('enter')
-            time.sleep(1.5)  # Wait for MD response
+            # Attempt to click "«More Flights / Fares»"
+            if self.click_more_prompt_link(screen_text):
+                self.logger.debug(f"      Page {current_page}: Clicked 'More' link.")
+                md_response = self._copy_terminal_text()
+            else:
+                # Fallback to standard MD just in case the link isn't explicitly printed
+                self.logger.debug(f"      Page {current_page}: No 'More' link found. Sending MD...")
+                pyautogui.typewrite("MD", interval=0.03)
+                pyautogui.press('enter')
+                time.sleep(1.5)  # Wait for MD response
+                md_response = self._copy_terminal_text()
             
-            # Check if MD returned "INVALID" (no more data)
-            md_response = self._copy_terminal_text()
-            
-            if self._has_invalid(md_response):
+            # Check if MD/click returned "INVALID" (no more data)
                 self.logger.debug("      [DEBUG] MD returned 'INVALID'. No more data to paginate.")
                 break  # Don't add INVALID page to results
             
@@ -320,7 +323,8 @@ class SmartpointAutomation:
                 break
             previous_md_text = md_response
             
-            # After MD, Smartpoint may show "«More Fares»" or "«More Flights»" prompt
+            # After MD/click, Smartpoint may show ANOTHER "«More Fares»" or "«More Flights»" prompt
+            # that requires pressing Enter to clear BEFORE the actual data displays.
             if self._has_more_prompt(md_response):
                 self.logger.debug("      [DEBUG] '«More Fares/Flights»' prompt detected. Pressing Enter...")
                 pyautogui.press('enter')
@@ -656,7 +660,7 @@ class SmartpointAutomation:
             self.logger.error(f"      [CLICK] Pattern '{search_pattern}' not found in {len(lines)} lines")
             return ""
         
-        if occurrence >= len(matching_lines):
+        if occurrence >= len(matching_lines) or (occurrence < 0 and abs(occurrence) > len(matching_lines)):
             self.logger.error(f"      [CLICK] Only {len(matching_lines)} matches, need #{occurrence}")
             return ""
         
@@ -791,6 +795,82 @@ class SmartpointAutomation:
             occurrence=0,
             y_offsets=[0, -9, 9, -18, 18]
         )
+    
+    def click_more_prompt_link(self, terminal_text: str) -> bool:
+        """
+        Dynamically finds and clicks '«More Flights»' by anchoring to the screen bottom.
+        Leaves top-down math isolated for other buttons.
+        """
+        import re
+        if not self.focus():
+            return False
+            
+        rect = self._get_terminal_rect()
+        LINE_HEIGHT = 20
+        total_lines_capacity = (rect.height() - 10) // LINE_HEIGHT
+        
+        # KEY FIX: Scrub trailing empty phantom lines so counting from the bottom is exact!
+        clean_text = terminal_text.rstrip('\r\n')
+        lines = clean_text.split('\n')
+        
+        # Search from bottom up
+        for i in range(len(lines)-1, -1, -1):
+            line = lines[i]
+            match = re.search(r'(MORE\s+(?:FARES|FLIGHTS|OPTIONS))', line, re.IGNORECASE)
+            
+            if match:
+                char_idx = match.start() + 4
+                pyautogui.press('escape', presses=2, interval=0.05)
+                time.sleep(0.15)
+                
+                # IMPORTANT: Scroll down if the text is overflowing
+                if len(lines) > total_lines_capacity:
+                    self.logger.debug("      [CLICK] Scrolling terminal to bottom before clicking...")
+                    pyautogui.click(rect.left + rect.width()//2, rect.top + rect.height()//2)
+                    time.sleep(0.1)
+                    pyautogui.press('pagedown', presses=4, interval=0.1)
+                    time.sleep(0.4)
+                    
+                    # Target isolated calculation from the visual bottom
+                    # Empirical Test: Smartpoint's bottom frame padding sits exactly at 0px.
+                    # The text renders completely flush against the lowest border of the active text area.
+                    BOTTOM_MARGIN = 0
+                    lines_from_bottom = len(lines) - 1 - i
+                    base_y = int(rect.bottom - BOTTOM_MARGIN - (lines_from_bottom + 0.5) * LINE_HEIGHT)
+                    
+                    # Offset X by ~32px (0.04 of 800) to perfectly center on the 'M' core, avoiding airline codes!
+                    base_x, _ = self._text_line_to_pixel(clean_text, i, x_ratio=0.04)
+                else:
+                    base_x, base_y = self._text_line_to_pixel(clean_text, i, x_ratio=0.04)
+                
+                # Start Retry/Tolerance Logic
+                # Strictly vertical sweeps to NEVER misclick horizontally onto 'CZ' or other airline codes.
+                offsets = [
+                    (0, 0),
+                    (0, -10), (0, 10),
+                    (0, -20), (0, 20),
+                    (0, -30), (0, 30)
+                ]
+                text_before = terminal_text
+                
+                for x_off, y_off in offsets:
+                    click_x = base_x + x_off
+                    click_y = base_y + y_off
+                    self.logger.debug(f"      [CLICK] Trying 'More' link at ({click_x}, {click_y}) [offset=({x_off},{y_off})]")
+                    
+                    pyautogui.moveTo(click_x, click_y, duration=0.1)
+                    pyautogui.click()
+                    time.sleep(1.0)
+                    
+                    result = self._copy_terminal_text()
+                    if result.strip() != text_before.strip():
+                         self.logger.info("      [CLICK] ✓ 'More' link clicked successfully!")
+                         return True
+                         
+                self.logger.warning("      [CLICK] Exhausted all offset attempts to click 'More' link.")
+                return False
+                
+        return False
     
     def return_to_tax_list(self, country_code: str):
         """Re-send FTAX-{CC} to return to the tax type list page."""
