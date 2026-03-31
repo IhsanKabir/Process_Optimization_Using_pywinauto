@@ -644,8 +644,8 @@ class SmartpointAutomation:
         # Fixed line height for Smartpoint terminal font
         # Empirically measured: probe y=237, terminal top=82, D on line 7
         # 82 + 5 + 7.5*20 = 237 → LINE_HEIGHT=20, padding=5
-        LINE_HEIGHT = LINE_HEIGHT  # from constants
-        
+        # LINE_HEIGHT is imported from constants
+
         # Content starts ~5px below the terminal pane top edge
         content_top = rect.top + CONTENT_TOP_PADDING
         
@@ -847,7 +847,6 @@ class SmartpointAutomation:
             return False
             
         rect = self._get_terminal_rect()
-        LINE_HEIGHT = LINE_HEIGHT  # from constants
         total_lines_capacity = (rect.height() - 10) // LINE_HEIGHT
         
         # KEY FIX: Scrub trailing empty phantom lines so counting from the bottom is exact!
