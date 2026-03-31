@@ -185,7 +185,6 @@ class SmartpointAutomation:
     def _copy_terminal_text(self) -> str:
         """Helper to copy text from the terminal via clipboard using mouse automation."""
         pyperclip.copy("")
-        time.sleep(0.1)
         
         # Ensure focus hasn't been lost
         self.focus()
@@ -194,33 +193,28 @@ class SmartpointAutomation:
             return ""
             
         # Get window coordinates — click in a SAFE area (top-left)
-        # NEVER click in the center: FS results have clickable D/R/+1 links there
-        # that trigger "Unable to display Branded Fares" dialogs
         try:
             rect = self.window.rectangle()
             safe_x = rect.left + 50   # Far left — no interactive links here
             safe_y = rect.top + 30    # Near top — above any FS result content
         except Exception:
-            screen_width, screen_height = pyautogui.size()
             safe_x = 50
             safe_y = 50
         
         # Click to focus the terminal area (safe position)
-        pyautogui.click(x=safe_x, y=safe_y, duration=0.1)
-        time.sleep(0.15)
+        pyautogui.click(x=safe_x, y=safe_y)
+        time.sleep(0.05)
         
         # Select all + copy
-        pyautogui.hotkey('ctrl', 'a', interval=0.05)
-        time.sleep(0.3)
-        pyautogui.hotkey('ctrl', 'c', interval=0.05)
-        time.sleep(0.5)
+        pyautogui.hotkey('ctrl', 'a')
+        time.sleep(0.05)
+        pyautogui.hotkey('ctrl', 'c')
+        time.sleep(0.1)
         
         text = pyperclip.paste()
-        self.logger.debug(f"      [DEBUG] Extracted {len(text)} characters from clipboard")
         
         # Click once to deselect
         pyautogui.press('escape')
-        time.sleep(0.1)
             
         return text
         
@@ -262,7 +256,7 @@ class SmartpointAutomation:
         pyautogui.press('enter')
         
         # Wait for the terminal to respond
-        time.sleep(1.0)
+        time.sleep(0.5)
         
         # Capture initial response
         initial_text = self._copy_terminal_text()
@@ -347,7 +341,7 @@ class SmartpointAutomation:
             self.logger.debug("      [DEBUG] 'UNSALEABLE FARES' detected. Sending FU* command...")
             pyautogui.typewrite("FU*", interval=0.03)
             pyautogui.press('enter')
-            time.sleep(2.0)  # Wait for unsaleable fares to load
+            time.sleep(1.0)  # Wait for unsaleable fares to load
             # Re-capture and paginate through unsaleable fares if needed
             fu_pages = [self._copy_terminal_text()]
             fu_page = 1
@@ -498,7 +492,7 @@ class SmartpointAutomation:
         
         pyautogui.typewrite(command, interval=0.03)
         pyautogui.press('enter')
-        time.sleep(2.5)  # Wait for FS results to load
+        time.sleep(1.5)  # Wait for FS results to load
         
         return self._copy_terminal_text()
     
@@ -525,7 +519,7 @@ class SmartpointAutomation:
         
         pyautogui.typewrite(fq_cmd, interval=0.05)
         pyautogui.press('enter')
-        time.sleep(2.5)  # Wait for fare quote to load
+        time.sleep(1.5)  # Wait for fare quote to load
         
         result = self._copy_terminal_text()
         
@@ -535,7 +529,7 @@ class SmartpointAutomation:
             # Fallback: try FQP* (pricing-specific variant)
             pyautogui.typewrite(f"FQP*{option_number}", interval=0.05)
             pyautogui.press('enter')
-            time.sleep(2.5)
+            time.sleep(1.5)
             result = self._copy_terminal_text()
         
         # Paginate if needed (fare quotes can span multiple pages)
@@ -578,7 +572,7 @@ class SmartpointAutomation:
             pyautogui.press('tab', interval=0.05)
             
         pyautogui.press('enter')
-        time.sleep(1.5)  # Wait for the inline tax breakdown to expand
+        time.sleep(1.0)  # Wait for the inline tax breakdown to expand
         return self._copy_terminal_text()
 
     def _text_line_to_pixel(self, text: str, target_line_idx: int, 
@@ -678,7 +672,7 @@ class SmartpointAutomation:
             
             pyautogui.moveTo(base_x, click_y, duration=0.1)
             pyautogui.click()
-            time.sleep(0.8)
+            time.sleep(0.5)
             
             result = self._copy_terminal_text()
             if result.strip() != text_before.strip():
@@ -762,7 +756,7 @@ class SmartpointAutomation:
             
             pyautogui.moveTo(click_x, click_y, duration=0.1)
             pyautogui.click()
-            time.sleep(0.8)
+            time.sleep(0.5)
             
             result = self._copy_terminal_text()
             
