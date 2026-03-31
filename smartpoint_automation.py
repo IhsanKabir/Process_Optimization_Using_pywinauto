@@ -230,6 +230,7 @@ class SmartpointAutomation:
     def _copy_terminal_text(self) -> str:
         """Helper to copy text from the terminal via clipboard using mouse automation."""
         pyperclip.copy("")
+        time.sleep(0.1)
         
         # Ensure focus hasn't been lost
         self.focus()
@@ -247,19 +248,21 @@ class SmartpointAutomation:
             safe_y = SAFE_CLICK_Y_OFFSET
         
         # Click to focus the terminal area (safe position)
-        pyautogui.click(x=safe_x, y=safe_y)
-        time.sleep(CLICK_DELAY)
+        pyautogui.click(x=safe_x, y=safe_y, duration=0.1)
+        time.sleep(0.15)
         
-        # Select all + copy
-        pyautogui.hotkey('ctrl', 'a')
-        time.sleep(CLICK_DELAY)
-        pyautogui.hotkey('ctrl', 'c')
+        # Select all + copy (Physical intervals prevent clipboard clipping)
+        pyautogui.hotkey('ctrl', 'a', interval=0.05)
+        time.sleep(0.3)
+        pyautogui.hotkey('ctrl', 'c', interval=0.05)
         time.sleep(COPY_DELAY)
         
         text = pyperclip.paste()
+        self.logger.debug(f"      [DEBUG] Extracted {len(text)} characters from clipboard")
         
         # Click once to deselect
         pyautogui.press('escape')
+        time.sleep(0.1)
             
         return text
         
@@ -642,11 +645,10 @@ class SmartpointAutomation:
         # Use the SmartRichTextBox rect, NOT the window rect
         rect = self._get_terminal_rect()
         
-        # Fixed line height for Smartpoint terminal font
+        # Fixed line height for Smartpoint terminal font (Global from constants)
         # Empirically measured: probe y=237, terminal top=82, D on line 7
         # 82 + 5 + 7.5*20 = 237 → LINE_HEIGHT=20, padding=5
-        # LINE_HEIGHT is imported from constants
-
+        # (Uses global LINE_HEIGHT from constants)
         # Content starts ~5px below the terminal pane top edge
         content_top = rect.top + CONTENT_TOP_PADDING
         
@@ -848,6 +850,7 @@ class SmartpointAutomation:
             return False
             
         rect = self._get_terminal_rect()
+        # Uses global LINE_HEIGHT from constants
         total_lines_capacity = (rect.height() - 10) // LINE_HEIGHT
         
         # KEY FIX: Scrub trailing empty phantom lines so counting from the bottom is exact!
@@ -875,7 +878,7 @@ class SmartpointAutomation:
                     # Target isolated calculation from the visual bottom
                     # Empirical Test: Smartpoint's bottom frame padding sits exactly at 0px.
                     # The text renders completely flush against the lowest border of the active text area.
-                    # BOTTOM_MARGIN is imported from constants
+                    # Uses global BOTTOM_MARGIN from constants
                     lines_from_bottom = len(lines) - 1 - i
                     base_y = int(rect.bottom - BOTTOM_MARGIN - (lines_from_bottom + 0.5) * LINE_HEIGHT)
                     
