@@ -37,6 +37,7 @@ from change_detector import (
 from exceptions import ConfigurationError, ValidationError
 from validators import validate_config, validate_limit, sanitize_command
 from credential_manager import CredentialManager
+from constants import MAX_RETRIES_COMMAND, MAX_FS_DATE_STEPS, FS_DATE_OFFSET_START
 
 # Try to load .env file if python-dotenv is available
 try:
@@ -355,7 +356,7 @@ def main():
             logger.debug("  Initializing terminal state...")
             automation.refresh_terminal()
             
-            MAX_RETRIES = 3
+            MAX_RETRIES = MAX_RETRIES_COMMAND
             logger.info(f"  Executing {len(commands)} commands...")
             for i, cmd in enumerate(commands, 1):
                 logger.info(f"  [{i}/{len(commands)}] {cmd['command']}")
@@ -404,8 +405,8 @@ def main():
                         airline = base_cmd.split('/')[1][:2]
                         
                         fs_expanded = ""
-                        fs_date_offset = 7
-                        max_fs_date_steps = 14
+                        fs_date_offset = FS_DATE_OFFSET_START
+                        max_fs_date_steps = MAX_FS_DATE_STEPS
                         
                         while fs_date_offset <= max_fs_date_steps:
                             date_str = (datetime.now() + timedelta(days=fs_date_offset)).strftime('%d%b').upper()
