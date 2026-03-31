@@ -353,6 +353,7 @@ class SmartpointAutomation:
                 md_response = self._copy_terminal_text()
             
             # Check if MD/click returned "INVALID" (no more data)
+            if self._has_invalid(md_response):
                 self.logger.debug("      [DEBUG] MD returned 'INVALID'. No more data to paginate.")
                 break  # Don't add INVALID page to results
             
@@ -874,7 +875,7 @@ class SmartpointAutomation:
                     # Target isolated calculation from the visual bottom
                     # Empirical Test: Smartpoint's bottom frame padding sits exactly at 0px.
                     # The text renders completely flush against the lowest border of the active text area.
-                    BOTTOM_MARGIN = BOTTOM_MARGIN  # from constants
+                    # BOTTOM_MARGIN is imported from constants
                     lines_from_bottom = len(lines) - 1 - i
                     base_y = int(rect.bottom - BOTTOM_MARGIN - (lines_from_bottom + 0.5) * LINE_HEIGHT)
                     
