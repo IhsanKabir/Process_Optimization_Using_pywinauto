@@ -54,6 +54,9 @@ FDMCTDAC/UL
 #OV
 FDDACMCT/OV
 FDMCTDAC/OV
+#WY
+FDDACMCT/WY
+FDMCTDAC/WY
 #---------------------------
 #DOH
 #---------------------------

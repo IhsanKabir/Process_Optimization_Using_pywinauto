@@ -106,7 +106,7 @@ def parse_ftax_detail(raw_text: str, tax_code: str = '', tax_name: str = '') -> 
             continue
         # Deduplicate: skip lines we've already seen, unless they're rate lines
         # (rate lines with amounts can repeat legitimately for different categories)
-        amount_match_check = re.search(r'(?:\s|^)[A-Z]{3}\s+\d+\.?\d*\s*$', stripped)
+        amount_match_check = re.search(r'(?:\s|^)[A-Z]{3}\s*\d+(?:\.\d+)?\s*$', stripped)
         line_key = stripped.rstrip()
         if not amount_match_check and line_key in seen_lines:
             continue
@@ -121,16 +121,24 @@ def parse_ftax_detail(raw_text: str, tax_code: str = '', tax_name: str = '') -> 
     pending_condition = ''  # For multi-line conditions
     
     # Amount pattern: e.g. "SGD 46.40" or "SGD10.00" (no space) at the end of the line
-    amount_pattern = re.compile(r'(?:\s|^)([A-Z]{3})\s*(\d+\.\d+)\s*$')
+    amount_pattern = re.compile(r'(?:\s|^)([A-Z]{3})\s*(\d+(?:\.\d+)?)\s*$')
     
     for i, stripped in enumerate(all_lines):
         upper = stripped.upper()
         
         # Detect TAX RATE section (multiple possible formats)
-        if 'TAX RATE' in upper and not amount_pattern.search(stripped):
+        entry_headers = ['TAX RATE', 'TAX RATES', 'TAX ASSESSMENT', 'TAXES APPLY']
+        if any(h in upper for h in entry_headers) and not amount_pattern.search(stripped):
             in_tax_rate = True
             seen_tax_rate_block = True
             continue
+        
+        # Fallback entry: if we see "ADULTS" or "CHILDREN" with an amount, force entry
+        if not in_tax_rate and any(k in upper for k in ['ADULTS', 'CHILDREN', 'INFANTS']):
+            if amount_pattern.search(stripped):
+                in_tax_rate = True
+                seen_tax_rate_block = True
+                # Don't continue; let it parse this line as a rate below
         
         if not in_tax_rate:
             # Try to extract tax name from header if we don't have it
@@ -260,7 +268,7 @@ def _is_category_line(line: str) -> bool:
         'DEPARTURES', 'ARRIVALS', 'INTERNATIONAL', 'DOMESTIC',
         'TERMINAL', 'TRANSIT', 'TRANSFER', 'PASSENGER',
         'EMBARKATION', 'APPLICABLE', 'EXEMPT', 'EXCEPT',
-        'SELETAR'
+        'SELETAR', 'ADULTS', 'CHILDREN', 'INFANTS', 'PERSON', 'FLIGHTS.'
     ]
     
     # Must contain a keyword and NOT contain an amount at the end

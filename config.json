@@ -1,8 +1,39 @@
 {
     "commands_file": "commands.txt",
     "excel_output_filename": "fare_report_{date}.xlsx",
-    "rbd_sort_order": ["F", "A", "J", "C", "D", "I", "Z", "Y", "B", "M", "H", "K", "Q", "T", "N", "R", "V", "X", "L", "U", "E", "G", "S", "W", "O"],
-    "domestic_airports": ["DAC", "CGP", "ZYL", "CXB"],
+    "rbd_sort_order": [
+        "F",
+        "A",
+        "J",
+        "C",
+        "D",
+        "I",
+        "Z",
+        "Y",
+        "B",
+        "M",
+        "H",
+        "K",
+        "Q",
+        "T",
+        "N",
+        "R",
+        "V",
+        "X",
+        "L",
+        "U",
+        "E",
+        "G",
+        "S",
+        "W",
+        "O"
+    ],
+    "domestic_airports": [
+        "DAC",
+        "CGP",
+        "ZYL",
+        "CXB"
+    ],
     "airline_names": {
         "BG": "Biman Bangladesh",
         "BS": "US-Bangla",
@@ -12,7 +43,10 @@
         "QR": "Qatar Airways",
         "GF": "Gulf Air",
         "WY": "Oman Air",
-        "OV": "SalamAir"
+        "OV": "SalamAir",
+        "EK": "Emirates",
+        "Q2": "Maldivian Airline",
+        "TG": "Thai Airways"
     },
     "city_names": {
         "DAC": "Dhaka",
@@ -25,9 +59,45 @@
         "CXB": "Cox's Bazar"
     },
     "tax_airports": {
-        "SIN": {"country": "SG", "name": "Singapore"},
-        "MLE": {"country": "MV", "name": "Maldives"},
-        "CAN": {"country": "CN", "name": "China"},
-        "KUL": {"country": "MY", "name": "Malaysia"}
+        "SIN": {
+            "country": "SG",
+            "name": "Singapore"
+        },
+        "MLE": {
+            "country": "MV",
+            "name": "Maldives"
+        },
+        "CAN": {
+            "country": "CN",
+            "name": "China"
+        },
+        "KUL": {
+            "country": "MY",
+            "name": "Malaysia"
+        },
+        "DEL": {
+            "country": "IN",
+            "name": "India"
+        },
+        "MCT": {
+            "country": "OM",
+            "name": "Oman"
+        },
+        "DXB": {
+            "country": "AE",
+            "name": "UAE"
+        },
+        "RUH": {
+            "country": "SA",
+            "name": "Saudi Arabia"
+        },
+        "DOH": {
+            "country": "QA",
+            "name": "Qatar"
+        },
+        "BAH": {
+            "country": "BH",
+            "name": "Bahrain"
+        }
     }
 }
