@@ -54,6 +54,9 @@ FOCUS_DELAY = 0.3  # Wait after bringing window to foreground
 CLICK_DELAY = 0.05  # Wait between mouse operations
 KEYBOARD_INTERVAL = 0.03  # Delay between keystrokes
 COPY_DELAY = 0.1  # Wait after Ctrl+C before reading clipboard
+ESCAPE_CLEAR_DELAY = 0.15  # Wait after pressing Escape to clear prompts
+MOUSE_MOVE_DURATION = 0.1  # Duration for smooth mouse movements
+PAGEDOWN_SCROLL_DELAY = 0.4  # Wait after pagedown scroll operations
 
 # Command execution timeouts
 COMMAND_WAIT_SHORT = 0.5  # Initial wait after sending command
