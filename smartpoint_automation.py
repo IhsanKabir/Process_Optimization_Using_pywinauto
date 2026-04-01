@@ -672,61 +672,93 @@ class SmartpointAutomation:
         
         return (pixel_x, pixel_y)
     
-    def click_element_by_text_position(self, text: str, search_pattern: str, 
+    def click_element_by_text_position(self, text: str, search_pattern: str,
                                         x_ratio: float = 0.5, occurrence: int = 0,
-                                        y_offsets: list = None) -> str:
+                                        y_offsets: list = None, use_2d_offsets: bool = False) -> str:
         """
         Find text in the terminal output, calculate its screen position, and click it.
-        
-        Uses fixed line height (18px) and regex to find the target line,
+
+        Uses fixed line height (20px) and regex to find the target line,
         then clicks with retry offsets for tolerance.
+
+        Args:
+            text: Terminal text to search
+            search_pattern: Regex pattern to find target text
+            x_ratio: Horizontal position ratio (0.0=left, 1.0=right)
+            occurrence: Which match to click (0=first, -1=last)
+            y_offsets: List of vertical pixel offsets to try (deprecated if use_2d_offsets=True)
+            use_2d_offsets: If True, use 2D (x,y) offset tuples for better tolerance
         """
         import re
-        
+
         if not self.focus():
             return ""
-        
-        if y_offsets is None:
-            y_offsets = [0, -9, 9, -18, 18]
-        
+
+        # Determine offset strategy
+        if use_2d_offsets:
+            # Use 2D offsets for both horizontal and vertical tolerance
+            offsets = [
+                (0, 0),
+                (0, -9), (0, 9),           # Vertical only
+                (-10, 0), (10, 0),         # Horizontal only
+                (0, -18), (0, 18),         # More vertical
+                (-10, -9), (10, -9),       # Diagonal combinations
+                (-10, 9), (10, 9),
+                (-20, 0), (20, 0),         # More horizontal
+            ]
+        else:
+            # Legacy: vertical offsets only
+            if y_offsets is None:
+                y_offsets = [0, -9, 9, -18, 18]
+            offsets = [(0, y) for y in y_offsets]
+
         # Clear any text selection first
         pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
         time.sleep(ESCAPE_CLEAR_DELAY)
-        
+
         # Find matching lines
         lines = text.split('\n')
         matching_lines = []
         for idx, line in enumerate(lines):
             if re.search(search_pattern, line, re.IGNORECASE):
                 matching_lines.append(idx)
-        
+
         if not matching_lines:
             self.logger.error(f"      [CLICK] Pattern '{search_pattern}' not found in {len(lines)} lines")
             return ""
-        
+
         if occurrence >= len(matching_lines) or (occurrence < 0 and abs(occurrence) > len(matching_lines)):
             self.logger.error(f"      [CLICK] Only {len(matching_lines)} matches, need #{occurrence}")
             return ""
-        
+
         target_line = matching_lines[occurrence]
         base_x, base_y = self._text_line_to_pixel(text, target_line, x_ratio=x_ratio)
-        
-        self.logger.info(f"      [CLICK] Line {target_line} -> ({base_x}, {base_y})")
-        
-        text_before = text
-        for offset in y_offsets:
-            click_y = base_y + offset
-            self.logger.debug(f"      [CLICK] Trying ({base_x}, {click_y}) [offset={offset}]")
 
-            pyautogui.moveTo(base_x, click_y, duration=MOUSE_MOVE_DURATION)
+        self.logger.info(f"      [CLICK] Line {target_line} -> ({base_x}, {base_y})")
+
+        text_before = text
+        for x_off, y_off in offsets:
+            click_x = base_x + x_off
+            click_y = base_y + y_off
+            self.logger.debug(f"      [CLICK] Trying ({click_x}, {click_y}) [offset=({x_off},{y_off})]")
+
+            pyautogui.moveTo(click_x, click_y, duration=MOUSE_MOVE_DURATION)
             pyautogui.click()
             time.sleep(COMMAND_WAIT_SHORT)
-            
+
             result = self._copy_terminal_text()
+
+            # Check if we accidentally activated a dropdown
+            if self._has_dropdown_activated(result):
+                self.logger.debug("      [CLICK] Dropdown detected, closing with Escape and retrying...")
+                pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
+                time.sleep(ESCAPE_CLEAR_DELAY)
+                continue
+
             if result.strip() != text_before.strip():
-                self.logger.info(f"      [CLICK] ✓ Screen changed at offset={offset}")
+                self.logger.info(f"      [CLICK] ✓ Screen changed at offset=({x_off},{y_off})")
                 return result
-        
+
         self.logger.warning(f"      [CLICK] All offsets tried, screen unchanged.")
         return self._copy_terminal_text()
     
@@ -831,14 +863,27 @@ class SmartpointAutomation:
         """
         Click the 'BDT CURRENCY FARES EXISTS' hyperlink.
         The link spans the full text, so we click in the middle.
+
+        Uses 2D offset tolerance to prevent accidental clicks on adjacent
+        elements like the "Fare" section header.
         """
-        return self.click_element_by_text_position(
+        result = self.click_element_by_text_position(
             text=fd_text,
             search_pattern=r'CURRENCY\s+FARES?\s+EXISTS?',
-            x_ratio=CURRENCY_LINK_X_RATIO,  # Click left-center of the text
+            x_ratio=CURRENCY_LINK_X_RATIO,  # Click center of the text
             occurrence=0,
-            y_offsets=CLICK_OFFSET_Y_SINGLE
+            use_2d_offsets=True  # Use 2D offsets for better tolerance
         )
+
+        # Validate the click succeeded by checking for expected currency data
+        if result and not self._has_currency_redirect(result):
+            # Successfully clicked and navigated away from the redirect message
+            self.logger.info("      [CLICK] ✓ Currency link clicked successfully, fare data loaded")
+            return result
+        else:
+            # Click may have failed, warn but return result anyway
+            self.logger.warning("      [CLICK] Currency link click may have failed - still seeing redirect message")
+            return result
     
     def click_more_prompt_link(self, terminal_text: str) -> bool:
         """

@@ -24,7 +24,7 @@ BOTTOM_MARGIN = 0  # Pixels at bottom of terminal (text flush against bottom)
 D_BUTTON_X_RATIO = 0.855  # Horizontal position ratio (0.0=left, 1.0=right)
 
 # Currency link click position
-CURRENCY_LINK_X_RATIO = 0.3  # Click left-center of "BDT CURRENCY FARES EXISTS" link
+CURRENCY_LINK_X_RATIO = 0.5  # Click center of "BDT CURRENCY FARES EXISTS" link (changed from 0.3 to avoid clicking Fare section header)
 
 # "More Fares/Flights" link position
 MORE_LINK_X_RATIO = 0.04  # Click near left edge to avoid airline codes
