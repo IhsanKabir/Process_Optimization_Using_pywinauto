@@ -170,7 +170,7 @@ def parse_fare_display(raw_text: str) -> dict:
 def group_fares_by_rbd(fares: list[dict], rbd_sort_order: list[str] = None) -> dict:
     """
     Group parsed fares by RBD, extracting both OW and RT fares for each RBD,
-    and capturing the lowest fare amount for each type.
+    and capturing the lowest fare amount for each type, prioritizing saleable fares.
     
     Returns:
         Dict keyed by RBD -> {
@@ -185,6 +185,7 @@ def group_fares_by_rbd(fares: list[dict], rbd_sort_order: list[str] = None) -> d
     
     for fare in fares:
         rbd = fare['rbd']
+        is_unsaleable = fare.get('is_unsaleable', False)
         
         if rbd not in rbd_data:
             rbd_data[rbd] = {
@@ -192,23 +193,44 @@ def group_fares_by_rbd(fares: list[dict], rbd_sort_order: list[str] = None) -> d
                 'ow_fare': None,
                 'rt_fare': None,
                 'ow_fare_basis': None,
-                'rt_fare_basis': None
+                'rt_fare_basis': None,
+                'ow_is_unsaleable': False,
+                'rt_is_unsaleable': False
             }
             
+        def update_fare_if_better(fare_type: str):
+            f_key = f"{fare_type}_fare"
+            b_key = f"{fare_type}_fare_basis"
+            u_key = f"{fare_type}_is_unsaleable"
+            
+            existing_fare = rbd_data[rbd][f_key]
+            existing_is_unsaleable = rbd_data[rbd][u_key]
+            new_fare = fare['fare']
+            
+            should_update = False
+            if existing_fare is None:
+                should_update = True
+            elif existing_is_unsaleable and not is_unsaleable:
+                # Current is unsaleable, but new one is saleable! ALWAYS switch.
+                should_update = True
+            elif existing_is_unsaleable == is_unsaleable:
+                # Both same status - pick lowest
+                if new_fare < existing_fare:
+                    should_update = True
+            # if existing is saleable and new is unsaleable, we ignore the new one.
+
+            if should_update:
+                rbd_data[rbd][f_key] = new_fare
+                basis = fare['fare_basis']
+                if is_unsaleable:
+                    basis += " (Unsaleable)"
+                rbd_data[rbd][b_key] = basis
+                rbd_data[rbd][u_key] = is_unsaleable
+
         if fare['is_rt']:
-            if rbd_data[rbd]['rt_fare'] is None or fare['fare'] < rbd_data[rbd]['rt_fare']:
-                rbd_data[rbd]['rt_fare'] = fare['fare']
-                basis = fare['fare_basis']
-                if fare.get('is_unsaleable'):
-                    basis += " (Unsaleable)"
-                rbd_data[rbd]['rt_fare_basis'] = basis
-        else: # is OW
-            if rbd_data[rbd]['ow_fare'] is None or fare['fare'] < rbd_data[rbd]['ow_fare']:
-                rbd_data[rbd]['ow_fare'] = fare['fare']
-                basis = fare['fare_basis']
-                if fare.get('is_unsaleable'):
-                    basis += " (Unsaleable)"
-                rbd_data[rbd]['ow_fare_basis'] = basis
+            update_fare_if_better('rt')
+        else:
+            update_fare_if_better('ow')
     
     # Sort by RBD order
     if rbd_sort_order:

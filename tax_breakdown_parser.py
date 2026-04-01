@@ -20,7 +20,7 @@ def parse_fs_tax_breakdown(text: str) -> dict:
         'q_charge': 0.0,
         'total_taxes': 0.0,
         'total_amount': 0.0,
-        'exchange_rate': 0.0,
+        'exchange_rate': 1.0,
         'tax_breakdown': {} 
     }
     
@@ -36,9 +36,12 @@ def parse_fs_tax_breakdown(text: str) -> dict:
         result['equ_currency'] = equ_match.group(1)
         result['equ_fare'] = float(equ_match.group(2))
         
-    # Calculate exchange rate dynamically
+    # Calculate exchange rate dynamically (e.g. EQU BDT21720 / FARE USD177.00)
     if result['base_fare'] > 0 and result['equ_fare'] > 0:
         result['exchange_rate'] = round(result['equ_fare'] / result['base_fare'], 4)
+    elif result['base_currency'] == 'BDT':
+        # If fare is already in BDT, exchange rate to BDT is 1.0
+        result['exchange_rate'] = 1.0
         
     # 3. YQ, YR, Q Charges
     yq_match = re.search(r'\bYQ\s*(\d+\.?\d*)\b', text)
