@@ -14,7 +14,6 @@ from pywinauto import Desktop
 import pyautogui
 
 import ctypes
-from ctypes import wintypes
 
 from constants import (
     # Terminal rendering
@@ -36,6 +35,9 @@ from constants import (
     CLICK_DELAY,
     KEYBOARD_INTERVAL,
     COPY_DELAY,
+    ESCAPE_CLEAR_DELAY,
+    MOUSE_MOVE_DURATION,
+    PAGEDOWN_SCROLL_DELAY,
     COMMAND_WAIT_SHORT,
     COMMAND_WAIT_MEDIUM,
     COMMAND_WAIT_LONG,
@@ -164,52 +166,52 @@ class SmartpointAutomation:
         Command format: SON/Z{PCC}[enter]{USERNAME}[enter]{PASSWORD}[enter]
         """
         if self.logged_in:
-            print("  [DEBUG] Already logged in, skipping login sequence.")
+            self.logger.debug("Already logged in, skipping login sequence.")
             return True
-            
+
         if not self.focus():
-            print("  [ERROR] Cannot login, window not focused.")
+            self.logger.error("Cannot login, window not focused.")
             return False
-            
-        print("  [DEBUG] Starting login sequence...")
+
+        self.logger.debug("Starting login sequence...")
         self.clear_screen()
-        
+
         try:
             # 1. Initiate Sign-On
             sign_on_cmd = f"SON/Z{pcc}" if pcc else "SON/Z"
-            print(f"    Sending sign-on command: {sign_on_cmd}")
+            self.logger.info(f"Sending sign-on command: {sign_on_cmd}")
             pyautogui.typewrite(sign_on_cmd, interval=KEYBOARD_INTERVAL)
             pyautogui.press('enter')
             time.sleep(COMMAND_WAIT_FS) # Wait for username prompt
-            
+
             # 2. Enter Username
-            print("    Entering username...")
+            self.logger.info("Entering username...")
             pyautogui.typewrite(username, interval=KEYBOARD_INTERVAL)
             pyautogui.press('enter')
             time.sleep(COMMAND_WAIT_LONG) # Wait for password prompt
-            
+
             # 3. Enter Password
-            print("    Entering password...")
+            self.logger.info("Entering password...")
             pyautogui.typewrite(password, interval=KEYBOARD_INTERVAL)
             pyautogui.press('enter')
-            
+
             # Wait for login to complete
-            print("    Waiting for login to complete...")
+            self.logger.info("Waiting for login to complete...")
             time.sleep(LOGIN_COMPLETION_WAIT)
-            
+
             # Check for success by reading terminal text
             terminal_text = self._copy_terminal_text()
             if "RESTRICTED" in terminal_text.upper() or "SIGN-ON" in terminal_text.upper() or "WELCOME" in terminal_text.upper():
-                 print("  [SUCCESS] Login successful.")
+                 self.logger.info("Login successful.")
                  self.logged_in = True
                  return True
             else:
-                 print("  [WARNING] Login might have failed. Please check the terminal.")
-                 print(f"  [DEBUG] Terminal output: {terminal_text[:100]}...")
+                 self.logger.warning("Login might have failed. Please check the terminal.")
+                 self.logger.debug(f"Terminal output: {terminal_text[:100]}...")
                  return False
-                 
+
         except Exception as e:
-            print(f"  [ERROR] Login automation failed: {e}")
+            self.logger.error(f"Login automation failed: {e}")
             return False
 
     def clear_screen(self):
@@ -625,11 +627,11 @@ class SmartpointAutomation:
                              char_idx: int = None, x_ratio: float = 0.5):
         """
         Convert a text line number to pixel screen coordinates.
-        
-        Uses FIXED line height (~18px) based on the terminal's monospaced font,
-        NOT calculated from total text lines (which would be wrong when the 
+
+        Uses FIXED line height (LINE_HEIGHT constant, typically 20px) based on the terminal's monospaced font,
+        NOT calculated from total text lines (which would be wrong when the
         terminal has many blank lines below the content).
-        
+
         Args:
             text: The full terminal text (from Ctrl+A, Ctrl+C)
             target_line_idx: 0-based index of the target line in the text
@@ -689,7 +691,7 @@ class SmartpointAutomation:
         
         # Clear any text selection first
         pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
-        time.sleep(0.15)
+        time.sleep(ESCAPE_CLEAR_DELAY)
         
         # Find matching lines
         lines = text.split('\n')
@@ -715,8 +717,8 @@ class SmartpointAutomation:
         for offset in y_offsets:
             click_y = base_y + offset
             self.logger.debug(f"      [CLICK] Trying ({base_x}, {click_y}) [offset={offset}]")
-            
-            pyautogui.moveTo(base_x, click_y, duration=0.1)
+
+            pyautogui.moveTo(base_x, click_y, duration=MOUSE_MOVE_DURATION)
             pyautogui.click()
             time.sleep(COMMAND_WAIT_SHORT)
             
@@ -784,7 +786,7 @@ class SmartpointAutomation:
         
         # Clear selection
         pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
-        time.sleep(0.15)
+        time.sleep(ESCAPE_CLEAR_DELAY)
         
         # Try clicking with combined X and Y offsets for tolerance
         text_before = fs_text
@@ -799,8 +801,8 @@ class SmartpointAutomation:
             click_x = base_x + x_off
             click_y = base_y + y_off
             self.logger.debug(f"      [D-CLICK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]")
-            
-            pyautogui.moveTo(click_x, click_y, duration=0.1)
+
+            pyautogui.moveTo(click_x, click_y, duration=MOUSE_MOVE_DURATION)
             pyautogui.click()
             time.sleep(COMMAND_WAIT_SHORT)
             
@@ -858,19 +860,18 @@ class SmartpointAutomation:
         for i in range(len(lines)-1, -1, -1):
             line = lines[i]
             match = re.search(r'(MORE\s+(?:FARES|FLIGHTS|OPTIONS))', line, re.IGNORECASE)
-            
+
             if match:
-                char_idx = match.start() + 4
                 pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
-                time.sleep(0.15)
-                
+                time.sleep(ESCAPE_CLEAR_DELAY)
+
                 # IMPORTANT: Scroll down if the text is overflowing
                 if len(lines) > total_lines_capacity:
                     self.logger.debug("      [CLICK] Scrolling terminal to bottom before clicking...")
                     pyautogui.click(rect.left + rect.width()//2, rect.top + rect.height()//2)
                     time.sleep(COPY_DELAY)
-                    pyautogui.press('pagedown', presses=4, interval=0.1)
-                    time.sleep(0.4)
+                    pyautogui.press('pagedown', presses=4, interval=KEYBOARD_INTERVAL)
+                    time.sleep(PAGEDOWN_SCROLL_DELAY)
                     
                     # Target isolated calculation from the visual bottom
                     # Empirical Test: Smartpoint's bottom frame padding sits exactly at 0px.
@@ -898,15 +899,15 @@ class SmartpointAutomation:
                     click_x = base_x + x_off
                     click_y = base_y + y_off
                     self.logger.debug(f"      [CLICK] Trying 'More' link at ({click_x}, {click_y}) [offset=({x_off},{y_off})]")
-                    
-                    pyautogui.moveTo(click_x, click_y, duration=0.1)
+
+                    pyautogui.moveTo(click_x, click_y, duration=MOUSE_MOVE_DURATION)
                     pyautogui.click()
                     time.sleep(COMMAND_WAIT_LONG)
                     
                     result = self._copy_terminal_text()
                     if result.strip() != text_before.strip():
-                         self.logger.info("      [CLICK] ✓ 'More' link clicked successfully!")
-                         return True
+                        self.logger.info("      [CLICK] ✓ 'More' link clicked successfully!")
+                        return True
                          
                 self.logger.warning("      [CLICK] Exhausted all offset attempts to click 'More' link.")
                 return False
