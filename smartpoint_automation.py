@@ -884,17 +884,21 @@ class SmartpointAutomation:
                     base_x, _ = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
                 else:
                     base_x, base_y = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
-                
+
                 # Start Retry/Tolerance Logic
-                # Strictly vertical sweeps to NEVER misclick horizontally onto 'CZ' or other airline codes.
+                # Use 2D offsets to handle both horizontal and vertical positioning errors
+                # This prevents accidental clicks on adjacent elements like "/12M" or "M" dropdowns
                 offsets = [
                     (0, 0),
-                    (0, -10), (0, 10),
-                    (0, -20), (0, 20),
-                    (0, -30), (0, 30)
+                    (0, -10), (0, 10),          # Vertical only
+                    (-5, 0), (5, 0),            # Horizontal only (small shifts)
+                    (0, -20), (0, 20),          # More vertical
+                    (-5, -10), (5, -10),        # Diagonal combinations
+                    (-5, 10), (5, 10),
+                    (0, -30), (0, 30)           # Even more vertical
                 ]
                 text_before = terminal_text
-                
+
                 for x_off, y_off in offsets:
                     click_x = base_x + x_off
                     click_y = base_y + y_off
@@ -903,12 +907,20 @@ class SmartpointAutomation:
                     pyautogui.moveTo(click_x, click_y, duration=MOUSE_MOVE_DURATION)
                     pyautogui.click()
                     time.sleep(COMMAND_WAIT_LONG)
-                    
+
                     result = self._copy_terminal_text()
+
+                    # Check if we accidentally activated a dropdown (MAXIMUM STAY, etc.)
+                    if self._has_dropdown_activated(result):
+                        self.logger.debug("      [CLICK] Dropdown detected, closing with Escape and retrying...")
+                        pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
+                        time.sleep(ESCAPE_CLEAR_DELAY)
+                        continue
+
                     if result.strip() != text_before.strip():
                         self.logger.info("      [CLICK] ✓ 'More' link clicked successfully!")
                         return True
-                         
+
                 self.logger.warning("      [CLICK] Exhausted all offset attempts to click 'More' link.")
                 return False
                 
@@ -973,4 +985,39 @@ class SmartpointAutomation:
             stripped = line.strip().upper()
             if stripped == INVALID_SIGNAL:
                 return True
+        return False
+
+    def _has_dropdown_activated(self, text: str) -> bool:
+        """
+        Check if a dropdown menu was accidentally activated (e.g., MAXIMUM STAY, MINIMUM STAY).
+
+        When clicking on the wrong spot, dropdowns like "/12M" or "M" can expand and show
+        options like "MAXIMUM STAY", "MINIMUM STAY", etc. This method detects those.
+
+        Returns True if a dropdown is detected, False otherwise.
+        """
+        if not text:
+            return False
+
+        upper_text = text.upper()
+
+        # Common dropdown keywords that indicate an accidental menu activation
+        dropdown_keywords = [
+            'MAXIMUM STAY',
+            'MINIMUM STAY',
+            'MAX STAY',
+            'MIN STAY',
+            'ADVANCE PURCHASE',
+            'TRAVEL COMPLETE',
+            'PERMITTED',
+            'NOT PERMITTED',
+            'TICKETING',
+            'BLACKOUT DATES'
+        ]
+
+        # Check if any dropdown keywords appear (these typically shouldn't be in fare lists)
+        for keyword in dropdown_keywords:
+            if keyword in upper_text:
+                return True
+
         return False
