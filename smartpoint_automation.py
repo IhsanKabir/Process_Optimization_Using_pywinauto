@@ -1035,7 +1035,8 @@ class SmartpointAutomation:
         # 3. "More Fares" or "More Flights" links indicating pagination
 
         # Check for fare line patterns (line number + airline + fare amount + fare basis + RBD)
-        if re.search(r'^\s*O?\d+\s+[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+', text, re.MULTILINE):
+        # Note: Airline code can have optional minus prefix (e.g., "-BG" for certain fare types)
+        if re.search(r'^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+', text, re.MULTILINE):
             # Actual fare data found - this is NOT a clickable redirect
             return None
 
