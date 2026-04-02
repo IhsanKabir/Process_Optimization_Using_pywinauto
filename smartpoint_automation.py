@@ -1031,18 +1031,12 @@ class SmartpointAutomation:
         # Now check if this is a standalone redirect (clickable) or informational text
         # Look for patterns that indicate actual fare data is present:
         # 1. Fare lines: "  1 BG 100.00 YOW Y ..." or "O30 -BG 150.00 COW C ..."
-        # 2. Fare basis column headers: "FARE   FARE   C AP MIN/"
-        # 3. "More Fares" or "More Flights" links indicating pagination
+        # 2. "More Fares" or "More Flights" links indicating pagination
 
         # Check for fare line patterns (line number + airline + fare amount + fare basis + RBD)
         # Note: Airline code can have optional minus prefix (e.g., "-BG" for certain fare types)
         if re.search(r'^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+', text, re.MULTILINE):
             # Actual fare data found - this is NOT a clickable redirect
-            return None
-
-        # Check for fare basis column headers that appear with actual fare displays
-        if re.search(r'FARE\s+FARE\s+C\s+AP\s+MIN', text.upper()):
-            # Header found - this is NOT a clickable redirect
             return None
 
         # Check for More Flights/Fares links which indicate we're in fare display mode
