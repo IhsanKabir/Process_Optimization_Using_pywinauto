@@ -14,7 +14,6 @@ from pywinauto import Desktop
 import pyautogui
 
 import ctypes
-from ctypes import wintypes
 
 from constants import (
     # Terminal rendering
@@ -36,6 +35,9 @@ from constants import (
     CLICK_DELAY,
     KEYBOARD_INTERVAL,
     COPY_DELAY,
+    ESCAPE_CLEAR_DELAY,
+    MOUSE_MOVE_DURATION,
+    PAGEDOWN_SCROLL_DELAY,
     COMMAND_WAIT_SHORT,
     COMMAND_WAIT_MEDIUM,
     COMMAND_WAIT_LONG,
@@ -164,52 +166,52 @@ class SmartpointAutomation:
         Command format: SON/Z{PCC}[enter]{USERNAME}[enter]{PASSWORD}[enter]
         """
         if self.logged_in:
-            print("  [DEBUG] Already logged in, skipping login sequence.")
+            self.logger.debug("Already logged in, skipping login sequence.")
             return True
-            
+
         if not self.focus():
-            print("  [ERROR] Cannot login, window not focused.")
+            self.logger.error("Cannot login, window not focused.")
             return False
-            
-        print("  [DEBUG] Starting login sequence...")
+
+        self.logger.debug("Starting login sequence...")
         self.clear_screen()
-        
+
         try:
             # 1. Initiate Sign-On
             sign_on_cmd = f"SON/Z{pcc}" if pcc else "SON/Z"
-            print(f"    Sending sign-on command: {sign_on_cmd}")
+            self.logger.info(f"Sending sign-on command: {sign_on_cmd}")
             pyautogui.typewrite(sign_on_cmd, interval=KEYBOARD_INTERVAL)
             pyautogui.press('enter')
             time.sleep(COMMAND_WAIT_FS) # Wait for username prompt
-            
+
             # 2. Enter Username
-            print("    Entering username...")
+            self.logger.info("Entering username...")
             pyautogui.typewrite(username, interval=KEYBOARD_INTERVAL)
             pyautogui.press('enter')
             time.sleep(COMMAND_WAIT_LONG) # Wait for password prompt
-            
+
             # 3. Enter Password
-            print("    Entering password...")
+            self.logger.info("Entering password...")
             pyautogui.typewrite(password, interval=KEYBOARD_INTERVAL)
             pyautogui.press('enter')
-            
+
             # Wait for login to complete
-            print("    Waiting for login to complete...")
+            self.logger.info("Waiting for login to complete...")
             time.sleep(LOGIN_COMPLETION_WAIT)
-            
+
             # Check for success by reading terminal text
             terminal_text = self._copy_terminal_text()
             if "RESTRICTED" in terminal_text.upper() or "SIGN-ON" in terminal_text.upper() or "WELCOME" in terminal_text.upper():
-                 print("  [SUCCESS] Login successful.")
+                 self.logger.info("Login successful.")
                  self.logged_in = True
                  return True
             else:
-                 print("  [WARNING] Login might have failed. Please check the terminal.")
-                 print(f"  [DEBUG] Terminal output: {terminal_text[:100]}...")
+                 self.logger.warning("Login might have failed. Please check the terminal.")
+                 self.logger.debug(f"Terminal output: {terminal_text[:100]}...")
                  return False
-                 
+
         except Exception as e:
-            print(f"  [ERROR] Login automation failed: {e}")
+            self.logger.error(f"Login automation failed: {e}")
             return False
 
     def clear_screen(self):
@@ -625,11 +627,11 @@ class SmartpointAutomation:
                              char_idx: int = None, x_ratio: float = 0.5):
         """
         Convert a text line number to pixel screen coordinates.
-        
-        Uses FIXED line height (~18px) based on the terminal's monospaced font,
-        NOT calculated from total text lines (which would be wrong when the 
+
+        Uses FIXED line height (LINE_HEIGHT constant, typically 20px) based on the terminal's monospaced font,
+        NOT calculated from total text lines (which would be wrong when the
         terminal has many blank lines below the content).
-        
+
         Args:
             text: The full terminal text (from Ctrl+A, Ctrl+C)
             target_line_idx: 0-based index of the target line in the text
@@ -670,61 +672,93 @@ class SmartpointAutomation:
         
         return (pixel_x, pixel_y)
     
-    def click_element_by_text_position(self, text: str, search_pattern: str, 
+    def click_element_by_text_position(self, text: str, search_pattern: str,
                                         x_ratio: float = 0.5, occurrence: int = 0,
-                                        y_offsets: list = None) -> str:
+                                        y_offsets: list = None, use_2d_offsets: bool = False) -> str:
         """
         Find text in the terminal output, calculate its screen position, and click it.
-        
-        Uses fixed line height (18px) and regex to find the target line,
+
+        Uses fixed line height (20px) and regex to find the target line,
         then clicks with retry offsets for tolerance.
+
+        Args:
+            text: Terminal text to search
+            search_pattern: Regex pattern to find target text
+            x_ratio: Horizontal position ratio (0.0=left, 1.0=right)
+            occurrence: Which match to click (0=first, -1=last)
+            y_offsets: List of vertical pixel offsets to try (deprecated if use_2d_offsets=True)
+            use_2d_offsets: If True, use 2D (x,y) offset tuples for better tolerance
         """
         import re
-        
+
         if not self.focus():
             return ""
-        
-        if y_offsets is None:
-            y_offsets = [0, -9, 9, -18, 18]
-        
+
+        # Determine offset strategy
+        if use_2d_offsets:
+            # Use 2D offsets for both horizontal and vertical tolerance
+            offsets = [
+                (0, 0),
+                (0, -9), (0, 9),           # Vertical only
+                (-10, 0), (10, 0),         # Horizontal only
+                (0, -18), (0, 18),         # More vertical
+                (-10, -9), (10, -9),       # Diagonal combinations
+                (-10, 9), (10, 9),
+                (-20, 0), (20, 0),         # More horizontal
+            ]
+        else:
+            # Legacy: vertical offsets only
+            if y_offsets is None:
+                y_offsets = [0, -9, 9, -18, 18]
+            offsets = [(0, y) for y in y_offsets]
+
         # Clear any text selection first
         pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
-        time.sleep(0.15)
-        
+        time.sleep(ESCAPE_CLEAR_DELAY)
+
         # Find matching lines
         lines = text.split('\n')
         matching_lines = []
         for idx, line in enumerate(lines):
             if re.search(search_pattern, line, re.IGNORECASE):
                 matching_lines.append(idx)
-        
+
         if not matching_lines:
             self.logger.error(f"      [CLICK] Pattern '{search_pattern}' not found in {len(lines)} lines")
             return ""
-        
+
         if occurrence >= len(matching_lines) or (occurrence < 0 and abs(occurrence) > len(matching_lines)):
             self.logger.error(f"      [CLICK] Only {len(matching_lines)} matches, need #{occurrence}")
             return ""
-        
+
         target_line = matching_lines[occurrence]
         base_x, base_y = self._text_line_to_pixel(text, target_line, x_ratio=x_ratio)
-        
+
         self.logger.info(f"      [CLICK] Line {target_line} -> ({base_x}, {base_y})")
-        
+
         text_before = text
-        for offset in y_offsets:
-            click_y = base_y + offset
-            self.logger.debug(f"      [CLICK] Trying ({base_x}, {click_y}) [offset={offset}]")
-            
-            pyautogui.moveTo(base_x, click_y, duration=0.1)
+        for x_off, y_off in offsets:
+            click_x = base_x + x_off
+            click_y = base_y + y_off
+            self.logger.debug(f"      [CLICK] Trying ({click_x}, {click_y}) [offset=({x_off},{y_off})]")
+
+            pyautogui.moveTo(click_x, click_y, duration=MOUSE_MOVE_DURATION)
             pyautogui.click()
             time.sleep(COMMAND_WAIT_SHORT)
-            
+
             result = self._copy_terminal_text()
+
+            # Check if we accidentally activated a dropdown
+            if self._has_dropdown_activated(result):
+                self.logger.debug("      [CLICK] Dropdown detected, closing with Escape and retrying...")
+                pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
+                time.sleep(ESCAPE_CLEAR_DELAY)
+                continue
+
             if result.strip() != text_before.strip():
-                self.logger.info(f"      [CLICK] ✓ Screen changed at offset={offset}")
+                self.logger.info(f"      [CLICK] ✓ Screen changed at offset=({x_off},{y_off})")
                 return result
-        
+
         self.logger.warning(f"      [CLICK] All offsets tried, screen unchanged.")
         return self._copy_terminal_text()
     
@@ -784,7 +818,7 @@ class SmartpointAutomation:
         
         # Clear selection
         pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
-        time.sleep(0.15)
+        time.sleep(ESCAPE_CLEAR_DELAY)
         
         # Try clicking with combined X and Y offsets for tolerance
         text_before = fs_text
@@ -799,8 +833,8 @@ class SmartpointAutomation:
             click_x = base_x + x_off
             click_y = base_y + y_off
             self.logger.debug(f"      [D-CLICK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]")
-            
-            pyautogui.moveTo(click_x, click_y, duration=0.1)
+
+            pyautogui.moveTo(click_x, click_y, duration=MOUSE_MOVE_DURATION)
             pyautogui.click()
             time.sleep(COMMAND_WAIT_SHORT)
             
@@ -829,14 +863,27 @@ class SmartpointAutomation:
         """
         Click the 'BDT CURRENCY FARES EXISTS' hyperlink.
         The link spans the full text, so we click in the middle.
+
+        Uses 2D offset tolerance to prevent accidental clicks on adjacent
+        elements like the "Fare" section header.
         """
-        return self.click_element_by_text_position(
+        result = self.click_element_by_text_position(
             text=fd_text,
             search_pattern=r'CURRENCY\s+FARES?\s+EXISTS?',
-            x_ratio=CURRENCY_LINK_X_RATIO,  # Click left-center of the text
+            x_ratio=CURRENCY_LINK_X_RATIO,  # Click center of the text
             occurrence=0,
-            y_offsets=CLICK_OFFSET_Y_SINGLE
+            use_2d_offsets=True  # Use 2D offsets for better tolerance
         )
+
+        # Validate the click succeeded by checking for expected currency data
+        if result and not self._has_currency_redirect(result):
+            # Successfully clicked and navigated away from the redirect message
+            self.logger.info("      [CLICK] ✓ Currency link clicked successfully, fare data loaded")
+            return result
+        else:
+            # Click may have failed, warn but return result anyway
+            self.logger.warning("      [CLICK] Currency link click may have failed - still seeing redirect message")
+            return result
     
     def click_more_prompt_link(self, terminal_text: str) -> bool:
         """
@@ -858,19 +905,18 @@ class SmartpointAutomation:
         for i in range(len(lines)-1, -1, -1):
             line = lines[i]
             match = re.search(r'(MORE\s+(?:FARES|FLIGHTS|OPTIONS))', line, re.IGNORECASE)
-            
+
             if match:
-                char_idx = match.start() + 4
                 pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
-                time.sleep(0.15)
-                
+                time.sleep(ESCAPE_CLEAR_DELAY)
+
                 # IMPORTANT: Scroll down if the text is overflowing
                 if len(lines) > total_lines_capacity:
                     self.logger.debug("      [CLICK] Scrolling terminal to bottom before clicking...")
                     pyautogui.click(rect.left + rect.width()//2, rect.top + rect.height()//2)
                     time.sleep(COPY_DELAY)
-                    pyautogui.press('pagedown', presses=4, interval=0.1)
-                    time.sleep(0.4)
+                    pyautogui.press('pagedown', presses=4, interval=KEYBOARD_INTERVAL)
+                    time.sleep(PAGEDOWN_SCROLL_DELAY)
                     
                     # Target isolated calculation from the visual bottom
                     # Empirical Test: Smartpoint's bottom frame padding sits exactly at 0px.
@@ -883,31 +929,43 @@ class SmartpointAutomation:
                     base_x, _ = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
                 else:
                     base_x, base_y = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
-                
+
                 # Start Retry/Tolerance Logic
-                # Strictly vertical sweeps to NEVER misclick horizontally onto 'CZ' or other airline codes.
+                # Use 2D offsets to handle both horizontal and vertical positioning errors
+                # This prevents accidental clicks on adjacent elements like "/12M" or "M" dropdowns
                 offsets = [
                     (0, 0),
-                    (0, -10), (0, 10),
-                    (0, -20), (0, 20),
-                    (0, -30), (0, 30)
+                    (0, -10), (0, 10),          # Vertical only
+                    (-5, 0), (5, 0),            # Horizontal only (small shifts)
+                    (0, -20), (0, 20),          # More vertical
+                    (-5, -10), (5, -10),        # Diagonal combinations
+                    (-5, 10), (5, 10),
+                    (0, -30), (0, 30)           # Even more vertical
                 ]
                 text_before = terminal_text
-                
+
                 for x_off, y_off in offsets:
                     click_x = base_x + x_off
                     click_y = base_y + y_off
                     self.logger.debug(f"      [CLICK] Trying 'More' link at ({click_x}, {click_y}) [offset=({x_off},{y_off})]")
-                    
-                    pyautogui.moveTo(click_x, click_y, duration=0.1)
+
+                    pyautogui.moveTo(click_x, click_y, duration=MOUSE_MOVE_DURATION)
                     pyautogui.click()
                     time.sleep(COMMAND_WAIT_LONG)
-                    
+
                     result = self._copy_terminal_text()
+
+                    # Check if we accidentally activated a dropdown (MAXIMUM STAY, etc.)
+                    if self._has_dropdown_activated(result):
+                        self.logger.debug("      [CLICK] Dropdown detected, closing with Escape and retrying...")
+                        pyautogui.press('escape', presses=2, interval=KEYBOARD_INTERVAL)
+                        time.sleep(ESCAPE_CLEAR_DELAY)
+                        continue
+
                     if result.strip() != text_before.strip():
-                         self.logger.info("      [CLICK] ✓ 'More' link clicked successfully!")
-                         return True
-                         
+                        self.logger.info("      [CLICK] ✓ 'More' link clicked successfully!")
+                        return True
+
                 self.logger.warning("      [CLICK] Exhausted all offset attempts to click 'More' link.")
                 return False
                 
@@ -972,4 +1030,39 @@ class SmartpointAutomation:
             stripped = line.strip().upper()
             if stripped == INVALID_SIGNAL:
                 return True
+        return False
+
+    def _has_dropdown_activated(self, text: str) -> bool:
+        """
+        Check if a dropdown menu was accidentally activated (e.g., MAXIMUM STAY, MINIMUM STAY).
+
+        When clicking on the wrong spot, dropdowns like "/12M" or "M" can expand and show
+        options like "MAXIMUM STAY", "MINIMUM STAY", etc. This method detects those.
+
+        Returns True if a dropdown is detected, False otherwise.
+        """
+        if not text:
+            return False
+
+        upper_text = text.upper()
+
+        # Common dropdown keywords that indicate an accidental menu activation
+        dropdown_keywords = [
+            'MAXIMUM STAY',
+            'MINIMUM STAY',
+            'MAX STAY',
+            'MIN STAY',
+            'ADVANCE PURCHASE',
+            'TRAVEL COMPLETE',
+            'PERMITTED',
+            'NOT PERMITTED',
+            'TICKETING',
+            'BLACKOUT DATES'
+        ]
+
+        # Check if any dropdown keywords appear (these typically shouldn't be in fare lists)
+        for keyword in dropdown_keywords:
+            if keyword in upper_text:
+                return True
+
         return False
