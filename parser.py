@@ -171,7 +171,11 @@ def group_fares_by_rbd(fares: list[dict], rbd_sort_order: list[str] = None) -> d
     """
     Group parsed fares by RBD, extracting both OW and RT fares for each RBD,
     and capturing the lowest fare amount for each type.
-    
+
+    IMPORTANT: Unsaleable fares are kept separate from saleable fares even if
+    they have the same RBD. This is done by creating separate dictionary keys
+    with " (Unsaleable)" suffix.
+
     Returns:
         Dict keyed by RBD -> {
             'rbd': str,
@@ -182,33 +186,34 @@ def group_fares_by_rbd(fares: list[dict], rbd_sort_order: list[str] = None) -> d
         }
     """
     rbd_data = {}
-    
+
     for fare in fares:
         rbd = fare['rbd']
-        
-        if rbd not in rbd_data:
-            rbd_data[rbd] = {
-                'rbd': rbd,
+
+        # Create separate keys for unsaleable fares to preserve both
+        # saleable and unsaleable fares even when RBDs duplicate
+        if fare.get('is_unsaleable'):
+            key = f"{rbd} (Unsaleable)"
+        else:
+            key = rbd
+
+        if key not in rbd_data:
+            rbd_data[key] = {
+                'rbd': key,
                 'ow_fare': None,
                 'rt_fare': None,
                 'ow_fare_basis': None,
                 'rt_fare_basis': None
             }
-            
+
         if fare['is_rt']:
-            if rbd_data[rbd]['rt_fare'] is None or fare['fare'] < rbd_data[rbd]['rt_fare']:
-                rbd_data[rbd]['rt_fare'] = fare['fare']
-                basis = fare['fare_basis']
-                if fare.get('is_unsaleable'):
-                    basis += " (Unsaleable)"
-                rbd_data[rbd]['rt_fare_basis'] = basis
+            if rbd_data[key]['rt_fare'] is None or fare['fare'] < rbd_data[key]['rt_fare']:
+                rbd_data[key]['rt_fare'] = fare['fare']
+                rbd_data[key]['rt_fare_basis'] = fare['fare_basis']
         else: # is OW
-            if rbd_data[rbd]['ow_fare'] is None or fare['fare'] < rbd_data[rbd]['ow_fare']:
-                rbd_data[rbd]['ow_fare'] = fare['fare']
-                basis = fare['fare_basis']
-                if fare.get('is_unsaleable'):
-                    basis += " (Unsaleable)"
-                rbd_data[rbd]['ow_fare_basis'] = basis
+            if rbd_data[key]['ow_fare'] is None or fare['fare'] < rbd_data[key]['ow_fare']:
+                rbd_data[key]['ow_fare'] = fare['fare']
+                rbd_data[key]['ow_fare_basis'] = fare['fare_basis']
     
     # Sort by RBD order
     if rbd_sort_order:
