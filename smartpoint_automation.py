@@ -1008,17 +1008,50 @@ class SmartpointAutomation:
     
     def _has_currency_redirect(self, text: str):
         """
-        Check if the text contains a 'XXX CURRENCY FARES EXISTS' message.
-        
-        Returns the currency code (e.g., 'BDT') if found, or None.
+        Check if the text contains a 'XXX CURRENCY FARES EXISTS' message that
+        requires clicking (standalone redirect).
+
+        Only returns the currency code if this is a STANDALONE redirect message
+        (clickable link) without actual fare data present. If fare basis codes
+        or other fare data exist, this is just informational text, not a clickable link.
+
+        Returns the currency code (e.g., 'BDT') if found as standalone redirect, or None.
         """
         if not text:
             return None
         import re
+
+        # First check if the currency redirect text exists
         match = re.search(r'([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?', text.upper())
-        if match:
-            return match.group(1)
-        return None
+        if not match:
+            return None
+
+        currency_code = match.group(1)
+
+        # Now check if this is a standalone redirect (clickable) or informational text
+        # Look for patterns that indicate actual fare data is present:
+        # 1. Fare lines: "  1 BG 100.00 YOW Y ..." or "O30 -BG 150.00 COW C ..."
+        # 2. Fare basis column headers: "FARE   FARE   C AP MIN/"
+        # 3. "More Fares" or "More Flights" links indicating pagination
+
+        # Check for fare line patterns (line number + airline + fare amount + fare basis + RBD)
+        if re.search(r'^\s*O?\d+\s+[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+', text, re.MULTILINE):
+            # Actual fare data found - this is NOT a clickable redirect
+            return None
+
+        # Check for fare basis column headers that appear with actual fare displays
+        if re.search(r'FARE\s+FARE\s+C\s+AP\s+MIN', text.upper()):
+            # Header found - this is NOT a clickable redirect
+            return None
+
+        # Check for More Flights/Fares links which indicate we're in fare display mode
+        if re.search(r'«\s*More\s+(Flights?|Fares?)\s*»', text, re.IGNORECASE):
+            # Pagination links found - this is NOT a clickable redirect
+            return None
+
+        # If we get here, the currency message exists but no fare data was found
+        # This is a standalone redirect that needs to be clicked
+        return currency_code
     
     def _has_invalid(self, text: str) -> bool:
         """Check if the last few lines contain 'INVALID' (MD returned no data)."""
