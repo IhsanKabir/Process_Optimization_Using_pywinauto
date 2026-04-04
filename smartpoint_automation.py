@@ -320,33 +320,20 @@ class SmartpointAutomation:
         if currency_match:
             self.logger.info(f"      [CURRENCY] {currency_match} CURRENCY FARES EXISTS detected - clicking redirect link...")
 
-            # Try clicking the currency link with retry logic
-            max_currency_retries = 2
-            clicked_success = False
-            for retry in range(max_currency_retries):
-                clicked_text = self.click_currency_link(initial_text)
+            # Click the currency link ONCE - do not retry to avoid toggle loops
+            clicked_text = self.click_currency_link(initial_text)
 
-                # Verify the click was successful by checking if screen changed
-                if clicked_text and clicked_text.strip() != initial_text.strip():
-                    # Also verify we're no longer seeing the redirect message
-                    if not self._has_currency_redirect(clicked_text):
-                        initial_text = clicked_text
-                        self.logger.info(f"      [CURRENCY] ✓ Successfully clicked {currency_match} redirect, loaded {len(initial_text)} chars")
-                        clicked_success = True
-                        break
-                    else:
-                        self.logger.warning(f"      [CURRENCY] Click attempt {retry + 1}: screen changed but still seeing redirect")
-                else:
-                    self.logger.warning(f"      [CURRENCY] Click attempt {retry + 1}: screen did not change")
+            # Check if screen changed after clicking
+            if clicked_text and clicked_text.strip() != initial_text.strip():
+                initial_text = clicked_text
+                self.logger.info(f"      [CURRENCY] ✓ Clicked {currency_match} redirect, screen updated ({len(initial_text)} chars)")
 
-                if retry < max_currency_retries - 1:
-                    self.logger.debug(f"      [CURRENCY] Retrying click in 1 second...")
-                    time.sleep(1.0)
-                    initial_text = self._copy_terminal_text()  # Refresh screen state
-
-            if not clicked_success:
-                self.logger.error(f"      [CURRENCY] ✗ Failed to click {currency_match} redirect after {max_currency_retries} attempts")
-                self.logger.error(f"      [CURRENCY] This may result in missing or incorrect fare data")
+                # Note: We don't check if the redirect message disappeared because on some routes
+                # (like MCT) the message might appear as informational text even after clicking.
+                # We trust that if the screen changed, the click worked.
+            else:
+                self.logger.warning(f"      [CURRENCY] Screen did not change after clicking {currency_match} redirect")
+                self.logger.warning(f"      [CURRENCY] Continuing with current screen content, may have incorrect data")
         
         current_page = 1
         previous_md_text = initial_text
