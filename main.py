@@ -389,17 +389,21 @@ def main():
                     
                     if terminal_text and len(terminal_text.strip()) > 50:
                         raw_texts[file_key] = terminal_text
-                        
+                        logger.info(f"    ✓ Fare data captured ({len(terminal_text)} chars)")
+
                         backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
                         os.makedirs(os.path.dirname(backup_path) or '.', exist_ok=True)
                         try:
                             with open(backup_path, 'w', encoding='utf-8') as f:
                                 f.write(terminal_text)
-                        except Exception:
-                            pass
+                            logger.debug(f"    Backup saved: {backup_path}")
+                        except Exception as e:
+                            logger.warning(f"    Could not save backup: {e}")
                     else:
                         failed_commands.append(cmd['command'])
-                        logger.error(f"    FAILED after {MAX_RETRIES} attempts: {cmd['command']}")
+                        logger.error(f"    ✗ FAILED after {MAX_RETRIES} attempts: {cmd['command']}")
+                        logger.error(f"    Final data length: {len(terminal_text) if terminal_text else 0} chars")
+                        logger.error(f"    This command will be skipped in the report")
                 else:
                     logger.info("    [SKIP] Skipping FD extraction (--only-yq/--only-currency)")
                         
@@ -496,9 +500,28 @@ def main():
                                     f.write(fs_expanded)
                             except Exception:
                                 pass
-            
+
             automation.show_completion_signal()
-        
+
+            # Show execution summary
+            total_commands = len(commands)
+            successful_commands = total_commands - len(failed_commands)
+            logger.info("")
+            logger.info("="*60)
+            logger.info("  EXECUTION SUMMARY")
+            logger.info("="*60)
+            logger.info(f"  Total commands: {total_commands}")
+            logger.info(f"  Successful: {successful_commands}")
+            logger.info(f"  Failed: {len(failed_commands)}")
+            if failed_commands:
+                logger.warning("  Failed commands:")
+                for fc in failed_commands:
+                    logger.warning(f"    - {fc}")
+                logger.warning("  Note: Failed commands will not appear in the report")
+            else:
+                logger.info("  ✓ All commands completed successfully!")
+            logger.info("="*60)
+
         else:
             logger.info("[2/4] MANUAL MODE: Loading raw GDS data from disk...")
             raw_texts, raw_fs_texts = load_raw_data(RAW_DATA_DIR)
