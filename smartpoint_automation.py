@@ -1008,36 +1008,17 @@ class SmartpointAutomation:
     
     def _has_currency_redirect(self, text: str):
         """
-        Check if the text contains a 'XXX CURRENCY FARES EXISTS' message that
-        requires clicking (standalone redirect).
-
-        Only returns the currency code if this is a STANDALONE redirect message
-        (clickable link) without actual fare data present. If fare data lines exist,
-        this is just informational text and we should use the existing fare data.
-
-        Returns the currency code (e.g., 'BDT') if found as standalone redirect, or None.
+        Check if the text contains a 'XXX CURRENCY FARES EXISTS' message.
+        
+        Returns the currency code (e.g., 'BDT') if found, or None.
         """
         if not text:
             return None
         import re
-
-        # First check if the currency redirect text exists
         match = re.search(r'([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?', text.upper())
-        if not match:
-            return None
-
-        currency_code = match.group(1)
-
-        # Check if actual fare data lines are present
-        # Fare line pattern: "  1 BG 100.00 YOW Y ..." or "O30 -BG 150.00 COW C ..."
-        # This matches: line_number + airline + fare_amount + fare_basis + RBD
-        if re.search(r'^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+', text, re.MULTILINE):
-            # Actual fare data found - don't click, use this data instead
-            return None
-
-        # If we get here, the currency message exists but no fare data was found
-        # This is a standalone redirect that needs to be clicked
-        return currency_code
+        if match:
+            return match.group(1)
+        return None
     
     def _has_invalid(self, text: str) -> bool:
         """Check if the last few lines contain 'INVALID' (MD returned no data)."""
