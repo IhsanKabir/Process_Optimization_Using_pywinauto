@@ -1036,23 +1036,33 @@ class SmartpointAutomation:
             return None
 
         currency_code = match.group(1)
+        self.logger.debug(f"      [CURRENCY] Found '{currency_code} CURRENCY FARES EXISTS' message")
 
         # Now check if fare data is already present - if so, this is informational text, not a clickable link
         # Check for actual fare lines with pattern: optional spaces, optional 'O', digit(s), spaces,
         # optional minus, 2-char airline code, spaces, fare amount, etc.
         fare_pattern = r'^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+'
 
+        fare_lines_found = 0
         for line in text.split('\n'):
             # If we find an actual fare line, the currency message is informational, not a redirect
             if re.match(fare_pattern, line):
-                return None
+                fare_lines_found += 1
+                if fare_lines_found <= 2:  # Log first 2 fare lines found
+                    self.logger.debug(f"      [CURRENCY] Found fare line: {line.strip()[:60]}")
+
+        if fare_lines_found > 0:
+            self.logger.debug(f"      [CURRENCY] Total {fare_lines_found} fare lines found - NOT clicking (informational text)")
+            return None
 
         # Also check for "More Fares" or "«More" which indicates fares are present
         if re.search(r'«More|More\s+Fares', text, re.IGNORECASE):
+            self.logger.debug(f"      [CURRENCY] Found 'More Fares' link - NOT clicking (fares present)")
             return None
 
         # If we get here, the currency redirect message exists WITHOUT fare data
         # This means it's a clickable redirect link
+        self.logger.debug(f"      [CURRENCY] No fare data found - this is a CLICKABLE redirect link")
         return currency_code
     
     def _has_invalid(self, text: str) -> bool:
