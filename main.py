@@ -445,8 +445,10 @@ def main():
                             if not options:
                                 if fs_result and any(kw in fs_result.upper() for kw in
                                                      ["NO FARES FOUND", "CHECK ACTION CODE", "INVALID"]):
-                                    logger.warning(f"      [!] No valid FS results for {date_str}. Skipping.")
-                                    break  # Don't retry — move on
+                                    logger.warning(f"      [!] No valid FS results for {date_str}. Trying next date...")
+                                    fs_date_offset += 1
+                                    _time.sleep(0.5)
+                                    continue  # Retry with next date offset
                                 else:
                                     logger.warning(f"      [!] Waiting for terminal content (offset {fs_date_offset})...")
                                     fs_date_offset += 1
