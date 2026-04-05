@@ -17,8 +17,6 @@ from typing import Optional
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
-from openpyxl.cell.rich_text import CellRichText, TextBlock
-from openpyxl.cell.text import InlineFont
 
 # ── Styles ──────────────────────────────────────────────
 THIN_BORDER = Border(
@@ -252,13 +250,9 @@ def _write_section(
                     if "(Unsaleable)" in str(ri.get('ow_fare_basis', '')) or "(Unsaleable)" in str(ri.get('rt_fare_basis', '')):
                         is_unsaleable = True
                         break
-        
+
         if is_unsaleable:
-            rt_val = CellRichText(
-                TextBlock(InlineFont(sz=11, b=True), rbd),
-                TextBlock(InlineFont(sz=8, b=False, vertAlign='subscript', color='666666'), "(Unsaleable)")
-            )
-            ws.cell(row=row, column=1, value=rt_val)
+            ws.cell(row=row, column=1, value=f"{rbd} (Unsaleable)").font = Font(name='Calibri', bold=True, size=11)
         else:
             ws.cell(row=row, column=1, value=rbd).font = Font(name='Calibri', bold=True)
             
@@ -305,40 +299,31 @@ def _fmt_fare(fare):
 
 def _write_fare_cell(ws, row, col, fare, change_type):
     """
-    Write fare value with a subscripted change indicator using openpyxl rich text.
-    
-    The fare number appears at normal 11pt, and the tag (↑/↓/NEW/SOLD OUT)
-    appears as small 8pt subscript-style text in the same cell.
+    Write fare value with change indicator using plain text and font styling.
+
+    Uses simple text concatenation instead of CellRichText to avoid Excel corruption issues.
     """
     cell = ws.cell(row=row, column=col)
     cell.border = THIN_BORDER
     cell.alignment = Alignment(horizontal='right')
-    
+
     fare_str = _fmt_fare(fare)
-    
+
     if change_type == 'sold_out':
-        cell.value = CellRichText(
-            TextBlock(InlineFont(sz=11, color='808080', i=True), fare_str),
-            TextBlock(InlineFont(sz=8, color='808080', i=True, vertAlign='subscript'), " SOLD OUT")
-        )
+        cell.value = f"{fare_str} SOLD OUT"
+        cell.font = SOLD_OUT_FONT
         cell.fill = SOLD_OUT_FILL
     elif change_type == 'new':
-        cell.value = CellRichText(
-            TextBlock(InlineFont(sz=11, color='7F6000'), fare_str),
-            TextBlock(InlineFont(sz=8, color='7F6000', b=True, vertAlign='subscript'), " NEW")
-        )
+        cell.value = f"{fare_str} NEW"
+        cell.font = NEW_FONT
         cell.fill = NEW_FILL
     elif change_type == 'increased' and fare is not None:
-        cell.value = CellRichText(
-            TextBlock(InlineFont(sz=11, color='CC0000'), fare_str),
-            TextBlock(InlineFont(sz=8, color='CC0000', b=True, vertAlign='subscript'), " ↑")
-        )
+        cell.value = f"{fare_str} ↑"
+        cell.font = INCREASE_FONT
         cell.fill = INCREASE_FILL
     elif change_type == 'decreased' and fare is not None:
-        cell.value = CellRichText(
-            TextBlock(InlineFont(sz=11, color='006100'), fare_str),
-            TextBlock(InlineFont(sz=8, color='006100', b=True, vertAlign='subscript'), " ↓")
-        )
+        cell.value = f"{fare_str} ↓"
+        cell.font = DECREASE_FONT
         cell.fill = DECREASE_FILL
     else:
         cell.value = _fmt_fare(fare) if fare is not None else None
@@ -624,16 +609,13 @@ def _write_individual_tables_sheet(
             tax_map = fs_taxes.get('tax_breakdown', {})
             tax_breakdown_str = " ".join([f"{k}{int(float(v)) if str(v).replace('.', '', 1).isdigit() else v}" for k, v in tax_map.items()])
             total_tax_val = int(fs_taxes.get('total_taxes', 0))
-            
-            rt_val = CellRichText(
-                TextBlock(InlineFont(sz=9, i=True), "Charges (BDT): "),
-                TextBlock(InlineFont(sz=9, b=True, i=True, color='FF6600'), yq_str),
-                TextBlock(InlineFont(sz=9, i=True), f" | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): "),
-                TextBlock(InlineFont(sz=9, b=True, i=True, color='CC0000'), str(total_tax_val))
-            )
-            
+
+            # Use plain text instead of CellRichText to avoid Excel corruption
+            summary_text = f"Charges (BDT): {yq_str} | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): {total_tax_val}"
+
             summary_cell = ws.cell(row=row, column=col_offset)
-            summary_cell.value = rt_val
+            summary_cell.value = summary_text
+            summary_cell.font = Font(name='Calibri', size=9, italic=True)
             ws.merge_cells(start_row=row, start_column=col_offset,
                            end_row=row, end_column=col_offset + this_table_width - 1)
             row += 1
@@ -699,13 +681,9 @@ def _write_individual_tables_sheet(
                 if isinstance(rbd_info, dict):
                     if "(Unsaleable)" in str(rbd_info.get('ow_fare_basis', '')) or "(Unsaleable)" in str(rbd_info.get('rt_fare_basis', '')):
                         is_unsaleable = True
-                
+
                 if is_unsaleable:
-                    rt_val = CellRichText(
-                        TextBlock(InlineFont(sz=11, b=True), rbd),
-                        TextBlock(InlineFont(sz=8, b=False, vertAlign='subscript', color='666666'), "(Unsaleable)")
-                    )
-                    ws.cell(row=row, column=col_offset, value=rt_val)
+                    ws.cell(row=row, column=col_offset, value=f"{rbd} (Unsaleable)").font = Font(name='Calibri', bold=True, size=11)
                 else:
                     ws.cell(row=row, column=col_offset, value=rbd).font = Font(name='Calibri', bold=True)
                     
