@@ -1017,17 +1017,43 @@ class SmartpointAutomation:
     
     def _has_currency_redirect(self, text: str):
         """
-        Check if the text contains a 'XXX CURRENCY FARES EXISTS' message.
-        
-        Returns the currency code (e.g., 'BDT') if found, or None.
+        Check if the text contains a standalone 'XXX CURRENCY FARES EXISTS' redirect link.
+
+        This method differentiates between:
+        1. Clickable redirect link: "BDT CURRENCY FARES EXISTS" appears WITHOUT fare data
+        2. Informational text: "BDT CURRENCY FARES EXISTS" appears WITH fare data already showing
+
+        Returns the currency code (e.g., 'BDT') if a CLICKABLE redirect is found, or None.
         """
         if not text:
             return None
+
         import re
+
+        # First check if the currency redirect message exists at all
         match = re.search(r'([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?', text.upper())
-        if match:
-            return match.group(1)
-        return None
+        if not match:
+            return None
+
+        currency_code = match.group(1)
+
+        # Now check if fare data is already present - if so, this is informational text, not a clickable link
+        # Check for actual fare lines with pattern: optional spaces, optional 'O', digit(s), spaces,
+        # optional minus, 2-char airline code, spaces, fare amount, etc.
+        fare_pattern = r'^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+'
+
+        for line in text.split('\n'):
+            # If we find an actual fare line, the currency message is informational, not a redirect
+            if re.match(fare_pattern, line):
+                return None
+
+        # Also check for "More Fares" or "«More" which indicates fares are present
+        if re.search(r'«More|More\s+Fares', text, re.IGNORECASE):
+            return None
+
+        # If we get here, the currency redirect message exists WITHOUT fare data
+        # This means it's a clickable redirect link
+        return currency_code
     
     def _has_invalid(self, text: str) -> bool:
         """Check if the last few lines contain 'INVALID' (MD returned no data)."""
