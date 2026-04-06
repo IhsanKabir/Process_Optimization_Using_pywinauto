@@ -30,6 +30,8 @@ from tax_breakdown_parser import parse_fs_tax_breakdown
 from excel_report import generate_report
 from change_detector import (
     detect_changes,
+    detect_tax_changes,
+    format_tax_change_summary,
     save_snapshot,
     load_latest_snapshot,
     format_change_summary
@@ -567,8 +569,11 @@ def main():
         
         if previous_data:
             if args.tax:
-                logger.info("  [TODO] Tax change detection logic not yet implemented.")
-                changes = {}
+                changes = detect_tax_changes(all_route_data, previous_data)
+                if changes and any(changes.values()):
+                    logger.info(format_tax_change_summary(changes))
+                else:
+                    logger.info("  No changes from previous tax data.")
             else:
                 changes = detect_changes(all_route_data, previous_data)
                 
