@@ -30,6 +30,8 @@ from tax_breakdown_parser import parse_fs_tax_breakdown
 from excel_report import generate_report
 from change_detector import (
     detect_changes,
+    detect_tax_changes,
+    format_tax_change_summary,
     save_snapshot,
     load_latest_snapshot,
     format_change_summary
@@ -189,8 +191,15 @@ def main():
     arg_parser.add_argument('--only-yq', action='store_true', help='Extract only YQ and Tax Breakdown (skip Fares)')
     arg_parser.add_argument('--only-currency', action='store_true', help='Extract only exchange rates (alias for --only-yq)')
     arg_parser.add_argument('--tax', action='store_true', help='Extract Tax (FTAX) data instead of fares')
+    arg_parser.add_argument('--speed', type=str, choices=['fast', 'safe'], default=None,
+                           help='Speed profile: "fast" (aggressive timings, ~50%% faster) or "safe" (conservative timings for slower machines)')
 
     args = arg_parser.parse_args()
+
+    # Apply speed profile if specified (must be done before any automation imports)
+    if args.speed:
+        from constants import set_speed_profile
+        set_speed_profile(args.speed)
 
     # Validate limit argument
     if args.limit:
@@ -206,6 +215,13 @@ def main():
     logger.info(f"  TRAVELPORT {'TAX' if args.tax else 'FARE'} AUTOMATION TOOL")
     logger.info(f"  {datetime.now().strftime('%d-%b-%Y %H:%M')}")
     logger.info("=" * 60)
+
+    # Show active speed profile
+    from constants import ACTIVE_SPEED_PROFILE
+    if args.speed:
+        logger.info(f"  Speed Profile: {ACTIVE_SPEED_PROFILE.upper()} (CLI override)")
+    else:
+        logger.info(f"  Speed Profile: {ACTIVE_SPEED_PROFILE.upper()} (default)")
     logger.info("")
 
     try:
@@ -553,8 +569,11 @@ def main():
         
         if previous_data:
             if args.tax:
-                logger.info("  [TODO] Tax change detection logic not yet implemented.")
-                changes = {}
+                changes = detect_tax_changes(all_route_data, previous_data)
+                if changes and any(changes.values()):
+                    logger.info(format_tax_change_summary(changes))
+                else:
+                    logger.info("  No changes from previous tax data.")
             else:
                 changes = detect_changes(all_route_data, previous_data)
                 
