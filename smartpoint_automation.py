@@ -815,10 +815,16 @@ class SmartpointAutomation:
 
             # Check if we accidentally activated a dropdown
             if self._has_dropdown_activated(result):
-                self.logger.debug("      [CLICK] Dropdown detected, closing with Escape and retrying...")
+                self.logger.debug("      [CLICK] Dropdown detected - capturing text before closing...")
+                # IMPORTANT: Capture the dropdown text (may contain fare basis details)
+                dropdown_text = result
+                # Close the dropdown
                 pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
                 time.sleep(constants.ESCAPE_CLEAR_DELAY)
-                continue
+                # Return the captured dropdown text instead of discarding it
+                # This ensures fare basis info in dropdowns is included in the report
+                self.logger.info(f"      [CLICK] ✓ Dropdown text captured ({len(dropdown_text)} chars)")
+                return dropdown_text
 
             if result.strip() != text_before.strip():
                 self.logger.info(f"      [CLICK] ✓ Screen changed at offset=({x_off},{y_off})")
@@ -987,14 +993,19 @@ class SmartpointAutomation:
                 time.sleep(constants.SCREEN_REFRESH_WAIT)
                 
                 result = self._copy_terminal_text()
-                
+
                 # Check if we accidentally triggered a dropdown
                 if self._has_dropdown_activated(result):
-                    self.logger.debug("      [CURRENCY] Dropdown detected, closing...")
+                    self.logger.debug("      [CURRENCY] Dropdown detected - capturing text before closing...")
+                    # IMPORTANT: Capture the dropdown text (may contain fare basis details)
+                    dropdown_text = result
+                    # Close the dropdown
                     pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
                     time.sleep(constants.ESCAPE_CLEAR_DELAY)
-                    continue
-                
+                    # Return the captured dropdown text instead of discarding it
+                    self.logger.info(f"      [CURRENCY] ✓ Dropdown text captured ({len(dropdown_text)} chars)")
+                    return dropdown_text
+
                 # Check if screen changed AND redirect is gone
                 if result and not self._has_currency_redirect(result):
                     self.logger.info(f"      [CURRENCY] ✓ Click succeeded at x={x_ratio:.2f}, y_off={y_off}")
@@ -1096,9 +1107,14 @@ class SmartpointAutomation:
 
                     # Check if we accidentally activated a dropdown (MAXIMUM STAY, etc.)
                     if self._has_dropdown_activated(result):
-                        self.logger.debug("      [CLICK] Dropdown detected, closing with Escape and retrying...")
+                        self.logger.debug("      [CLICK] Dropdown detected - capturing text before closing...")
+                        # IMPORTANT: Capture the dropdown text (may contain fare basis details)
+                        dropdown_text = result
+                        # Close the dropdown
                         pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
                         time.sleep(constants.ESCAPE_CLEAR_DELAY)
+                        # Even though we got a dropdown, we should still check if we got the More link
+                        # For now, let's continue trying since dropdown means we didn't hit More link
                         continue
 
                     if result.strip() != text_before.strip():
