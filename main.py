@@ -19,6 +19,12 @@ import time as _time
 from datetime import datetime, timedelta
 from collections import OrderedDict
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    # Fallback if tqdm is not installed
+    tqdm = None
+
 from parser import (
     parse_fare_display,
     group_fares_by_rbd,
@@ -37,8 +43,15 @@ from change_detector import (
     format_change_summary
 )
 from exceptions import ConfigurationError, ValidationError
-from validators import validate_config, validate_limit, sanitize_command
+from validators import (
+    validate_config,
+    validate_limit,
+    sanitize_command,
+    validate_parsed_fares,
+    validate_currency_code
+)
 from credential_manager import CredentialManager
+from checkpoint_manager import CheckpointManager
 from constants import MAX_RETRIES_COMMAND, MAX_FS_DATE_STEPS, FS_DATE_OFFSET_START
 
 # Try to load .env file if python-dotenv is available
@@ -56,6 +69,7 @@ RAW_DATA_DIR = os.path.join(SCRIPT_DIR, 'data', 'raw')
 REPORTS_DIR = os.path.join(SCRIPT_DIR, 'data', 'reports')
 ARCHIVE_DIR = os.path.join(SCRIPT_DIR, 'data', 'archive')
 LOG_DIR = os.path.join(SCRIPT_DIR, 'data', 'logs')
+CHECKPOINT_DIR = os.path.join(SCRIPT_DIR, 'data', 'checkpoints')
 
 
 def setup_logging():
@@ -130,20 +144,38 @@ def load_raw_data(raw_dir: str) -> tuple[dict[str, str], dict[str, str]]:
     return raw_texts, raw_fs_texts
 
 
-def process_route_data(raw_texts: dict[str, str], raw_fs_texts: dict[str, str], config: dict) -> dict:
-    """Process raw text files into route data."""
+def process_route_data(raw_texts: dict[str, str], raw_fs_texts: dict[str, str], config: dict, enable_validation: bool = True) -> dict:
+    """Process raw text files into route data with optional validation."""
     rbd_sort_order = config.get('rbd_sort_order', [])
     all_route_data = OrderedDict()
-    
-    for file_key, raw_text in raw_texts.items():
+
+    # Use tqdm progress bar if available
+    items = raw_texts.items()
+    if tqdm:
+        items = tqdm(list(items), desc="Processing routes", unit="route")
+
+    for file_key, raw_text in items:
         result = parse_fare_display(raw_text)
         fares = result.get('fares', [])
         currency = result.get('currency')
-        
+
+        # Validate currency code
+        if enable_validation and currency:
+            validate_currency_code(currency, warn_only=True)
+
+        # Validate parsed fares
+        if enable_validation and fares:
+            validation_stats = validate_parsed_fares(fares, currency)
+            if validation_stats['invalid_fares'] > 0:
+                logger.warning(
+                    f"  {file_key}: {validation_stats['invalid_fares']}/{validation_stats['total_fares']} "
+                    f"fares have validation issues"
+                )
+
         fs_taxes = {}
         if file_key in raw_fs_texts:
             fs_taxes = parse_fs_tax_breakdown(raw_fs_texts[file_key])
-            
+
         if fares:
             grouped = group_fares_by_rbd(fares, rbd_sort_order)
             all_route_data[file_key] = {
@@ -153,10 +185,13 @@ def process_route_data(raw_texts: dict[str, str], raw_fs_texts: dict[str, str], 
             }
             ow_count = sum(1 for d in grouped.values() if d.get('ow_fare') is not None)
             rt_count = sum(1 for d in grouped.values() if d.get('rt_fare') is not None)
-            logger.info(f"  {file_key} → {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]")
+
+            # Only log if not using tqdm (to avoid cluttering progress bar)
+            if not tqdm:
+                logger.info(f"  {file_key} → {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]")
         else:
             logger.warning(f"  No fares parsed from: {file_key}")
-    
+
     return OrderedDict(sorted(all_route_data.items()))
 
 
@@ -193,6 +228,9 @@ def main():
     arg_parser.add_argument('--tax', action='store_true', help='Extract Tax (FTAX) data instead of fares')
     arg_parser.add_argument('--speed', type=str, choices=['fast', 'safe'], default=None,
                            help='Speed profile: "fast" (aggressive timings, ~50%% faster) or "safe" (conservative timings for slower machines)')
+    arg_parser.add_argument('--checkpoint', action='store_true', help='Enable checkpoint/resume mode for long runs')
+    arg_parser.add_argument('--resume', type=str, default=None, help='Resume from a specific checkpoint file')
+    arg_parser.add_argument('--no-validation', action='store_true', help='Disable data validation and sanity checks')
 
     args = arg_parser.parse_args()
 
@@ -270,7 +308,30 @@ def main():
             if not args.route and args.limit == 0:
                 logger.info(f"  {len(commands)} route commands loaded")
     logger.info("")
-    
+
+    # Initialize checkpoint manager if enabled
+    checkpoint_mgr = None
+    enable_validation = not args.no_validation
+
+    if args.checkpoint or args.resume:
+        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+        if args.resume:
+            # Resume from specific checkpoint
+            checkpoint_mgr = CheckpointManager(CHECKPOINT_DIR, session_name=os.path.basename(args.resume).replace('checkpoint_', '').replace('.json', ''))
+            if checkpoint_mgr.load_checkpoint():
+                logger.info(f"  [CHECKPOINT] Resuming from: {args.resume}")
+                stats = checkpoint_mgr.get_progress_stats()
+                logger.info(f"  [CHECKPOINT] Previously completed: {stats['completed']} commands")
+            else:
+                logger.warning(f"  [CHECKPOINT] Could not load checkpoint: {args.resume}")
+                logger.info("  [CHECKPOINT] Starting fresh")
+        else:
+            # New checkpoint session
+            checkpoint_mgr = CheckpointManager(CHECKPOINT_DIR)
+            logger.info(f"  [CHECKPOINT] Checkpoint mode enabled")
+            logger.info(f"  [CHECKPOINT] Session: {checkpoint_mgr.session_name}")
+
     # [2/4] Extraction
     failed_commands = []
     
@@ -288,10 +349,20 @@ def main():
                 
             automation.refresh_terminal()
             from tax_parser import parse_ftax_list, parse_ftax_detail
-            
-            for index, (airport_code, airport_info) in enumerate(tax_airports.items(), 1):
+
+            # Use tqdm for progress if available
+            airport_items = tax_airports.items()
+            if tqdm:
+                airport_items = tqdm(list(airport_items), desc="Extracting tax data", unit="airport")
+            else:
+                airport_items = list(airport_items)
+
+            for index, (airport_code, airport_info) in enumerate(airport_items, 1):
                 country_code = airport_info['country']
-                logger.info(f"  [{index}/{len(tax_airports)}] Airport: {airport_code} ({country_code})")
+
+                # Only log if not using tqdm
+                if not tqdm:
+                    logger.info(f"  [{index}/{len(tax_airports)}] Airport: {airport_code} ({country_code})")
                 
                 # Get tax types
                 list_cmd = f"FTAX-{country_code}"
@@ -379,11 +450,47 @@ def main():
 
             logger.debug("  Initializing terminal state...")
             automation.refresh_terminal()
-            
+
+            # Filter commands if resuming from checkpoint
+            if checkpoint_mgr:
+                original_count = len(commands)
+                commands = checkpoint_mgr.get_remaining_commands(commands)
+                skipped = original_count - len(commands)
+                if skipped > 0:
+                    logger.info(f"  [CHECKPOINT] Skipping {skipped} already completed commands")
+                    logger.info(f"  [CHECKPOINT] {len(commands)} commands remaining")
+
             MAX_RETRIES = MAX_RETRIES_COMMAND
-            logger.info(f"  Executing {len(commands)} commands...")
-            for i, cmd in enumerate(commands, 1):
-                logger.info(f"  [{i}/{len(commands)}] {cmd['command']}")
+
+            # Use tqdm for progress if available
+            if tqdm and not checkpoint_mgr:
+                # Use simple progress bar
+                command_iter = tqdm(commands, desc="Executing commands", unit="cmd")
+            elif tqdm and checkpoint_mgr:
+                # Use progress bar with initial progress
+                command_iter = tqdm(
+                    commands,
+                    desc="Executing commands",
+                    unit="cmd",
+                    initial=len(checkpoint_mgr.completed_commands),
+                    total=len(checkpoint_mgr.completed_commands) + len(commands)
+                )
+            else:
+                # No progress bar
+                command_iter = commands
+                logger.info(f"  Executing {len(commands)} commands...")
+
+            for i, cmd in enumerate(command_iter, 1):
+                cmd_str = cmd['command']
+
+                # Skip if already completed (double-check in case of concurrent runs)
+                if checkpoint_mgr and checkpoint_mgr.is_completed(cmd_str):
+                    continue
+
+                # Only log if not using tqdm
+                if not tqdm:
+                    logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
+
                 terminal_text = ""
                 file_key = generate_file_key(cmd)
                 
@@ -420,6 +527,10 @@ def main():
                         logger.error(f"    ✗ FAILED after {MAX_RETRIES} attempts: {cmd['command']}")
                         logger.error(f"    Final data length: {len(terminal_text) if terminal_text else 0} chars")
                         logger.error(f"    This command will be skipped in the report")
+
+                        # Mark as failed in checkpoint
+                        if checkpoint_mgr:
+                            checkpoint_mgr.mark_failed(cmd_str)
                 else:
                     logger.info("    [SKIP] Skipping FD extraction (--only-yq/--only-currency)")
                         
@@ -519,6 +630,18 @@ def main():
                             except Exception:
                                 pass
 
+                # Mark command as completed and save checkpoint
+                if checkpoint_mgr and cmd_str not in failed_commands:
+                    checkpoint_mgr.mark_completed(cmd_str)
+                    # Save checkpoint every 10 commands to avoid excessive I/O
+                    if len(checkpoint_mgr.completed_commands) % 10 == 0:
+                        checkpoint_mgr.save_checkpoint()
+
+            # Final checkpoint save
+            if checkpoint_mgr:
+                checkpoint_mgr.save_checkpoint()
+                logger.info(f"  [CHECKPOINT] Final checkpoint saved: {len(checkpoint_mgr.completed_commands)} completed")
+
             automation.show_completion_signal()
 
             # Show execution summary
@@ -551,7 +674,7 @@ def main():
         
         # Parse Fares
         logger.info("[3/4] Parsing fare and tax data...")
-        all_route_data = process_route_data(raw_texts, raw_fs_texts, config)
+        all_route_data = process_route_data(raw_texts, raw_fs_texts, config, enable_validation)
         if not all_route_data:
             logger.error("  No fare data could be parsed.")
             sys.exit(1)
