@@ -116,6 +116,16 @@ def generate_report(
     _write_currency_sheet(ws_cur, all_route_data, airline_names, city_names)
     _auto_fit_columns(ws_cur)
 
+    # ── Tax Breakdowns Sheet ────────────────────────────
+    if not only_currency:
+        ws_tax = wb.create_sheet("Tax Breakdowns")
+        _write_tax_breakdown_sheet(
+            ws_tax, all_route_data,
+            _group_by_international(all_route_data, domestic_airports),
+            airline_names, city_names, domestic_airports
+        )
+        _auto_fit_columns(ws_tax)
+
     # ── Changes Summary sheet ───────────────────────────
     if not only_currency and changes and any(changes.values()):
         ws_ch = wb.create_sheet("Changes Summary")
@@ -724,5 +734,199 @@ def _write_individual_tables_sheet(
             col_offset += this_table_width + GAP
         
         # Move to next section (below the tallest table)
+        current_row = table_start_row + max_rows_in_group + 2
+
+
+# ── Tax Breakdown Sheet ─────────────────────────────────
+TAX_HEADER_FILL = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+TAX_HEADER_FONT = Font(name='Calibri', bold=True, size=10, color='FFFFFF')
+TAX_LABEL_FONT = Font(name='Calibri', size=10)
+TAX_LABEL_BOLD = Font(name='Calibri', bold=True, size=10)
+TAX_TOTAL_FILL = PatternFill(start_color='D6E4F0', end_color='D6E4F0', fill_type='solid')
+TAX_TOTAL_FONT = Font(name='Calibri', bold=True, size=11)
+TAX_CHARGE_FILL = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+
+
+def _write_tax_breakdown_sheet(
+    ws, all_route_data, sections,
+    airline_names, city_names, domestic_airports
+):
+    """
+    Write a dedicated Tax Breakdowns sheet with per-route/airline tables side by side.
+    
+    Layout per section (grouped by international destination):
+        → Muscat (MCT)
+        BG / DAC-MCT          BS / DAC-MCT          UL / DAC-MCT
+        Base Currency: USD     Base Currency: USD     ...
+        Exchange Rate: 122.71  Exchange Rate: 122.71  ...
+        --------------------------
+        Tax Code  Amount(BDT)  Tax Code  Amount(BDT)  ...
+        YQ        246          YQ        318          ...
+        YR        0            YR        100          ...
+        BD        500          BD        500          ...
+        ...
+        ─────────────────────  ─────────────────────
+        Total Tax   5375       Total Tax   5900
+        Total Amt   27095      Total Amt   29000
+    """
+    current_row = 1
+    
+    # Title
+    ws.cell(row=current_row, column=1, value="Tax Breakdowns by Route & Airline").font = Font(
+        name='Calibri', bold=True, size=16)
+    current_row += 1
+    ws.cell(row=current_row, column=1,
+            value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}").font = Font(
+        name='Calibri', size=10, italic=True)
+    current_row += 2
+    
+    TABLE_WIDTH = 2  # Tax Code + Amount
+    GAP = 1          # 1 empty column between tables
+    
+    dom_order = {code: i for i, code in enumerate(domestic_airports)}
+    
+    for section_key in sorted(sections.keys()):
+        entries = sections[section_key]
+        intl_code, direction = section_key
+        
+        entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+        
+        # Filter to entries that actually have tax data
+        tax_entries = []
+        for airline, domestic, route_key, route_info in entries:
+            fs_taxes = route_info.get('fs_taxes', {}) if isinstance(route_info, dict) else {}
+            if fs_taxes and (fs_taxes.get('total_taxes', 0) > 0 or 
+                            fs_taxes.get('yq_charge', 0) > 0 or
+                            fs_taxes.get('tax_breakdown')):
+                tax_entries.append((airline, domestic, route_key, route_info))
+        
+        if not tax_entries:
+            continue
+        
+        intl_name = city_names.get(intl_code, intl_code)
+        arrow = "→" if direction == 'outbound' else "←"
+        
+        # Section title
+        section_title = f"{arrow} {intl_name} ({intl_code})"
+        ws.cell(row=current_row, column=1, value=section_title).font = Font(
+            name='Calibri', bold=True, size=14)
+        ws.cell(row=current_row, column=1).fill = ROUTE_FILL
+        total_cols = len(tax_entries) * (TABLE_WIDTH + GAP) - GAP
+        if total_cols > 1:
+            ws.merge_cells(start_row=current_row, start_column=1,
+                           end_row=current_row, end_column=total_cols)
+        current_row += 1
+        
+        table_start_row = current_row
+        max_rows_in_group = 0
+        col_offset = 1
+        
+        for airline, domestic, route_key, route_info in tax_entries:
+            fs_taxes = route_info.get('fs_taxes', {}) if isinstance(route_info, dict) else {}
+            currency = route_info.get('currency', 'USD') if isinstance(route_info, dict) else 'USD'
+            al_name = airline_names.get(airline, airline)
+            
+            row = table_start_row
+            
+            # Table title: "BG / DAC-MCT"
+            if direction == 'outbound':
+                table_title = f"{al_name} / {domestic}-{intl_code}"
+            else:
+                table_title = f"{al_name} / {intl_code}-{domestic}"
+            
+            title_cell = ws.cell(row=row, column=col_offset, value=table_title)
+            title_cell.font = Font(name='Calibri', bold=True, size=11)
+            ws.merge_cells(start_row=row, start_column=col_offset,
+                           end_row=row, end_column=col_offset + TABLE_WIDTH - 1)
+            row += 1
+            
+            # Currency & Exchange Rate info
+            base_cur = fs_taxes.get('base_currency', currency)
+            exch_rate = fs_taxes.get('exchange_rate', 0)
+            
+            info_font = Font(name='Calibri', size=9, italic=True)
+            ws.cell(row=row, column=col_offset, value=f"Base: {base_cur or 'N/A'}").font = info_font
+            ws.cell(row=row, column=col_offset + 1, value=f"Rate: {exch_rate:.4f}" if exch_rate else "Rate: N/A").font = info_font
+            row += 1
+            
+            # Column headers
+            _styled_cell(ws, row, col_offset, "Tax/Charge", TAX_HEADER_FONT, TAX_HEADER_FILL)
+            _styled_cell(ws, row, col_offset + 1, "Amount (BDT)", TAX_HEADER_FONT, TAX_HEADER_FILL,
+                        alignment=Alignment(horizontal='right'))
+            row += 1
+            
+            # Charges section (YQ, YR, Q)
+            yq = fs_taxes.get('yq_charge', 0)
+            yr = fs_taxes.get('yr_charge', 0)
+            q = fs_taxes.get('q_charge', 0)
+            
+            for label, val in [('YQ (Carrier Surcharge)', yq), ('YR (Carrier Surcharge)', yr), ('Q (Fuel Surcharge)', q)]:
+                if val > 0:
+                    c1 = ws.cell(row=row, column=col_offset, value=label)
+                    c1.font = TAX_LABEL_FONT
+                    c1.fill = TAX_CHARGE_FILL
+                    c1.border = THIN_BORDER
+                    c2 = ws.cell(row=row, column=col_offset + 1, value=val)
+                    c2.font = TAX_LABEL_FONT
+                    c2.fill = TAX_CHARGE_FILL
+                    c2.border = THIN_BORDER
+                    c2.number_format = '#,##0.00'
+                    c2.alignment = Alignment(horizontal='right')
+                    row += 1
+            
+            # Separator: Charges subtotal
+            charges_total = yq + yr + q
+            if charges_total > 0:
+                c1 = ws.cell(row=row, column=col_offset, value="Charges Subtotal")
+                c1.font = TAX_LABEL_BOLD
+                c1.border = THIN_BORDER
+                c2 = ws.cell(row=row, column=col_offset + 1, value=charges_total)
+                c2.font = TAX_LABEL_BOLD
+                c2.border = THIN_BORDER
+                c2.number_format = '#,##0.00'
+                c2.alignment = Alignment(horizontal='right')
+                row += 1
+            
+            # Tax codes section
+            tax_map = fs_taxes.get('tax_breakdown', {})
+            if tax_map:
+                # Sub-header for taxes
+                ws.cell(row=row, column=col_offset, value="── Taxes ──").font = Font(
+                    name='Calibri', bold=True, size=9, italic=True)
+                row += 1
+                
+                for code, amt in sorted(tax_map.items()):
+                    c1 = ws.cell(row=row, column=col_offset, value=code)
+                    c1.font = TAX_LABEL_FONT
+                    c1.border = THIN_BORDER
+                    c2 = ws.cell(row=row, column=col_offset + 1, value=float(amt))
+                    c2.font = TAX_LABEL_FONT
+                    c2.border = THIN_BORDER
+                    c2.number_format = '#,##0.00'
+                    c2.alignment = Alignment(horizontal='right')
+                    row += 1
+            
+            # Totals
+            row += 1  # Blank separator
+            total_taxes = fs_taxes.get('total_taxes', 0)
+            total_amount = fs_taxes.get('total_amount', 0)
+            
+            for label, val in [('Total Taxes', total_taxes), ('Total Amount', total_amount)]:
+                c1 = ws.cell(row=row, column=col_offset, value=label)
+                c1.font = TAX_TOTAL_FONT
+                c1.fill = TAX_TOTAL_FILL
+                c1.border = THIN_BORDER
+                c2 = ws.cell(row=row, column=col_offset + 1, value=val)
+                c2.font = TAX_TOTAL_FONT
+                c2.fill = TAX_TOTAL_FILL
+                c2.border = THIN_BORDER
+                c2.number_format = '#,##0.00'
+                c2.alignment = Alignment(horizontal='right')
+                row += 1
+            
+            table_height = row - table_start_row
+            max_rows_in_group = max(max_rows_in_group, table_height)
+            col_offset += TABLE_WIDTH + GAP
+        
         current_row = table_start_row + max_rows_in_group + 2
 
