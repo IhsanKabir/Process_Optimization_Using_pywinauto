@@ -5,3 +5,4 @@ Pillow==10.3.0
 numpy==1.26.4
 openpyxl==3.1.2
 pyperclip==1.8.2
+tqdm==4.66.1
