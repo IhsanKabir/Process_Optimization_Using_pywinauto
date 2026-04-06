@@ -120,17 +120,27 @@ def parse_ftax_detail(raw_text: str, tax_code: str = '', tax_name: str = '') -> 
     current_rates = []
     pending_condition = ''  # For multi-line conditions
     
-    # Amount pattern: e.g. "SGD 46.40" or "SGD10.00" (no space) at the end of the line
-    amount_pattern = re.compile(r'(?:\s|^)([A-Z]{3})\s*(\d+\.\d+)\s*$')
+    # Amount pattern: e.g. "SGD 46.40", "CNY 172", "AED 75" (supports whole numbers and decimals)
+    amount_pattern = re.compile(r'(?:\s|^)([A-Z]{3})\s*(\d+(?:\.\d+)?)\s*$')
     
     for i, stripped in enumerate(all_lines):
         upper = stripped.upper()
         
         # Detect TAX RATE section (multiple possible formats)
-        if 'TAX RATE' in upper and not amount_pattern.search(stripped):
+        header_patterns = ['TAX RATE', 'TAX RATES', 'TAX ASSESSMENT', 'TAXES APPLY', 'TAX INFORMATION']
+        if any(h in upper for h in header_patterns) and not amount_pattern.search(stripped):
             in_tax_rate = True
             seen_tax_rate_block = True
             continue
+        
+        # Fallback: auto-trigger rate state if we see a valid condition and amount 
+        # (some country modules skip the 'TAX RATE' header entirely)
+        if not in_tax_rate and amount_pattern.search(stripped):
+            # But only if it's NOT a reserved header or noise
+            if not any(upper.startswith(p) for p in ['FTAX', 'MD', 'END', 'FARE']):
+                in_tax_rate = True
+                seen_tax_rate_block = True
+                # Don't skip, process this line below!
         
         if not in_tax_rate:
             # Try to extract tax name from header if we don't have it
@@ -255,12 +265,13 @@ def _is_category_line(line: str) -> bool:
     if airport_pattern:
         return True
     
-    # Category indicators
+    # Category indicators (Global coverage)
     category_keywords = [
         'DEPARTURES', 'ARRIVALS', 'INTERNATIONAL', 'DOMESTIC',
         'TERMINAL', 'TRANSIT', 'TRANSFER', 'PASSENGER',
+        'ADULTS', 'CHILDREN', 'INFANTS', 'PERSON', 'FLIGHTS',
         'EMBARKATION', 'APPLICABLE', 'EXEMPT', 'EXCEPT',
-        'SELETAR'
+        'SELETAR', 'CHANGI', 'REPUBLIC', 'KINGDOM', 'STATE'
     ]
     
     # Must contain a keyword and NOT contain an amount at the end

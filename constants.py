@@ -4,7 +4,136 @@ constants.py - Configuration Constants for Travelport Automation
 Centralizes all magic numbers, timeouts, and configuration values used
 throughout the automation system. These values were empirically determined
 through extensive testing and calibration.
+
+Speed Profile System:
+  Set SPEED_PROFILE environment variable or pass --speed flag:
+    "fast"  — Aggressive timings for maximum speed (default)
+    "safe"  — Conservative timings for reliability on slower machines
 """
+
+import os
+
+# ══════════════════════════════════════════════════════════════
+# SPEED PROFILE SYSTEM
+# ══════════════════════════════════════════════════════════════
+# Reads from environment variable; can be overridden by --speed CLI flag.
+# The set_speed_profile() function allows runtime switching.
+
+_SPEED_PROFILES = {
+    "fast": {
+        # UI interaction delays (seconds)
+        "FOCUS_DELAY": 0.15,
+        "CLICK_DELAY": 0.02,
+        "KEYBOARD_INTERVAL": 0.015,
+        "COPY_DELAY": 0.05,
+        "ESCAPE_CLEAR_DELAY": 0.08,
+        "MOUSE_MOVE_DURATION": 0.0,        # Instant movement — no animation needed
+        "PAGEDOWN_SCROLL_DELAY": 0.2,
+        # Command execution timeouts
+        "COMMAND_WAIT_SHORT": 0.3,
+        "COMMAND_WAIT_MEDIUM": 0.4,
+        "COMMAND_WAIT_LONG": 0.5,
+        "COMMAND_WAIT_FS": 0.8,
+        "COMMAND_WAIT_FTAX": 1.2,
+        "SCREEN_REFRESH_WAIT": 0.6,
+        # Retry delays
+        "RETRY_DELAY": 1.0,
+        "STUCK_SCREEN_RETRY_DELAY": 0.5,
+        # Login sequence delays
+        "LOGIN_COMMAND_WAIT": 1.0,
+        "LOGIN_USERNAME_WAIT": 0.7,
+        "LOGIN_COMPLETION_WAIT": 3.0,
+    },
+    "safe": {
+        # UI interaction delays (seconds) — original conservative values
+        "FOCUS_DELAY": 0.3,
+        "CLICK_DELAY": 0.05,
+        "KEYBOARD_INTERVAL": 0.03,
+        "COPY_DELAY": 0.1,
+        "ESCAPE_CLEAR_DELAY": 0.15,
+        "MOUSE_MOVE_DURATION": 0.1,
+        "PAGEDOWN_SCROLL_DELAY": 0.4,
+        # Command execution timeouts
+        "COMMAND_WAIT_SHORT": 0.5,
+        "COMMAND_WAIT_MEDIUM": 0.8,
+        "COMMAND_WAIT_LONG": 1.0,
+        "COMMAND_WAIT_FS": 1.5,
+        "COMMAND_WAIT_FTAX": 2.0,
+        "SCREEN_REFRESH_WAIT": 1.5,
+        # Retry delays
+        "RETRY_DELAY": 1.5,
+        "STUCK_SCREEN_RETRY_DELAY": 1.0,
+        # Login sequence delays
+        "LOGIN_COMMAND_WAIT": 1.5,
+        "LOGIN_USERNAME_WAIT": 1.0,
+        "LOGIN_COMPLETION_WAIT": 4.0,
+    },
+}
+
+# Active profile name — default "fast"
+ACTIVE_SPEED_PROFILE = os.environ.get("SPEED_PROFILE", "fast").lower()
+if ACTIVE_SPEED_PROFILE not in _SPEED_PROFILES:
+    ACTIVE_SPEED_PROFILE = "fast"
+
+def set_speed_profile(profile: str):
+    """Switch speed profile at runtime (called from --speed CLI flag)."""
+    global ACTIVE_SPEED_PROFILE
+    global FOCUS_DELAY, CLICK_DELAY, KEYBOARD_INTERVAL, COPY_DELAY
+    global ESCAPE_CLEAR_DELAY, MOUSE_MOVE_DURATION, PAGEDOWN_SCROLL_DELAY
+    global COMMAND_WAIT_SHORT, COMMAND_WAIT_MEDIUM, COMMAND_WAIT_LONG
+    global COMMAND_WAIT_FS, COMMAND_WAIT_FTAX, SCREEN_REFRESH_WAIT
+    global RETRY_DELAY, STUCK_SCREEN_RETRY_DELAY
+    global LOGIN_COMMAND_WAIT, LOGIN_USERNAME_WAIT, LOGIN_COMPLETION_WAIT
+
+    profile = profile.lower()
+    if profile not in _SPEED_PROFILES:
+        raise ValueError(f"Unknown speed profile '{profile}'. Use 'fast' or 'safe'.")
+
+    ACTIVE_SPEED_PROFILE = profile
+    p = _SPEED_PROFILES[profile]
+
+    FOCUS_DELAY = p["FOCUS_DELAY"]
+    CLICK_DELAY = p["CLICK_DELAY"]
+    KEYBOARD_INTERVAL = p["KEYBOARD_INTERVAL"]
+    COPY_DELAY = p["COPY_DELAY"]
+    ESCAPE_CLEAR_DELAY = p["ESCAPE_CLEAR_DELAY"]
+    MOUSE_MOVE_DURATION = p["MOUSE_MOVE_DURATION"]
+    PAGEDOWN_SCROLL_DELAY = p["PAGEDOWN_SCROLL_DELAY"]
+    COMMAND_WAIT_SHORT = p["COMMAND_WAIT_SHORT"]
+    COMMAND_WAIT_MEDIUM = p["COMMAND_WAIT_MEDIUM"]
+    COMMAND_WAIT_LONG = p["COMMAND_WAIT_LONG"]
+    COMMAND_WAIT_FS = p["COMMAND_WAIT_FS"]
+    COMMAND_WAIT_FTAX = p["COMMAND_WAIT_FTAX"]
+    SCREEN_REFRESH_WAIT = p["SCREEN_REFRESH_WAIT"]
+    RETRY_DELAY = p["RETRY_DELAY"]
+    STUCK_SCREEN_RETRY_DELAY = p["STUCK_SCREEN_RETRY_DELAY"]
+    LOGIN_COMMAND_WAIT = p["LOGIN_COMMAND_WAIT"]
+    LOGIN_USERNAME_WAIT = p["LOGIN_USERNAME_WAIT"]
+    LOGIN_COMPLETION_WAIT = p["LOGIN_COMPLETION_WAIT"]
+
+# Initialize timing constants from the active profile
+_p = _SPEED_PROFILES[ACTIVE_SPEED_PROFILE]
+
+FOCUS_DELAY = _p["FOCUS_DELAY"]
+CLICK_DELAY = _p["CLICK_DELAY"]
+KEYBOARD_INTERVAL = _p["KEYBOARD_INTERVAL"]
+COPY_DELAY = _p["COPY_DELAY"]
+ESCAPE_CLEAR_DELAY = _p["ESCAPE_CLEAR_DELAY"]
+MOUSE_MOVE_DURATION = _p["MOUSE_MOVE_DURATION"]
+PAGEDOWN_SCROLL_DELAY = _p["PAGEDOWN_SCROLL_DELAY"]
+COMMAND_WAIT_SHORT = _p["COMMAND_WAIT_SHORT"]
+COMMAND_WAIT_MEDIUM = _p["COMMAND_WAIT_MEDIUM"]
+COMMAND_WAIT_LONG = _p["COMMAND_WAIT_LONG"]
+COMMAND_WAIT_FS = _p["COMMAND_WAIT_FS"]
+COMMAND_WAIT_FTAX = _p["COMMAND_WAIT_FTAX"]
+SCREEN_REFRESH_WAIT = _p["SCREEN_REFRESH_WAIT"]
+RETRY_DELAY = _p["RETRY_DELAY"]
+STUCK_SCREEN_RETRY_DELAY = _p["STUCK_SCREEN_RETRY_DELAY"]
+LOGIN_COMMAND_WAIT = _p["LOGIN_COMMAND_WAIT"]
+LOGIN_USERNAME_WAIT = _p["LOGIN_USERNAME_WAIT"]
+LOGIN_COMPLETION_WAIT = _p["LOGIN_COMPLETION_WAIT"]
+
+del _p  # Clean up module namespace
 
 # ══════════════════════════════════════════════════════════════
 # UI AUTOMATION - COORDINATE-BASED CLICKING
@@ -46,36 +175,6 @@ CLICK_OFFSET_D_BUTTON = [
 ]
 
 # ══════════════════════════════════════════════════════════════
-# TIMING & DELAYS
-# ══════════════════════════════════════════════════════════════
-
-# UI interaction delays (in seconds)
-FOCUS_DELAY = 0.3  # Wait after bringing window to foreground
-CLICK_DELAY = 0.05  # Wait between mouse operations
-KEYBOARD_INTERVAL = 0.03  # Delay between keystrokes
-COPY_DELAY = 0.1  # Wait after Ctrl+C before reading clipboard
-ESCAPE_CLEAR_DELAY = 0.15  # Wait after pressing Escape to clear prompts
-MOUSE_MOVE_DURATION = 0.1  # Duration for smooth mouse movements
-PAGEDOWN_SCROLL_DELAY = 0.4  # Wait after pagedown scroll operations
-
-# Command execution timeouts
-COMMAND_WAIT_SHORT = 0.5  # Initial wait after sending command
-COMMAND_WAIT_MEDIUM = 0.8  # Wait after MD pagination
-COMMAND_WAIT_LONG = 1.0  # Wait for complex operations (login, FU*)
-COMMAND_WAIT_FS = 1.5  # Wait for FS (flight shopping) results
-COMMAND_WAIT_FTAX = 2.0  # Wait for FTAX tax details
-SCREEN_REFRESH_WAIT = 1.5  # Wait for screen to update after click
-
-# Retry delays
-RETRY_DELAY = 1.5  # Wait before retrying failed command
-STUCK_SCREEN_RETRY_DELAY = 1.0  # Wait before checking if screen is still stuck
-
-# Login sequence delays
-LOGIN_COMMAND_WAIT = 1.5  # Wait for username prompt
-LOGIN_USERNAME_WAIT = 1.0  # Wait for password prompt
-LOGIN_COMPLETION_WAIT = 4.0  # Wait for login to complete
-
-# ══════════════════════════════════════════════════════════════
 # PAGINATION & DATA EXTRACTION
 # ══════════════════════════════════════════════════════════════
 
@@ -93,6 +192,7 @@ MIN_TERMINAL_TEXT_LENGTH = 50  # Minimum chars for valid terminal response
 
 # FS (Flight Shopping) configuration
 FS_DATE_OFFSET_START = 7  # Start checking from 7 days in future
+FS_DATE_STEP = 2  # Days to jump when a date fails (fast: skip alternate days)
 FS_EXPANSION_KEYWORDS = ["EQU", "TAXES", "TAX", "YQ", "FARE", "BASIS"]  # Expected in D expansion
 
 # ══════════════════════════════════════════════════════════════
@@ -175,6 +275,12 @@ DEFAULT_WINDOW_TITLE = "Application Window 1"
 TERMINAL_AUTOMATION_ID = "SmartRichTextBox"
 
 # ══════════════════════════════════════════════════════════════
+# FOCUS TRACKING
+# ══════════════════════════════════════════════════════════════
+# Skip redundant focus() calls if focus was set recently
+FOCUS_CACHE_SECONDS = 5.0  # Seconds to trust a previous focus() call
+
+# ══════════════════════════════════════════════════════════════
 # CALIBRATION NOTES
 # ══════════════════════════════════════════════════════════════
 
@@ -204,4 +310,11 @@ unreliable for this application. If clicking fails:
 
 If you need to adjust these values for your environment, create a local configuration
 file or set them via environment variables (feature to be added).
+
+SPEED PROFILES:
+  Set environment variable SPEED_PROFILE=fast (default) or SPEED_PROFILE=safe
+  Or use CLI: python main.py --auto --speed fast
+  
+  "fast"  — Aggressive timings for max speed (~50% faster)
+  "safe"  — Conservative timings for reliability on slower machines
 """

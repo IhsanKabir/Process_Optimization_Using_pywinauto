@@ -84,3 +84,56 @@ FDDOHDAC/GF
 #WY
 FDDACDOH/WY
 FDDOHDAC/WY
+#---------------------------
+#UAE (Dubai/Sharjah)
+#---------------------------
+#EK
+FDDACDXB/EK
+FDDXBDAC/EK
+#FZ
+FDDACDXB/FZ
+FDDXBDAC/FZ
+#G9
+FDDACSHJ/G9
+FDSHJDAC/G9
+#---------------------------
+#INDIA (BOM/DEL/MAA/CCU)
+#---------------------------
+#AI
+FDDACBOM/AI
+FDBOMDAC/AI
+FDDACDEL/AI
+FDDELDAC/AI
+#6E
+FDDACBOM/6E
+FDBOMDAC/6E
+FDDACDEL/6E
+FDDELDAC/6E
+FDDACMAA/6E
+FDMAADAC/6E
+#---------------------------
+#SINGAPORE/MALAYSIA (SIN/KUL)
+#---------------------------
+#SQ
+FDDACSIN/SQ
+FDSINDAC/SQ
+#TR
+FDDACSIN/TR
+FDSINDAC/TR
+#MH
+FDDACKUL/MH
+FDKULDAC/MH
+#AK
+FDDACKUL/AK
+FDKULDAC/AK
+#---------------------------
+#SAUDI ARABIA (JED/RUH)
+#---------------------------
+#SV
+FDDACJED/SV
+FDJEDDAC/SV
+FDDACRUH/SV
+FDRUHDAC/SV
+#XY
+FDDACJED/XY
+FDJEDDAC/XY
