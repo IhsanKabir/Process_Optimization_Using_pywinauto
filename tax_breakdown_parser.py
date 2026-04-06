@@ -39,6 +39,9 @@ def parse_fs_tax_breakdown(text: str) -> dict:
     # Calculate exchange rate dynamically
     if result['base_fare'] > 0 and result['equ_fare'] > 0:
         result['exchange_rate'] = round(result['equ_fare'] / result['base_fare'], 4)
+    elif result['base_fare'] > 0:
+        # If no EQU line, the currency is already in the target format (1:1)
+        result['exchange_rate'] = 1.0
         
     # 3. YQ, YR, Q Charges
     yq_match = re.search(r'\bYQ\s*(\d+\.?\d*)\b', text)
