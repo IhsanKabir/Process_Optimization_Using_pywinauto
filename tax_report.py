@@ -225,6 +225,97 @@ def _build_details_sheet(ws, data, config):
 
 
 def _build_changes_sheet(ws, changes, data):
-    """Very basic change log."""
-    ws.append(['Airport', 'Tax Code', 'Category', 'Condition', 'Change Type', 'Details'])
-    # ... logic here when change detection is built
+    """
+    Build the tax changes summary sheet.
+
+    Shows all changes (new, removed, amount_changed) for each airport/tax combination.
+    """
+    # Header
+    row = 1
+    ws.cell(row=row, column=1, value="Tax Changes Summary").font = Font(bold=True, size=14)
+    row += 1
+    ws.cell(row=row, column=1, value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}").font = Font(
+        size=10, italic=True)
+    row += 2
+
+    headers = ['Airport', 'Tax Code', 'Tax Name', 'Section', 'Condition',
+               'Change Type', 'Old Amount', 'New Amount', 'Currency', 'Status']
+
+    for col, text in enumerate(headers, 1):
+        cell = ws.cell(row=row, column=col, value=text)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.border = THIN_BORDER
+        cell.alignment = Alignment(horizontal='center')
+    row += 1
+    ws.freeze_panes = f"A{row}"
+
+    # Change type fills
+    NEW_FILL = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+    REMOVED_FILL = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+    CHANGED_FILL = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')
+
+    has_changes = False
+
+    for airport_code, airport_changes in changes.items():
+        # Get tax names from data
+        airport_data = data.get(airport_code, {})
+        tax_types = airport_data.get('taxes', [])
+        tax_name_lookup = {t.get('code'): t.get('name') for t in tax_types if t.get('code')}
+
+        for tax_code, tax_changes in airport_changes.items():
+            tax_name = tax_name_lookup.get(tax_code, '')
+
+            for change in tax_changes:
+                has_changes = True
+
+                change_type = change.get('type', '').upper()
+                section = change.get('section', '')
+                condition = change.get('condition', '')
+                old_amt = change.get('old_amount', '')
+                new_amt = change.get('new_amount', '')
+                currency = change.get('currency', '')
+                status = change.get('status', '')
+
+                # Write data
+                ws.cell(row=row, column=1, value=airport_code).border = THIN_BORDER
+                ws.cell(row=row, column=2, value=tax_code).border = THIN_BORDER
+                ws.cell(row=row, column=3, value=tax_name).border = THIN_BORDER
+                ws.cell(row=row, column=4, value=section).border = THIN_BORDER
+                ws.cell(row=row, column=5, value=condition).border = THIN_BORDER
+
+                # Change type with color
+                ct_cell = ws.cell(row=row, column=6, value=change_type)
+                ct_cell.border = THIN_BORDER
+                ct_cell.font = Font(bold=True)
+                if change_type == 'NEW':
+                    ct_cell.fill = NEW_FILL
+                elif change_type == 'REMOVED':
+                    ct_cell.fill = REMOVED_FILL
+                elif change_type == 'AMOUNT_CHANGED':
+                    ct_cell.fill = CHANGED_FILL
+
+                # Old and new amounts
+                old_cell = ws.cell(row=row, column=7, value=old_amt if old_amt else '—')
+                old_cell.border = THIN_BORDER
+                if isinstance(old_amt, (int, float)):
+                    old_cell.number_format = '#,##0.00'
+
+                new_cell = ws.cell(row=row, column=8, value=new_amt if new_amt else '—')
+                new_cell.border = THIN_BORDER
+                if isinstance(new_amt, (int, float)):
+                    new_cell.number_format = '#,##0.00'
+
+                ws.cell(row=row, column=9, value=currency).border = THIN_BORDER
+                ws.cell(row=row, column=10, value=status.title()).border = THIN_BORDER
+
+                row += 1
+
+    if not has_changes:
+        ws.cell(row=row, column=1, value="No changes detected.").font = Font(italic=True)
+
+    # Column widths
+    widths = [10, 10, 30, 40, 40, 15, 12, 12, 10, 12]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
