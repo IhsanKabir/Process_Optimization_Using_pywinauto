@@ -1,0 +1,36 @@
+﻿python : =================
+==========================
+=================
+At line:1 char:1
++ python main.py --auto 
+--limit 1 2> 
+final_test.log
++ ~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo        
+      : NotSpecified: (=  
+  ==============...====   
+ ===========:String) [    
+], RemoteException
+    + FullyQualifiedError 
+   Id : NativeCommandErr  
+  or
+ 
+  TRAVELPORT FARE 
+AUTOMATION TOOL
+  07-Apr-2026 09:55
+==========================
+==========================
+========
+  Speed Profile: FAST 
+(default)
+
+[1/4] Loading 
+configuration...
+  Config loaded \u2713
+  [TESTING] Limited to 
+first 1 commands
+
+[2/4] AUTO MODE: 
+Connecting to Smartpoint 
+UI...
