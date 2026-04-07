@@ -11,7 +11,8 @@ import logging
 import pyperclip
 from pywinauto import Desktop
 
-import pyautogui
+from pywinauto.keyboard import send_keys
+from pywinauto.mouse import click
 
 import ctypes
 
@@ -64,25 +65,34 @@ class SmartpointAutomation:
         
         # Ensure PyAutoGUI fail-safe is enabled. 
         # User can slam mouse to any corner of the screen to throw FailSafeException and abort.
-        pyautogui.FAILSAFE = True
+        # pyautogui removed
 
     def connect(self) -> bool:
         """Connect to the running instance of Smartpoint."""
         self.logger.info(f"  Attempting to connect to '{self.window_title}' using UIA backend...")
         try:
-            # Connect via Desktop UIA backend - the actual terminal UI is visible here
-            desktop = Desktop(backend="uia")
+            from pywinauto import findwindows, Application
+            import re
             
-            # Use best_match just in case there are hidden whitespace characters
-            self.window = desktop.window(best_match=self.window_title)
+            # Use win32 API to find the window first (fast, won't hang UIA)
+            hwnds = findwindows.find_windows(title_re=f".*{re.escape(self.window_title)}.*")
+            if not hwnds:
+                self.logger.info(f"  [ERROR] Window matching '{self.window_title}' not found.")
+                return False
+                
+            hwnd = hwnds[0]
+            
+            # Connect Application to the specific window handle
+            self.app = Application(backend="uia").connect(handle=hwnd, timeout=5)
+            self.window = self.app.window(handle=hwnd)
             
             # Verify the window exists and is visible
-            if self.window.exists():
+            if self.window.exists(timeout=2):
                 self.connected = True
                 self.logger.info(f"  Successfully connected to Smartpoint ({self.window.window_text()}).")
                 return True
             else:
-                self.logger.info(f"  [ERROR] Window '{self.window_title}' not found.")
+                self.logger.info(f"  [ERROR] Window '{self.window_title}' found but not accessible.")
                 return False
                 
         except Exception as e:
@@ -179,20 +189,20 @@ class SmartpointAutomation:
             # 1. Initiate Sign-On
             sign_on_cmd = f"SON/Z{pcc}" if pcc else "SON/Z"
             self.logger.info(f"Sending sign-on command: {sign_on_cmd}")
-            pyautogui.typewrite(sign_on_cmd, interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite(sign_on_cmd)
+            send_keys('{ENTER}')
             time.sleep(constants.COMMAND_WAIT_FS) # Wait for username prompt
 
             # 2. Enter Username
             self.logger.info("Entering username...")
-            pyautogui.typewrite(username, interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite(username)
+            send_keys('{ENTER}')
             time.sleep(constants.COMMAND_WAIT_LONG) # Wait for password prompt
 
             # 3. Enter Password
             self.logger.info("Entering password...")
-            pyautogui.typewrite(password, interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite(password)
+            send_keys('{ENTER}')
 
             # Wait for login to complete
             self.logger.info("Waiting for login to complete...")
@@ -213,6 +223,11 @@ class SmartpointAutomation:
             self.logger.error(f"Login automation failed: {e}")
             return False
 
+    def _typewrite(self, text, interval=0):
+        # pywinauto send_keys uses { } for special keys, so we must escape them
+        escaped = text.replace('{', '{{').replace('}', '}}').replace('+', '{+}').replace('^', '{^}').replace('%', '{%}').replace('~', '{~}')
+        send_keys(escaped, with_spaces=True, pause=0.01)
+
     def clear_screen(self):
         """Clear the terminal screen or input buffer by sending 'I'"""
         # Ensure focus first
@@ -220,8 +235,8 @@ class SmartpointAutomation:
         
         # Sending 'I' completely refreshes the Travelport Smartpoint terminal
         print("  [DEBUG] Refreshing terminal with 'I' command...")
-        pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
-        pyautogui.press('enter')
+        self._typewrite("I")
+        send_keys('{ENTER}')
         time.sleep(constants.COMMAND_WAIT_LONG)  # Wait for refresh to complete
 
     def refresh_terminal(self):
@@ -248,19 +263,19 @@ class SmartpointAutomation:
             safe_y = SAFE_CLICK_Y_OFFSET
         
         # Click to focus the terminal area (safe position)
-        pyautogui.click(x=safe_x, y=safe_y)
+        click(coords=(int(safe_x), int(safe_y)))
         time.sleep(constants.CLICK_DELAY)
         
         # Select all + copy
-        pyautogui.hotkey('ctrl', 'a')
+        send_keys('^a')
         time.sleep(constants.CLICK_DELAY)
-        pyautogui.hotkey('ctrl', 'c')
+        send_keys('^c')
         time.sleep(constants.COPY_DELAY)
         
         text = pyperclip.paste()
         
         # Click once to deselect
-        pyautogui.press('escape')
+        send_keys('{VK_ESCAPE}')
         
         # Cache for deduplication
         self._last_terminal_text = text
@@ -343,16 +358,16 @@ class SmartpointAutomation:
         self.logger.debug(f"    Running: {command}")
         
         # Send 'I' first to clear any previous terminal state cleanly
-        pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
-        pyautogui.press('enter')
+        self._typewrite("I")
+        send_keys('{ENTER}')
         time.sleep(constants.COMMAND_WAIT_LONG)
         
         # Capture state BEFORE sending command (for adaptive polling)
         text_before_cmd = self._copy_terminal_text()
         
         # Send the actual command
-        pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
-        pyautogui.press('enter')
+        self._typewrite(command)
+        send_keys('{ENTER}')
         
         # SPEED: Adaptive polling — exits as soon as screen changes
         initial_text = self._wait_for_response(text_before_cmd, timeout=constants.COMMAND_WAIT_FS)
@@ -407,8 +422,8 @@ class SmartpointAutomation:
                 # Fallback to standard MD — use adaptive polling
                 self.logger.debug(f"      Page {current_page}: No 'More' link found. Sending MD...")
                 text_before_md = screen_text
-                pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
-                pyautogui.press('enter')
+                self._typewrite("MD")
+                send_keys('{ENTER}')
                 # SPEED: Adaptive polling instead of fixed sleep
                 md_response = self._wait_for_response(text_before_md, timeout=constants.COMMAND_WAIT_MEDIUM + 0.5)
             
@@ -427,7 +442,7 @@ class SmartpointAutomation:
             # that requires pressing Enter to clear BEFORE the actual data displays.
             if self._has_more_prompt(md_response):
                 self.logger.debug("      [DEBUG] '«More Fares/Flights»' prompt detected. Pressing Enter...")
-                pyautogui.press('enter')
+                send_keys('{ENTER}')
                 md_response = self._wait_for_response(md_response, timeout=constants.COMMAND_WAIT_FS)
             
             all_pages.append(md_response)
@@ -444,8 +459,8 @@ class SmartpointAutomation:
         if UNSALEABLE_FARES_KEYWORD in full_text.upper():
             self.logger.debug("      [DEBUG] 'UNSALEABLE FARES' detected. Sending FU* command...")
             fu_text_before = self._copy_terminal_text()
-            pyautogui.typewrite("FU*", interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite("FU*")
+            send_keys('{ENTER}')
             # SPEED: Adaptive polling
             fu_first = self._wait_for_response(fu_text_before, timeout=constants.COMMAND_WAIT_LONG + 0.5)
             fu_pages = [fu_first]
@@ -454,8 +469,8 @@ class SmartpointAutomation:
                 if self._has_end_signal(fu_pages[-1]):
                     break
                 fu_before = fu_pages[-1]
-                pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
-                pyautogui.press('enter')
+                self._typewrite("MD")
+                send_keys('{ENTER}')
                 fu_response = self._wait_for_response(fu_before, timeout=constants.COMMAND_WAIT_MEDIUM + 0.3)
                 if self._has_invalid(fu_response) or fu_response.strip() == fu_pages[-1].strip():
                     break
@@ -488,8 +503,8 @@ class SmartpointAutomation:
         # Try direct command first (simpler and more reliable)
         direct_cmd = f"FTAX-{country_code}/{tax_code}"
         self.logger.debug(f"      Trying direct command: {direct_cmd}")
-        pyautogui.typewrite(direct_cmd, interval=constants.KEYBOARD_INTERVAL)
-        pyautogui.press('enter')
+        self._typewrite(direct_cmd)
+        send_keys('{ENTER}')
         time.sleep(constants.COMMAND_WAIT_FTAX)
         
         first_page = self._copy_terminal_text()
@@ -499,14 +514,14 @@ class SmartpointAutomation:
             self.logger.debug(f"      Direct command returned INVALID. Falling back to Tab navigation (index {tax_index})...")
             # Re-send the list command to get back to the tax list
             list_cmd = f"FTAX-{country_code}"
-            pyautogui.typewrite(list_cmd, interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite(list_cmd)
+            send_keys('{ENTER}')
             time.sleep(constants.COMMAND_WAIT_FTAX)
             
             # Tab to the correct link
             for _ in range(tax_index):
-                pyautogui.press('tab', interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+                send_keys('{TAB}')
+            send_keys('{ENTER}')
             time.sleep(constants.COMMAND_WAIT_FTAX)
             first_page = self._copy_terminal_text()
             
@@ -540,8 +555,8 @@ class SmartpointAutomation:
             
             # Send MD
             self.logger.debug(f"      Page {current_page}: Sending MD...")
-            pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite("MD")
+            send_keys('{ENTER}')
             time.sleep(constants.COMMAND_WAIT_FS)
             
             page_text = self._copy_terminal_text()
@@ -563,7 +578,7 @@ class SmartpointAutomation:
             
             # Handle «More Fares/Flights» prompt
             if self._has_more_prompt(page_text):
-                pyautogui.press('enter')
+                send_keys('{ENTER}')
                 time.sleep(constants.COMMAND_WAIT_FS)
                 page_text = self._copy_terminal_text()
             
@@ -594,8 +609,8 @@ class SmartpointAutomation:
         command = f"FS{src}{date}{dst}/{airline}"
         self.logger.info(f"    Extracting FS pricing: {command}")
         
-        pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
-        pyautogui.press('enter')
+        self._typewrite(command)
+        send_keys('{ENTER}')
         time.sleep(constants.COMMAND_WAIT_FS)  # Wait for FS results to load
         
         return self._copy_terminal_text()
@@ -621,8 +636,8 @@ class SmartpointAutomation:
         fq_cmd = f"FQ*{option_number}"
         self.logger.info(f"      Extracting tax breakdown: {fq_cmd}")
         
-        pyautogui.typewrite(fq_cmd, interval=constants.KEYBOARD_INTERVAL)
-        pyautogui.press('enter')
+        self._typewrite(fq_cmd)
+        send_keys('{ENTER}')
         time.sleep(constants.COMMAND_WAIT_FS)  # Wait for fare quote to load
         
         result = self._copy_terminal_text()
@@ -631,8 +646,8 @@ class SmartpointAutomation:
         if self._has_invalid(result):
             self.logger.warning(f"      FQ*{option_number} returned INVALID. Trying FQP*{option_number}...")
             # Fallback: try FQP* (pricing-specific variant)
-            pyautogui.typewrite(f"FQP*{option_number}", interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite(f"FQP*{option_number}")
+            send_keys('{ENTER}')
             time.sleep(constants.COMMAND_WAIT_FS)
             result = self._copy_terminal_text()
         
@@ -643,8 +658,8 @@ class SmartpointAutomation:
                 break
             if self._has_invalid(result):
                 break
-            pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press('enter')
+            self._typewrite("MD")
+            send_keys('{ENTER}')
             time.sleep(constants.COMMAND_WAIT_FS)
             md_result = self._copy_terminal_text()
             if self._has_invalid(md_result) or md_result.strip() == result.strip():
@@ -669,13 +684,13 @@ class SmartpointAutomation:
         
         # Reset tab position by clicking the terminal to ensure focus is at the top
         self.focus() 
-        pyautogui.press('escape')
+        send_keys('{VK_ESCAPE}')
         time.sleep(constants.CLICK_DELAY)
         
         for _ in range(tabs_to_press):
-            pyautogui.press('tab', interval=constants.KEYBOARD_INTERVAL)
+            send_keys('{TAB}')
             
-        pyautogui.press('enter')
+        send_keys('{ENTER}')
         time.sleep(constants.COMMAND_WAIT_LONG)  # Wait for the inline tax breakdown to expand
         return self._copy_terminal_text()
 
@@ -775,7 +790,7 @@ class SmartpointAutomation:
             offsets = [(0, y) for y in y_offsets]
 
         # Clear any text selection first
-        pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+        send_keys('{VK_ESCAPE 2}')
         time.sleep(constants.ESCAPE_CLEAR_DELAY)
 
         # Find matching lines and character positions
@@ -819,7 +834,7 @@ class SmartpointAutomation:
                 # IMPORTANT: Capture the dropdown text (may contain fare basis details)
                 dropdown_text = result
                 # Close the dropdown
-                pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+                send_keys('{VK_ESCAPE 2}')
                 time.sleep(constants.ESCAPE_CLEAR_DELAY)
                 # Return the captured dropdown text instead of discarding it
                 # This ensures fare basis info in dropdowns is included in the report
@@ -888,7 +903,7 @@ class SmartpointAutomation:
                         f"click at ({base_x}, {base_y})")
         
         # Clear selection
-        pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+        send_keys('{VK_ESCAPE 2}')
         time.sleep(constants.ESCAPE_CLEAR_DELAY)
         
         # Try clicking with combined X and Y offsets for tolerance
@@ -919,8 +934,8 @@ class SmartpointAutomation:
                     return result
                 else:
                     self.logger.debug(f"      [D-CLICK] Screen changed but no tax/fare data. Sending 'I' to reset...")
-                    pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
-                    pyautogui.press('enter')
+                    self._typewrite("I")
+                    send_keys('{ENTER}')
                     time.sleep(constants.COMMAND_WAIT_FS)
                     text_before = self._copy_terminal_text()
                     if "PRICING OPTION" not in text_before.upper():
@@ -950,7 +965,7 @@ class SmartpointAutomation:
         self.logger.info("      [CURRENCY] Clicking redirect link on LEFT side of terminal...")
         
         # Clear any selection
-        pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+        send_keys('{VK_ESCAPE 2}')
         time.sleep(constants.ESCAPE_CLEAR_DELAY)
         
         # Find which line has the text
@@ -1000,7 +1015,7 @@ class SmartpointAutomation:
                     # IMPORTANT: Capture the dropdown text (may contain fare basis details)
                     dropdown_text = result
                     # Close the dropdown
-                    pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+                    send_keys('{VK_ESCAPE 2}')
                     time.sleep(constants.ESCAPE_CLEAR_DELAY)
                     # Return the captured dropdown text instead of discarding it
                     self.logger.info(f"      [CURRENCY] ✓ Dropdown text captured ({len(dropdown_text)} chars)")
@@ -1032,7 +1047,7 @@ class SmartpointAutomation:
         # All positions failed — log diagnostic info for remote debugging
         self.logger.warning("      [CURRENCY] All click positions failed")
         self.logger.warning(f"      [CURRENCY] DEBUG — first 200 chars of screen: {repr(stable_text[:200])}")
-        pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+        send_keys('{VK_ESCAPE 2}')
         return None
     
     def click_more_prompt_link(self, terminal_text: str) -> bool:
@@ -1057,7 +1072,7 @@ class SmartpointAutomation:
             match = re.search(r'(MORE\s+(?:FARES|FLIGHTS|OPTIONS))', line, re.IGNORECASE)
 
             if match:
-                pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+                send_keys('{VK_ESCAPE 2}')
                 time.sleep(constants.ESCAPE_CLEAR_DELAY)
 
                 # IMPORTANT: Scroll down if the text is overflowing
@@ -1111,7 +1126,7 @@ class SmartpointAutomation:
                         # IMPORTANT: Capture the dropdown text (may contain fare basis details)
                         dropdown_text = result
                         # Close the dropdown
-                        pyautogui.press('escape', presses=2, interval=constants.KEYBOARD_INTERVAL)
+                        send_keys('{VK_ESCAPE 2}')
                         time.sleep(constants.ESCAPE_CLEAR_DELAY)
                         # Even though we got a dropdown, we should still check if we got the More link
                         # For now, let's continue trying since dropdown means we didn't hit More link
@@ -1132,8 +1147,8 @@ class SmartpointAutomation:
             return
         list_cmd = f"FTAX-{country_code}"
         self.logger.debug(f"      Returning to tax list: {list_cmd}")
-        pyautogui.typewrite(list_cmd, interval=constants.KEYBOARD_INTERVAL)
-        pyautogui.press('enter')
+        self._typewrite(list_cmd)
+        send_keys('{ENTER}')
         time.sleep(constants.COMMAND_WAIT_FS)
     
     def _has_end_signal(self, text: str) -> bool:
