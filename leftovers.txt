@@ -1,0 +1,11 @@
+69: # pyautogui removed
+815: pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+816: pyautogui.click()
+913: pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+914: pyautogui.click()
+996: pyautogui.moveTo(click_x, actual_y, duration=constants.MOUSE_MOVE_DURATION)
+997: pyautogui.click()
+1071: pyautogui.click(rect.left + rect.width()//2, rect.top + rect.height()//2)
+1073: pyautogui.press('pagedown', presses=4, interval=constants.KEYBOARD_INTERVAL)
+1107: pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+1108: pyautogui.click()
