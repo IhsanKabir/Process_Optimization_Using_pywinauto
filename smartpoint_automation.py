@@ -68,21 +68,31 @@ class SmartpointAutomation:
 
     def connect(self) -> bool:
         """Connect to the running instance of Smartpoint."""
-        self.logger.info(f"  Attempting to connect to '{self.window_title}' using UIA backend...")
+        self.logger.info(f"  Attempting to connect to '{self.window_title}'...")
         try:
-            # Connect via Desktop UIA backend - the actual terminal UI is visible here
-            desktop = Desktop(backend="uia")
+            from pywinauto import findwindows, Application
+            import re
+            import ctypes
             
-            # Use best_match just in case there are hidden whitespace characters
-            self.window = desktop.window(best_match=self.window_title)
+            # Use win32 API to find the window first (fast, won't hang UIA)
+            hwnds = findwindows.find_windows(title_re=f".*{re.escape(self.window_title)}.*")
+            if not hwnds:
+                self.logger.info(f"  [ERROR] Window matching '{self.window_title}' not found.")
+                return False
+                
+            hwnd = hwnds[0]
             
-            # Verify the window exists and is visible
-            if self.window.exists():
+            # Connect Application to the specific window handle
+            self.app = Application(backend="uia").connect(handle=hwnd, timeout=5)
+            self.window = self.app.window(handle=hwnd)
+            
+            # Verify the window exists and is visible using pure win32 (no UIA hangs)
+            if ctypes.windll.user32.IsWindow(hwnd) and ctypes.windll.user32.IsWindowVisible(hwnd):
                 self.connected = True
-                self.logger.info(f"  Successfully connected to Smartpoint ({self.window.window_text()}).")
+                self.logger.info(f"  Successfully connected to Smartpoint (Handle: {hwnd}).")
                 return True
             else:
-                self.logger.info(f"  [ERROR] Window '{self.window_title}' not found.")
+                self.logger.info(f"  [ERROR] Window '{self.window_title}' found but not visible/accessible.")
                 return False
                 
         except Exception as e:
@@ -124,39 +134,15 @@ class SmartpointAutomation:
     
     def _get_terminal_rect(self):
         """
-        Get the bounding rectangle of the main terminal text area (SmartRichTextBox).
-        
-        Caches the result after the first successful scan to avoid repeated
-        slow UI tree walks (~2-5s each via descendants()).
+        Get the bounding rectangle of the main terminal text area.
         """
         if self._cached_terminal_rect:
             return self._cached_terminal_rect
-        
         try:
-            best_rect = None
-            best_area = 0
-            for doc in self.window.descendants(control_type="Document"):
-                try:
-                    if doc.element_info.automation_id == TERMINAL_AUTOMATION_ID:
-                        r = doc.rectangle()
-                        area = r.width() * r.height()
-                        if area > best_area and r.width() > 100 and r.height() > 100:
-                            best_rect = r
-                            best_area = area
-                except Exception:
-                    pass
-            
-            if best_rect:
-                self.logger.debug(f"      [RECT] Terminal pane: L={best_rect.left} T={best_rect.top} "
-                                f"R={best_rect.right} B={best_rect.bottom}")
-                self._cached_terminal_rect = best_rect
-                return best_rect
-        except Exception as e:
-            self.logger.debug(f"      [RECT] Error finding SmartRichTextBox: {e}")
-        
-        # Fallback: use window rect (don't cache this)
-        self.logger.debug("      [RECT] Falling back to window rectangle")
-        return self.window.rectangle()
+            self._cached_terminal_rect = self.window.rectangle()
+            return self._cached_terminal_rect
+        except Exception:
+            return None
 
     def login(self, username: str, password: str, pcc: str | None = None) -> bool:
         """
