@@ -42,6 +42,883 @@ SOLD_OUT_FILL = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type=
 
 MAIN_SHEET = "Side-by-Side Comparison"
 
+CABIN_PRIORITY = {
+    "FIRST": 0,
+    "PREMIUM BUSINESS": 1,
+    "BUSINESS": 2,
+    "PREMIUM ECONOMY": 3,
+    "ECONOMY": 4,
+}
+
+AIRLINE_CABIN_RBDS = {
+    "EK": OrderedDict(
+        [
+            ("FIRST", ["F", "Z", "A"]),
+            ("BUSINESS", ["J", "D", "C", "I", "O", "P", "H"]),
+        ]
+    ),
+    "BG": OrderedDict(
+        [
+            ("BUSINESS", ["J", "C", "D", "R", "Z"]),
+            ("PREMIUM ECONOMY", ["W"]),
+            (
+                "ECONOMY",
+                [
+                    "K",
+                    "V",
+                    "O",
+                    "G",
+                    "Q",
+                    "S",
+                    "T",
+                    "I",
+                    "X",
+                    "Y",
+                    "A",
+                    "N",
+                    "P",
+                    "U",
+                    "L",
+                    "H",
+                    "M",
+                    "B",
+                    "E",
+                ],
+            ),
+        ]
+    ),
+    "BS": OrderedDict(
+        [
+            ("FIRST", ["F"]),
+            ("BUSINESS", ["P", "Z", "D", "C", "J"]),
+        ]
+    ),
+    "QR": OrderedDict(
+        [
+            ("FIRST", ["F", "A", "Z"]),
+            ("BUSINESS", ["J", "C", "D", "I", "U", "R", "P"]),
+            (
+                "ECONOMY",
+                [
+                    "T",
+                    "G",
+                    "O",
+                    "E",
+                    "X",
+                    "W",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "M",
+                    "L",
+                    "V",
+                    "S",
+                    "N",
+                    "Q",
+                ],
+            ),
+        ]
+    ),
+    "OD": OrderedDict(
+        [
+            ("FIRST", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z"]),
+        ]
+    ),
+    "MH": OrderedDict(
+        [
+            ("PREMIUM BUSINESS", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z", "U", "W"]),
+            (
+                "ECONOMY",
+                [
+                    "R",
+                    "T",
+                    "E",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "M",
+                    "L",
+                    "V",
+                    "S",
+                    "N",
+                    "Q",
+                    "O",
+                    "X",
+                    "G",
+                ],
+            ),
+        ]
+    ),
+    "SQ": OrderedDict(
+        [
+            ("FIRST", ["F", "A", "O"]),
+            ("BUSINESS", ["Z", "C", "J", "U", "D", "I"]),
+            ("PREMIUM ECONOMY", ["S", "T", "P", "L", "R"]),
+            ("ECONOMY", ["X", "G", "Y", "B", "E", "M", "H", "W", "Q", "N", "V", "K"]),
+        ]
+    ),
+    "TG": OrderedDict(
+        [
+            ("FIRST", ["F", "A", "P", "O"]),
+            ("BUSINESS", ["C", "D", "J", "Z", "I", "R"]),
+            ("PREMIUM ECONOMY", ["U", "E"]),
+            (
+                "ECONOMY",
+                ["W", "L", "N", "Y", "B", "M", "H", "Q", "T", "K", "S", "X", "V"],
+            ),
+        ]
+    ),
+    "8D": OrderedDict(
+        [
+            ("FIRST", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z"]),
+            ("PREMIUM ECONOMY", ["W", "E"]),
+            (
+                "ECONOMY",
+                [
+                    "S",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "Q",
+                    "T",
+                    "V",
+                    "X",
+                    "R",
+                    "U",
+                    "G",
+                    "O",
+                ],
+            ),
+        ]
+    ),
+    "Q2": OrderedDict(
+        [
+            ("BUSINESS", ["J", "C", "I", "D"]),
+            ("PREMIUM ECONOMY", ["K", "P", "F", "W"]),
+            (
+                "ECONOMY",
+                [
+                    "V",
+                    "E",
+                    "A",
+                    "H",
+                    "N",
+                    "U",
+                    "X",
+                    "G",
+                    "S",
+                    "Y",
+                    "B",
+                    "R",
+                    "M",
+                    "Z",
+                    "L",
+                    "Q",
+                    "O",
+                    "T",
+                ],
+            ),
+        ]
+    ),
+    "AI": OrderedDict(
+        [
+            ("FIRST", ["F", "O"]),
+            ("BUSINESS", ["C", "D", "J", "Z", "I"]),
+            ("PREMIUM ECONOMY", ["R", "A", "N", "E"]),
+            (
+                "ECONOMY",
+                [
+                    "U",
+                    "T",
+                    "S",
+                    "X",
+                    "P",
+                    "Y",
+                    "B",
+                    "M",
+                    "H",
+                    "K",
+                    "Q",
+                    "V",
+                    "W",
+                    "G",
+                    "L",
+                ],
+            ),
+        ]
+    ),
+    "6E": OrderedDict(
+        [
+            ("FIRST", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z"]),
+            ("PREMIUM ECONOMY", ["W", "E"]),
+            (
+                "ECONOMY",
+                [
+                    "S",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "Q",
+                    "T",
+                    "V",
+                    "X",
+                    "R",
+                    "U",
+                    "G",
+                    "O",
+                ],
+            ),
+        ]
+    ),
+    "SV": OrderedDict(
+        [
+            ("FIRST", ["F", "P", "A", "R", "W"]),
+            ("BUSINESS", ["J", "C", "D", "I", "O", "Z"]),
+            (
+                "ECONOMY",
+                [
+                    "V",
+                    "X",
+                    "S",
+                    "U",
+                    "G",
+                    "Y",
+                    "B",
+                    "M",
+                    "H",
+                    "E",
+                    "K",
+                    "L",
+                    "Q",
+                    "N",
+                    "T",
+                ],
+            ),
+        ]
+    ),
+    "FZ": OrderedDict(
+        [
+            ("BUSINESS", ["J", "C", "Z", "D", "P"]),
+            (
+                "ECONOMY",
+                [
+                    "B",
+                    "U",
+                    "K",
+                    "H",
+                    "Q",
+                    "L",
+                    "V",
+                    "GA",
+                    "GB",
+                    "GC",
+                    "GD",
+                    "GE",
+                    "GF",
+                    "GG",
+                    "GH",
+                    "GI",
+                    "GJ",
+                    "GK",
+                    "GL",
+                    "GM",
+                    "GN",
+                    "GO",
+                    "GP",
+                    "GQ",
+                    "GR",
+                    "GS",
+                    "GT",
+                    "GU",
+                    "GV",
+                    "GW",
+                    "GX",
+                    "GY",
+                    "GZ",
+                    "G",
+                    "Y",
+                    "A",
+                    "I",
+                    "E",
+                    "O",
+                    "W",
+                    "T",
+                    "M",
+                    "N",
+                    "R",
+                ],
+            ),
+        ]
+    ),
+    "G9": OrderedDict(
+        [
+            (
+                "ECONOMY",
+                [
+                    "E",
+                    "Y",
+                    "H",
+                    "M",
+                    "B",
+                    "N",
+                    "Q",
+                    "S",
+                    "T",
+                    "U",
+                    "V",
+                    "W",
+                    "X",
+                    "K",
+                    "R",
+                ],
+            ),
+        ]
+    ),
+    "WY": OrderedDict(
+        [
+            ("FIRST", ["F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "P", "Z", "U"]),
+            (
+                "ECONOMY",
+                [
+                    "O",
+                    "R",
+                    "T",
+                    "E",
+                    "W",
+                    "X",
+                    "G",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "M",
+                    "L",
+                    "V",
+                    "S",
+                    "N",
+                    "Q",
+                ],
+            ),
+        ]
+    ),
+    "GF": OrderedDict(
+        [
+            ("BUSINESS", ["J", "C", "D", "I", "P", "R"]),
+            (
+                "ECONOMY",
+                [
+                    "Q",
+                    "V",
+                    "E",
+                    "O",
+                    "N",
+                    "S",
+                    "W",
+                    "Z",
+                    "Y",
+                    "H",
+                    "M",
+                    "L",
+                    "B",
+                    "K",
+                    "X",
+                    "G",
+                    "U",
+                    "T",
+                ],
+            ),
+        ]
+    ),
+    "CZ": OrderedDict(
+        [
+            ("FIRST", ["F"]),
+            ("BUSINESS", ["J", "C", "D", "I", "O"]),
+            ("PREMIUM ECONOMY", ["W", "S"]),
+            (
+                "ECONOMY",
+                [
+                    "E",
+                    "V",
+                    "Z",
+                    "T",
+                    "N",
+                    "R",
+                    "G",
+                    "X",
+                    "Y",
+                    "P",
+                    "B",
+                    "M",
+                    "H",
+                    "K",
+                    "U",
+                    "A",
+                    "L",
+                    "Q",
+                ],
+            ),
+        ]
+    ),
+    "UL": OrderedDict(
+        [
+            ("BUSINESS", ["J", "C", "D", "I", "Z", "U"]),
+            (
+                "ECONOMY",
+                [
+                    "X",
+                    "V",
+                    "S",
+                    "N",
+                    "Q",
+                    "O",
+                    "G",
+                    "T",
+                    "Y",
+                    "B",
+                    "P",
+                    "H",
+                    "K",
+                    "W",
+                    "M",
+                    "E",
+                    "L",
+                    "R",
+                ],
+            ),
+        ]
+    ),
+    "OV": OrderedDict(
+        [
+            ("FIRST", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z"]),
+            ("PREMIUM ECONOMY", ["W", "E"]),
+        ]
+    ),
+    "F3": OrderedDict(
+        [
+            (
+                "ECONOMY",
+                [
+                    "A",
+                    "B",
+                    "C",
+                    "D",
+                    "E",
+                    "F",
+                    "G",
+                    "H",
+                    "I",
+                    "J",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "O",
+                    "P",
+                    "Q",
+                    "R",
+                    "S",
+                    "T",
+                ],
+            ),
+        ]
+    ),
+    "AK": OrderedDict(
+        [
+            ("FIRST", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z"]),
+            ("PREMIUM ECONOMY", ["W", "E"]),
+            (
+                "ECONOMY",
+                [
+                    "S",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "Q",
+                    "T",
+                    "V",
+                    "X",
+                    "R",
+                    "U",
+                    "G",
+                    "O",
+                ],
+            ),
+        ]
+    ),
+    "CA": OrderedDict(
+        [
+            ("FIRST", ["F", "A", "O"]),
+            ("BUSINESS", ["J", "C", "D", "Z", "R", "I"]),
+            ("PREMIUM ECONOMY", ["G", "E"]),
+            (
+                "ECONOMY",
+                [
+                    "L",
+                    "P",
+                    "X",
+                    "N",
+                    "K",
+                    "Y",
+                    "B",
+                    "M",
+                    "U",
+                    "H",
+                    "Q",
+                    "V",
+                    "W",
+                    "S",
+                    "T",
+                ],
+            ),
+        ]
+    ),
+    "EY": OrderedDict(
+        [
+            ("FIRST", ["F", "A", "O"]),
+            ("BUSINESS", ["J", "C", "D", "W", "Z", "P", "I", "X"]),
+            (
+                "ECONOMY",
+                [
+                    "T",
+                    "N",
+                    "S",
+                    "R",
+                    "G",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "M",
+                    "Q",
+                    "L",
+                    "V",
+                    "U",
+                    "E",
+                ],
+            ),
+        ]
+    ),
+    "FD": OrderedDict(
+        [
+            ("FIRST", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z"]),
+            ("PREMIUM ECONOMY", ["W", "E"]),
+            (
+                "ECONOMY",
+                [
+                    "S",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "Q",
+                    "T",
+                    "V",
+                    "X",
+                    "R",
+                    "U",
+                    "G",
+                    "O",
+                ],
+            ),
+        ]
+    ),
+    "IX": OrderedDict(
+        [
+            ("FIRST", ["P", "F", "A"]),
+            ("BUSINESS", ["J", "C", "D", "I", "Z"]),
+            ("PREMIUM ECONOMY", ["W", "E"]),
+            (
+                "ECONOMY",
+                [
+                    "S",
+                    "Y",
+                    "B",
+                    "H",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "Q",
+                    "T",
+                    "V",
+                    "X",
+                    "R",
+                    "U",
+                    "G",
+                    "O",
+                ],
+            ),
+        ]
+    ),
+    "J9": OrderedDict(
+        [
+            ("BUSINESS", ["F", "C", "J", "D", "Z"]),
+            (
+                "ECONOMY",
+                [
+                    "K",
+                    "B",
+                    "U",
+                    "E",
+                    "W",
+                    "T",
+                    "R",
+                    "P",
+                    "A",
+                    "Y",
+                    "S",
+                    "H",
+                    "M",
+                    "L",
+                    "N",
+                    "V",
+                    "O",
+                    "Q",
+                    "I",
+                ],
+            ),
+        ]
+    ),
+    "KU": OrderedDict(
+        [
+            ("FIRST", ["A", "F", "O", "Z", "R"]),
+            ("BUSINESS", ["S", "C", "D", "J", "P", "I"]),
+            (
+                "ECONOMY",
+                [
+                    "B",
+                    "E",
+                    "G",
+                    "H",
+                    "K",
+                    "L",
+                    "M",
+                    "N",
+                    "Q",
+                    "T",
+                    "U",
+                    "V",
+                    "W",
+                    "X",
+                    "Y",
+                ],
+            ),
+        ]
+    ),
+    "MU": OrderedDict(
+        [
+            ("FIRST", ["F", "A"]),
+            ("PREMIUM BUSINESS", ["U"]),
+            ("BUSINESS", ["J", "C", "D", "Q", "I", "O"]),
+            ("PREMIUM ECONOMY", ["W", "P"]),
+            (
+                "ECONOMY",
+                [
+                    "V",
+                    "T",
+                    "G",
+                    "Z",
+                    "X",
+                    "Y",
+                    "B",
+                    "M",
+                    "E",
+                    "H",
+                    "K",
+                    "L",
+                    "N",
+                    "R",
+                    "S",
+                ],
+            ),
+        ]
+    ),
+    "PG": OrderedDict(
+        [
+            ("BUSINESS", ["C", "D", "J", "Z"]),
+            (
+                "ECONOMY",
+                [
+                    "B",
+                    "R",
+                    "P",
+                    "A",
+                    "O",
+                    "X",
+                    "S",
+                    "Y",
+                    "M",
+                    "K",
+                    "N",
+                    "T",
+                    "L",
+                    "H",
+                    "Q",
+                    "V",
+                    "G",
+                ],
+            ),
+        ]
+    ),
+    "PR": OrderedDict(
+        [
+            ("BUSINESS", ["J", "C", "D", "I", "Z", "A", "R"]),
+            ("PREMIUM ECONOMY", ["W", "N"]),
+            (
+                "ECONOMY",
+                [
+                    "E",
+                    "T",
+                    "U",
+                    "O",
+                    "G",
+                    "P",
+                    "F",
+                    "Y",
+                    "S",
+                    "L",
+                    "M",
+                    "H",
+                    "Q",
+                    "V",
+                    "B",
+                    "X",
+                    "K",
+                ],
+            ),
+        ]
+    ),
+    "QP": OrderedDict(
+        [
+            (
+                "ECONOMY",
+                [
+                    "M",
+                    "N",
+                    "O",
+                    "P",
+                    "Q",
+                    "R",
+                    "T",
+                    "U",
+                    "V",
+                    "Z",
+                    "W",
+                    "L",
+                    "X",
+                    "A",
+                    "Y",
+                    "B",
+                    "C",
+                    "D",
+                    "E",
+                    "F",
+                    "H",
+                    "I",
+                    "J",
+                    "K",
+                ],
+            ),
+        ]
+    ),
+}
+
+
+def _base_rbd(rbd):
+    if not isinstance(rbd, str):
+        return rbd
+    return rbd.removesuffix(" (Unsaleable)")
+
+
+def _format_rbd_label(rbd, is_unsaleable):
+    base_rbd = _base_rbd(rbd)
+    if is_unsaleable or base_rbd != rbd:
+        return f"{base_rbd} (Unsaleable)"
+    return base_rbd
+
+
+def _fallback_rbd_order(rbd, rbd_sort_order):
+    base_rbd = _base_rbd(rbd)
+    try:
+        return (0, rbd_sort_order.index(base_rbd), str(base_rbd))
+    except ValueError:
+        return (1, len(rbd_sort_order), str(base_rbd))
+
+
+def _rank_rbd_for_airline(airline, rbd, rbd_sort_order):
+    base_rbd = _base_rbd(rbd)
+    cabin_rules = AIRLINE_CABIN_RBDS.get((airline or "").upper())
+    fallback_order = _fallback_rbd_order(base_rbd, rbd_sort_order)
+
+    if not cabin_rules:
+        return (
+            CABIN_PRIORITY["ECONOMY"],
+            len(rbd_sort_order),
+            *fallback_order,
+        ), True
+
+    for cabin, codes in cabin_rules.items():
+        if base_rbd in codes:
+            return (
+                CABIN_PRIORITY[cabin],
+                codes.index(base_rbd),
+                *fallback_order,
+            ), cabin == "ECONOMY"
+
+    economy_codes = cabin_rules.get("ECONOMY", [])
+    return (
+        CABIN_PRIORITY["ECONOMY"],
+        len(economy_codes),
+        *fallback_order,
+    ), True
+
+
+def _group_rbds_by_cabin_break(rbds, airlines, rbd_sort_order):
+    ranked_rbds = []
+    airline_codes = [airline for airline in airlines if airline]
+
+    for rbd in rbds:
+        rankings = [
+            _rank_rbd_for_airline(airline, rbd, rbd_sort_order)
+            for airline in airline_codes
+        ]
+        if rankings:
+            best_rank, is_economy = min(rankings, key=lambda item: item[0])
+        else:
+            best_rank, is_economy = _rank_rbd_for_airline("", rbd, rbd_sort_order)
+        ranked_rbds.append((rbd, best_rank, is_economy))
+
+    ranked_rbds.sort(key=lambda item: item[1])
+
+    premium_rbds = [rbd for rbd, _rank, is_economy in ranked_rbds if not is_economy]
+    economy_rbds = [rbd for rbd, _rank, is_economy in ranked_rbds if is_economy]
+    return premium_rbds, economy_rbds
+
 
 # ── Public API ──────────────────────────────────────────
 def generate_report(
@@ -291,16 +1168,18 @@ def _write_section(
                 if ci.get("type") == "sold_out":
                     all_rbds.add(rbd)
 
-    def sort_key(rbd):
-        try:
-            return rbd_sort_order.index(rbd)
-        except ValueError:
-            return len(rbd_sort_order) + ord(rbd[0]) if rbd else 999
-
-    sorted_rbds = sorted(all_rbds, key=sort_key)
+    premium_rbds, economy_rbds = _group_rbds_by_cabin_break(
+        all_rbds,
+        [airline for airline, _domestic, _route_key, _route_info in entries],
+        rbd_sort_order,
+    )
+    sorted_rbds = premium_rbds + economy_rbds
 
     # Data rows
-    for rbd in sorted_rbds:
+    for idx, rbd in enumerate(sorted_rbds):
+        if premium_rbds and economy_rbds and idx == len(premium_rbds):
+            row += 1
+
         # Determine if this RBD is unsaleable anywhere across the entries
         is_unsaleable = False
         for airline, domestic, route_key, route_info in entries:
@@ -318,12 +1197,11 @@ def _write_section(
                         is_unsaleable = True
                         break
 
-        if is_unsaleable:
-            ws.cell(row=row, column=1, value=f"{rbd} (Unsaleable)").font = Font(
-                name="Calibri", bold=True, size=11
-            )
-        else:
-            ws.cell(row=row, column=1, value=rbd).font = Font(name="Calibri", bold=True)
+        ws.cell(row=row, column=1, value=_format_rbd_label(rbd, is_unsaleable)).font = (
+            Font(name="Calibri", bold=True, size=11)
+            if is_unsaleable
+            else Font(name="Calibri", bold=True)
+        )
 
         ws.cell(row=row, column=1).border = THIN_BORDER
 
@@ -705,14 +1583,10 @@ def _write_individual_tables_sheet(
                     if ci.get("type") == "sold_out":
                         all_rbds.add(rbd)
 
-            # Sort RBDs
-            def sort_key(rbd, _rso=rbd_sort_order):
-                try:
-                    return _rso.index(rbd)
-                except ValueError:
-                    return len(_rso) + ord(rbd[0]) if rbd else 999
-
-            sorted_rbds = sorted(all_rbds, key=sort_key)
+            premium_rbds, economy_rbds = _group_rbds_by_cabin_break(
+                all_rbds, [airline], rbd_sort_order
+            )
+            sorted_rbds = premium_rbds + economy_rbds
 
             # Table title: "BG / DAC-DOH" or "Biman (Dhaka)"
             if direction == "outbound":
@@ -855,7 +1729,10 @@ def _write_individual_tables_sheet(
             yq_rt_usd = (yq_rt / exchange_rate) if exchange_rate else 0
 
             # Data rows
-            for rbd in sorted_rbds:
+            for idx, rbd in enumerate(sorted_rbds):
+                if premium_rbds and economy_rbds and idx == len(premium_rbds):
+                    row += 1
+
                 rbd_info = rbd_data.get(rbd)
                 change_info = changes.get(route_key, {}).get(rbd) if changes else None
                 change_type = change_info.get("type") if change_info else None
@@ -874,14 +1751,15 @@ def _write_individual_tables_sheet(
                     ) or "(Unsaleable)" in str(rbd_info.get("rt_fare_basis", "")):
                         is_unsaleable = True
 
-                if is_unsaleable:
-                    ws.cell(
-                        row=row, column=col_offset, value=f"{rbd} (Unsaleable)"
-                    ).font = Font(name="Calibri", bold=True, size=11)
-                else:
-                    ws.cell(row=row, column=col_offset, value=rbd).font = Font(
-                        name="Calibri", bold=True
-                    )
+                ws.cell(
+                    row=row,
+                    column=col_offset,
+                    value=_format_rbd_label(rbd, is_unsaleable),
+                ).font = (
+                    Font(name="Calibri", bold=True, size=11)
+                    if is_unsaleable
+                    else Font(name="Calibri", bold=True)
+                )
 
                 ws.cell(row=row, column=col_offset).border = THIN_BORDER
 
