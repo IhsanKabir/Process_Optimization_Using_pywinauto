@@ -42,6 +42,13 @@ def parse_fs_tax_breakdown(text: str) -> dict:
     elif result['base_fare'] > 0:
         # If no EQU line, the currency is already in the target format (1:1)
         result['exchange_rate'] = 1.0
+    elif result['equ_fare'] > 0:
+        # If we have EQU but no base fare (shouldn't happen, but handle it)
+        result['exchange_rate'] = 1.0
+    elif result['total_taxes'] > 0 or result['yq_charge'] > 0:
+        # If we have tax/YQ data but no fare data, assume 1:1 exchange rate
+        # This allows tax data to be displayed even when fare parsing fails
+        result['exchange_rate'] = 1.0
         
     # 3. YQ, YR, Q Charges
     yq_match = re.search(r'\bYQ\s*(\d+\.?\d*)\b', text)

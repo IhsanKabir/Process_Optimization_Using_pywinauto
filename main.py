@@ -186,6 +186,17 @@ def process_route_data(raw_texts: dict[str, str], raw_fs_texts: dict[str, str], 
         if file_key in raw_fs_texts:
             fs_taxes = parse_fs_tax_breakdown(raw_fs_texts[file_key])
 
+            # Debug logging for tax parsing
+            if not tqdm:
+                if fs_taxes.get('exchange_rate', 0) > 0:
+                    logger.debug(f"      [TAX] {file_key}: Rate={fs_taxes.get('exchange_rate'):.4f}, "
+                                f"Total={fs_taxes.get('total_taxes', 0)}, YQ={fs_taxes.get('yq_charge', 0)}")
+                else:
+                    logger.warning(f"      [TAX] {file_key}: Exchange rate is 0 or missing - tax data may not display correctly")
+                    logger.warning(f"      [TAX] Base fare={fs_taxes.get('base_fare', 0)}, Equ fare={fs_taxes.get('equ_fare', 0)}")
+                    if raw_fs_texts[file_key]:
+                        logger.warning(f"      [TAX] First 200 chars of raw FS text: {raw_fs_texts[file_key][:200]}")
+
         # Add to all_route_data if we have either fares or taxes
         if fares or fs_taxes:
             grouped = group_fares_by_rbd(fares, rbd_sort_order) if fares else {}
