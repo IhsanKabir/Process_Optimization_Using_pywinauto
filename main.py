@@ -39,6 +39,7 @@ from change_detector import (
     detect_tax_changes,
     format_tax_change_summary,
     save_snapshot,
+    snapshot_has_changed,
     load_latest_snapshot,
     format_change_summary,
 )
@@ -1187,8 +1188,11 @@ def main():
         else:
             logger.info("  No previous data found. First run — baseline saved.")
 
-        ts = datetime.now().strftime("%Y-%m-%d_%H%M")
-        save_snapshot(all_route_data, archive_path, date_str=ts)
+        if snapshot_has_changed(all_route_data, previous_data):
+            ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+            save_snapshot(all_route_data, archive_path, date_str=ts)
+        else:
+            logger.info("  Snapshot unchanged; skipping archive write.")
         logger.info("")
 
     # [DB] Optional persistence

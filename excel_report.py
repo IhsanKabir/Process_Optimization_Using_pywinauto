@@ -42,12 +42,10 @@ SOLD_OUT_FILL = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type=
 
 MAIN_SHEET = "Side-by-Side Comparison"
 
-CABIN_PRIORITY = {
+UPPER_CABIN_PRIORITY = {
     "FIRST": 0,
     "PREMIUM BUSINESS": 1,
     "BUSINESS": 2,
-    "PREMIUM ECONOMY": 3,
-    "ECONOMY": 4,
 }
 
 AIRLINE_CABIN_RBDS = {
@@ -870,54 +868,150 @@ def _fallback_rbd_order(rbd, rbd_sort_order):
         return (1, len(rbd_sort_order), str(base_rbd))
 
 
-def _rank_rbd_for_airline(airline, rbd, rbd_sort_order):
+def _classify_rbd_for_airline(airline, rbd):
     base_rbd = _base_rbd(rbd)
     cabin_rules = AIRLINE_CABIN_RBDS.get((airline or "").upper())
-    fallback_order = _fallback_rbd_order(base_rbd, rbd_sort_order)
 
     if not cabin_rules:
-        return (
-            CABIN_PRIORITY["ECONOMY"],
-            len(rbd_sort_order),
-            *fallback_order,
-        ), True
+        return "ECONOMY", None
 
     for cabin, codes in cabin_rules.items():
         if base_rbd in codes:
-            return (
-                CABIN_PRIORITY[cabin],
-                codes.index(base_rbd),
-                *fallback_order,
-            ), cabin == "ECONOMY"
+            return cabin, codes.index(base_rbd)
 
-    economy_codes = cabin_rules.get("ECONOMY", [])
-    return (
-        CABIN_PRIORITY["ECONOMY"],
-        len(economy_codes),
-        *fallback_order,
-    ), True
+    return "ECONOMY", None
 
 
 def _group_rbds_by_cabin_break(rbds, airlines, rbd_sort_order):
-    ranked_rbds = []
     airline_codes = [airline for airline in airlines if airline]
+    upper_rbds = []
+    economy_rbds = []
 
     for rbd in rbds:
-        rankings = [
-            _rank_rbd_for_airline(airline, rbd, rbd_sort_order)
-            for airline in airline_codes
+        classifications = [
+            _classify_rbd_for_airline(airline, rbd) for airline in airline_codes
         ]
-        if rankings:
-            best_rank, is_economy = min(rankings, key=lambda item: item[0])
+        if not classifications:
+            classifications = [_classify_rbd_for_airline("", rbd)]
+
+        has_upper_cabin = any(
+            cabin in UPPER_CABIN_PRIORITY for cabin, _code_index in classifications
+        )
+
+        if has_upper_cabin:
+            upper_rbds.append(rbd)
         else:
-            best_rank, is_economy = _rank_rbd_for_airline("", rbd, rbd_sort_order)
-        ranked_rbds.append((rbd, best_rank, is_economy))
+            economy_rbds.append(rbd)
 
-    ranked_rbds.sort(key=lambda item: item[1])
+    upper_rbds.sort(key=lambda item: _fallback_rbd_order(item, rbd_sort_order))
+    economy_rbds.sort(key=lambda item: _fallback_rbd_order(item, rbd_sort_order))
+    return upper_rbds, economy_rbds
 
-    premium_rbds = [rbd for rbd, _rank, is_economy in ranked_rbds if not is_economy]
-    economy_rbds = [rbd for rbd, _rank, is_economy in ranked_rbds if is_economy]
-    return premium_rbds, economy_rbds
+
+def _is_unsaleable_rbd(entries, rbd):
+    for _airline, _domestic, _route_key, route_info in entries:
+        rbd_data = (
+            route_info.get("rbd_data", route_info)
+            if isinstance(route_info, dict)
+            else {}
+        )
+        if not isinstance(rbd_data, dict):
+            continue
+
+        rbd_info = rbd_data.get(rbd)
+        if not isinstance(rbd_info, dict):
+            continue
+
+        if "(Unsaleable)" in str(
+            rbd_info.get("ow_fare_basis", "")
+        ) or "(Unsaleable)" in str(rbd_info.get("rt_fare_basis", "")):
+            return True
+
+    return False
+
+
+def _best_rbd_fare(entries, rbd, changes):
+    fares = []
+
+    for _airline, _domestic, route_key, route_info in entries:
+        rbd_data = (
+            route_info.get("rbd_data", route_info)
+            if isinstance(route_info, dict) and "rbd_data" in route_info
+            else route_info
+        )
+        rbd_info = rbd_data.get(rbd) if isinstance(rbd_data, dict) else None
+
+        if isinstance(rbd_info, dict):
+            for fare_key in ("ow_fare", "rt_fare"):
+                fare = rbd_info.get(fare_key)
+                if fare is not None:
+                    fares.append(fare)
+
+        change_info = changes.get(route_key, {}).get(rbd) if changes else None
+        if change_info and change_info.get("type") == "sold_out":
+            for fare_key in ("old_ow_fare", "old_rt_fare"):
+                fare = change_info.get(fare_key)
+                if fare is not None:
+                    fares.append(fare)
+
+    if not fares:
+        return float("-inf")
+
+    return max(fares)
+
+
+def _sort_rbd_bucket_by_fare(rbds, entries, changes, rbd_sort_order):
+    return sorted(
+        rbds,
+        key=lambda rbd: (
+            -_best_rbd_fare(entries, rbd, changes),
+            *_fallback_rbd_order(rbd, rbd_sort_order),
+        ),
+    )
+
+
+def _partition_sorted_rbds(entries, rbds, airlines, rbd_sort_order, changes):
+    upper_rbds, economy_rbds = _group_rbds_by_cabin_break(
+        rbds, airlines, rbd_sort_order
+    )
+
+    upper_saleable = []
+    economy_saleable = []
+    unsaleable_rbds = []
+
+    for rbd in upper_rbds:
+        if _is_unsaleable_rbd(entries, rbd):
+            unsaleable_rbds.append(rbd)
+        else:
+            upper_saleable.append(rbd)
+
+    for rbd in economy_rbds:
+        if _is_unsaleable_rbd(entries, rbd):
+            unsaleable_rbds.append(rbd)
+        else:
+            economy_saleable.append(rbd)
+
+    return (
+        _sort_rbd_bucket_by_fare(upper_saleable, entries, changes, rbd_sort_order),
+        _sort_rbd_bucket_by_fare(economy_saleable, entries, changes, rbd_sort_order),
+        _sort_rbd_bucket_by_fare(unsaleable_rbds, entries, changes, rbd_sort_order),
+    )
+
+
+def _has_tax_data_for_individual_table(fs_taxes):
+    if not isinstance(fs_taxes, dict) or not fs_taxes:
+        return False
+
+    return any(
+        [
+            fs_taxes.get("tax_breakdown"),
+            fs_taxes.get("total_taxes", 0),
+            fs_taxes.get("yq_charge", 0),
+            fs_taxes.get("yr_charge", 0),
+            fs_taxes.get("q_charge", 0),
+            fs_taxes.get("exchange_rate", 0),
+        ]
+    )
 
 
 # ── Public API ──────────────────────────────────────────
@@ -1168,34 +1262,21 @@ def _write_section(
                 if ci.get("type") == "sold_out":
                     all_rbds.add(rbd)
 
-    premium_rbds, economy_rbds = _group_rbds_by_cabin_break(
+    upper_rbds, economy_rbds, unsaleable_rbds = _partition_sorted_rbds(
+        entries,
         all_rbds,
         [airline for airline, _domestic, _route_key, _route_info in entries],
         rbd_sort_order,
+        changes,
     )
-    sorted_rbds = premium_rbds + economy_rbds
+    sorted_rbds = upper_rbds + economy_rbds + unsaleable_rbds
 
     # Data rows
     for idx, rbd in enumerate(sorted_rbds):
-        if premium_rbds and economy_rbds and idx == len(premium_rbds):
+        if upper_rbds and economy_rbds and idx == len(upper_rbds):
             row += 1
 
-        # Determine if this RBD is unsaleable anywhere across the entries
-        is_unsaleable = False
-        for airline, domestic, route_key, route_info in entries:
-            rbd_data = (
-                route_info.get("rbd_data", route_info)
-                if isinstance(route_info, dict)
-                else route_info
-            )
-            if isinstance(rbd_data, dict):
-                ri = rbd_data.get(rbd)
-                if isinstance(ri, dict):
-                    if "(Unsaleable)" in str(
-                        ri.get("ow_fare_basis", "")
-                    ) or "(Unsaleable)" in str(ri.get("rt_fare_basis", "")):
-                        is_unsaleable = True
-                        break
+        is_unsaleable = rbd in unsaleable_rbds
 
         ws.cell(row=row, column=1, value=_format_rbd_label(rbd, is_unsaleable)).font = (
             Font(name="Calibri", bold=True, size=11)
@@ -1510,7 +1591,8 @@ def _write_individual_tables_sheet(
     ).font = Font(name="Calibri", size=10, italic=True)
     current_row += 2
 
-    TABLE_WIDTH = 7  # RBD, OW/USD, YQ/OW, OW/Gross, RT/USD, YQ/RT, RT/Gross
+    FD_TABLE_WIDTH = 3  # RBD, OW, RT
+    TAX_TABLE_WIDTH = 7  # RBD, OW, WithYQ, Gross, RT, WithYQ, Gross
     GAP = 1  # 1 empty column between tables
 
     for section_key in sorted(sections.keys()):
@@ -1530,7 +1612,18 @@ def _write_individual_tables_sheet(
             name="Calibri", bold=True, size=14
         )
         ws.cell(row=current_row, column=1).fill = ROUTE_FILL
-        total_cols = len(entries) * (TABLE_WIDTH + GAP) - GAP
+        table_widths = []
+        for _airline, _domestic, _route_key, route_info in entries:
+            fs_taxes = (
+                route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
+            )
+            table_widths.append(
+                TAX_TABLE_WIDTH
+                if _has_tax_data_for_individual_table(fs_taxes)
+                else FD_TABLE_WIDTH
+            )
+
+        total_cols = sum(table_widths) + (GAP * max(len(entries) - 1, 0))
         if total_cols > 1:
             ws.merge_cells(
                 start_row=current_row,
@@ -1545,8 +1638,9 @@ def _write_individual_tables_sheet(
         table_start_row = current_row
 
         col_offset = 1
-        for airline, domestic, route_key, route_info in entries:
-            # First, check if valid fs_taxes exist to determine table width
+        for (airline, domestic, route_key, route_info), this_table_width in zip(
+            entries, table_widths
+        ):
             fs_taxes = (
                 route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
             )
@@ -1554,11 +1648,8 @@ def _write_individual_tables_sheet(
             yr_charge = fs_taxes.get("yr_charge", 0)
             q_charge = fs_taxes.get("q_charge", 0)
             yq_total = yq_charge + yr_charge + q_charge
-
-            has_yq = yq_total > 0
-            # Width is 7 if has_yq (RBD, OW, WithYQ, Gross, RT, WithYQ, Gross)
-            # Width is 5 if no yq (RBD, OW, Gross, RT, Gross)
-            this_table_width = 7 if has_yq else 5
+            total_tax_val = int(fs_taxes.get("total_taxes", 0))
+            has_tax_data = this_table_width == TAX_TABLE_WIDTH
 
             al_name = airline_names.get(airline, airline)
             dom_name = city_names.get(domestic, domestic)
@@ -1583,10 +1674,14 @@ def _write_individual_tables_sheet(
                     if ci.get("type") == "sold_out":
                         all_rbds.add(rbd)
 
-            premium_rbds, economy_rbds = _group_rbds_by_cabin_break(
-                all_rbds, [airline], rbd_sort_order
+            upper_rbds, economy_rbds, unsaleable_rbds = _partition_sorted_rbds(
+                [(airline, domestic, route_key, route_info)],
+                all_rbds,
+                [airline],
+                rbd_sort_order,
+                changes,
             )
-            sorted_rbds = premium_rbds + economy_rbds
+            sorted_rbds = upper_rbds + economy_rbds + unsaleable_rbds
 
             # Table title: "BG / DAC-DOH" or "Biman (Dhaka)"
             if direction == "outbound":
@@ -1620,7 +1715,6 @@ def _write_individual_tables_sheet(
                     for k, v in tax_map.items()
                 ]
             )
-            total_tax_val = int(fs_taxes.get("total_taxes", 0))
 
             # Use plain text instead of CellRichText to avoid Excel corruption
             summary_text = f"Charges (BDT): {yq_str} | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): {total_tax_val}"
@@ -1649,7 +1743,7 @@ def _write_individual_tables_sheet(
             )
 
             current_col = col_offset + 2
-            if has_yq:
+            if has_tax_data:
                 _styled_cell(
                     ws,
                     row,
@@ -1661,16 +1755,16 @@ def _write_individual_tables_sheet(
                 )
                 current_col += 1
 
-            _styled_cell(
-                ws,
-                row,
-                current_col,
-                f"OW/Gross(BDT)",
-                HEADER_FONT,
-                HEADER_FILL,
-                alignment=Alignment(horizontal="center"),
-            )
-            current_col += 1
+                _styled_cell(
+                    ws,
+                    row,
+                    current_col,
+                    "OW/Gross(BDT)",
+                    HEADER_FONT,
+                    HEADER_FILL,
+                    alignment=Alignment(horizontal="center"),
+                )
+                current_col += 1
 
             _styled_cell(
                 ws,
@@ -1683,7 +1777,7 @@ def _write_individual_tables_sheet(
             )
             current_col += 1
 
-            if has_yq:
+            if has_tax_data:
                 _styled_cell(
                     ws,
                     row,
@@ -1695,23 +1789,21 @@ def _write_individual_tables_sheet(
                 )
                 current_col += 1
 
-            _styled_cell(
-                ws,
-                row,
-                current_col,
-                f"RT/Gross(BDT)",
-                HEADER_FONT,
-                HEADER_FILL,
-                alignment=Alignment(horizontal="center"),
-            )
+                _styled_cell(
+                    ws,
+                    row,
+                    current_col,
+                    "RT/Gross(BDT)",
+                    HEADER_FONT,
+                    HEADER_FILL,
+                    alignment=Alignment(horizontal="center"),
+                )
             row += 1
 
-            # Extract calculations
             exchange_rate = fs_taxes.get("exchange_rate", 1.0)
             yq_ow = yq_total
             tax_ow = total_tax_val
 
-            # Fetch inbound taxes for RT math
             inbound_tax_total = 0
             parts = route_key.split("_", 1)
             if len(parts) == 2 and "-" in parts[1]:
@@ -1723,14 +1815,12 @@ def _write_individual_tables_sheet(
 
             yq_rt = yq_ow * 2
             tax_rt = tax_ow + inbound_tax_total
-
-            # Convert BDT YQ amounts to Base Currency (USD) for the "With YQ" column
             yq_ow_usd = (yq_ow / exchange_rate) if exchange_rate else 0
             yq_rt_usd = (yq_rt / exchange_rate) if exchange_rate else 0
 
             # Data rows
             for idx, rbd in enumerate(sorted_rbds):
-                if premium_rbds and economy_rbds and idx == len(premium_rbds):
+                if upper_rbds and economy_rbds and idx == len(upper_rbds):
                     row += 1
 
                 rbd_info = rbd_data.get(rbd)
@@ -1744,12 +1834,7 @@ def _write_individual_tables_sheet(
                     rt = change_info.get("old_rt_fare")
 
                 # Check if this specific table's RBD is unsaleable
-                is_unsaleable = False
-                if isinstance(rbd_info, dict):
-                    if "(Unsaleable)" in str(
-                        rbd_info.get("ow_fare_basis", "")
-                    ) or "(Unsaleable)" in str(rbd_info.get("rt_fare_basis", "")):
-                        is_unsaleable = True
+                is_unsaleable = rbd in unsaleable_rbds
 
                 ws.cell(
                     row=row,
@@ -1767,28 +1852,26 @@ def _write_individual_tables_sheet(
                 _write_fare_cell(ws, row, col_offset + 1, ow, change_type)
 
                 current_data_col = col_offset + 2
-                if has_yq:
+                if has_tax_data:
                     ow_yq_val = (ow + yq_ow_usd) if ow else None
                     _write_fare_cell(ws, row, current_data_col, ow_yq_val, None)
                     current_data_col += 1
 
-                # Gross OW
-                ow_gross_val = ((ow * exchange_rate) + tax_ow) if ow else None
-                _write_fare_cell(ws, row, current_data_col, ow_gross_val, None)
-                current_data_col += 1
+                    ow_gross_val = ((ow * exchange_rate) + tax_ow) if ow else None
+                    _write_fare_cell(ws, row, current_data_col, ow_gross_val, None)
+                    current_data_col += 1
 
                 # Base RT
                 _write_fare_cell(ws, row, current_data_col, rt, change_type)
                 current_data_col += 1
 
-                if has_yq:
+                if has_tax_data:
                     rt_yq_val = (rt + yq_rt_usd) if rt else None
                     _write_fare_cell(ws, row, current_data_col, rt_yq_val, None)
                     current_data_col += 1
 
-                # Gross RT
-                rt_gross_val = ((rt * exchange_rate) + tax_rt) if rt else None
-                _write_fare_cell(ws, row, current_data_col, rt_gross_val, None)
+                    rt_gross_val = ((rt * exchange_rate) + tax_rt) if rt else None
+                    _write_fare_cell(ws, row, current_data_col, rt_gross_val, None)
 
                 row += 1
 

@@ -91,5 +91,5 @@
         "JED": {"country": "SA", "name": "Saudi Arabia"},
         "DMM": {"country": "SA", "name": "Saudi Arabia"}
     },
-    "database_url": "postgresql://user:password@localhost/travelport_db"
+    "database_url": "postgresql://user:password@localhost/GDS_Automation"
 }
