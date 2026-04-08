@@ -45,3 +45,8 @@ dist/
 # Environment
 .env
 .env.local
+.venv/
+htmlcov/
+.coverage
+coverage.xml
+tmp*/
