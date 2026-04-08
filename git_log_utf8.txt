@@ -1,5 +1,0 @@
-﻿f7797fe solving the stuck problem while US desktop tree hang
-0ec5faa Merge pull request #8 from IhsanKabir/claude/add-progress-bars-and-feedback
-a607854 Add progress bars, checkpoint/resume, and data validation
-d40dd09 Merge pull request #7 from IhsanKabir/claude/fix-click-issues
-5082797 Add tax change detection and tracking system
