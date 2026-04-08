@@ -63,7 +63,13 @@ except ImportError:
 
 logger = logging.getLogger('travelport')
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    # PyInstaller creates a temp folder and stores path in _MEIPASS
+    # But we want to output files next to the installed executable
+    SCRIPT_DIR = os.path.dirname(sys.executable)
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, 'config.json')
 RAW_DATA_DIR = os.path.join(SCRIPT_DIR, 'data', 'raw')
 REPORTS_DIR = os.path.join(SCRIPT_DIR, 'data', 'reports')
@@ -259,7 +265,11 @@ def main():
     arg_parser.add_argument('--resume', type=str, default=None, help='Resume from a specific checkpoint file')
     arg_parser.add_argument('--no-validation', action='store_true', help='Disable data validation and sanity checks')
 
-    args = arg_parser.parse_args()
+    # If running as executable and double clicked (no arguments) default to --auto
+    if len(sys.argv) == 1 and getattr(sys, 'frozen', False):
+        args = arg_parser.parse_args(['--auto'])
+    else:
+        args = arg_parser.parse_args()
 
     # Apply speed profile if specified (must be done before any automation imports)
     if args.speed:
@@ -315,9 +325,50 @@ def main():
             logger.info(f"  [TESTING] Limited to first {args.limit} airports")
         logger.info(f"  {len(tax_airports)} tax airports loaded from config")
     else:
-        commands_file = os.path.join(SCRIPT_DIR, config.get('commands_file', 'commands.txt'))
-        if os.path.exists(commands_file):
-            commands = load_commands(commands_file)
+        api_url = config.get('commands_url')
+        if api_url:
+            import urllib.request
+            import urllib.error
+            import json
+            from parser import load_commands_from_text
+            
+            logger.info(f"  [API] Fetching commands from {api_url}")
+            try:
+                req = urllib.request.Request(api_url, headers={'User-Agent': 'TravelportAutoAgent/1.0'})
+                api_key = config.get('api_key')
+                if api_key:
+                    req.add_header('Authorization', f'Bearer {api_key}')
+                
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    content = response.read().decode('utf-8')
+                    try:
+                        data = json.loads(content)
+                        if isinstance(data, list):
+                            commands = data
+                        elif isinstance(data, dict) and 'commands' in data:
+                            commands = data['commands']
+                        else:
+                            commands = load_commands_from_text(content)
+                    except json.JSONDecodeError:
+                        commands = load_commands_from_text(content)
+                        
+                logger.info(f"  [API] Successfully downloaded {len(commands)} commands")
+            except Exception as e:
+                logger.warning(f"  [API] Failed to fetch commands: {e}")
+                logger.info(f"  [API] Falling back to local commands file...")
+                
+        # Fallback / Local Load
+        if not commands:
+            commands_file = os.path.join(SCRIPT_DIR, config.get('commands_file', 'commands.txt'))
+            if os.path.exists(commands_file):
+                logger.info(f"  Loading local commands from {commands_file}")
+                commands = load_commands(commands_file)
+            else:
+                logger.error("  No valid commands found from API or local file.")
+                sys.exit(1)
+                
+        # Apply filters
+        if commands:
             if args.route:
                 routes = [r.strip().upper().replace('-', '') for r in args.route.split(',')]
                 valid_routes = [r for r in routes if len(r) == 6]
@@ -863,5 +914,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        logging.error(f"Fatal error occurred:\n{traceback.format_exc()}")
+    finally:
+        if getattr(sys, 'frozen', False):
+            input("\nPress Enter to exit...")
 
