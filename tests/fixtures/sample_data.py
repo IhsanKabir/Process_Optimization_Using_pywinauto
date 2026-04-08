@@ -79,24 +79,13 @@ SAMPLE_CONFIG = {
     "excel_output_filename": "fare_report_{date}.xlsx",
     "rbd_sort_order": ["F", "A", "J", "C", "D", "Y", "B", "M", "H", "K", "Q"],
     "domestic_airports": ["DAC", "CGP"],
-    "airline_names": {
-        "BG": "Biman Bangladesh",
-        "BS": "US-Bangla"
-    },
-    "city_names": {
-        "DAC": "Dhaka",
-        "CGP": "Chittagong",
-        "MLE": "Male"
-    },
+    "airline_names": {"BG": "Biman Bangladesh", "BS": "US-Bangla"},
+    "city_names": {"DAC": "Dhaka", "CGP": "Chittagong", "MLE": "Male"},
     "tax_airports": {
         "SIN": {"country": "SG", "name": "Singapore"},
-        "MLE": {"country": "MV", "name": "Maldives"}
-    }
+        "MLE": {"country": "MV", "name": "Maldives"},
+    },
 }
 
 # Sample commands
-SAMPLE_COMMANDS = [
-    "FDDACCGP/BG",
-    "FDDACMLE/BG",
-    "FDDACMLE/BS"
-]
+SAMPLE_COMMANDS = ["FDDACCGP/BG", "FDDACMLE/BG", "FDDACMLE/BS"]

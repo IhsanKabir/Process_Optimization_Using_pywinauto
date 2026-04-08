@@ -27,7 +27,7 @@ _SPEED_PROFILES = {
         "KEYBOARD_INTERVAL": 0.015,
         "COPY_DELAY": 0.05,
         "ESCAPE_CLEAR_DELAY": 0.08,
-        "MOUSE_MOVE_DURATION": 0.0,        # Instant movement — no animation needed
+        "MOUSE_MOVE_DURATION": 0.0,  # Instant movement — no animation needed
         "PAGEDOWN_SCROLL_DELAY": 0.2,
         # Command execution timeouts
         "COMMAND_WAIT_SHORT": 0.3,
@@ -75,6 +75,7 @@ ACTIVE_SPEED_PROFILE = os.environ.get("SPEED_PROFILE", "fast").lower()
 if ACTIVE_SPEED_PROFILE not in _SPEED_PROFILES:
     ACTIVE_SPEED_PROFILE = "fast"
 
+
 def set_speed_profile(profile: str):
     """Switch speed profile at runtime (called from --speed CLI flag)."""
     global ACTIVE_SPEED_PROFILE
@@ -110,6 +111,7 @@ def set_speed_profile(profile: str):
     LOGIN_COMMAND_WAIT = p["LOGIN_COMMAND_WAIT"]
     LOGIN_USERNAME_WAIT = p["LOGIN_USERNAME_WAIT"]
     LOGIN_COMPLETION_WAIT = p["LOGIN_COMPLETION_WAIT"]
+
 
 # Initialize timing constants from the active profile
 _p = _SPEED_PROFILES[ACTIVE_SPEED_PROFILE]
@@ -168,10 +170,15 @@ CLICK_OFFSET_X = [-15, 0, 15]  # Horizontal offsets to try
 CLICK_OFFSET_Y_SINGLE = [0, -9, 9, -18, 18]  # Vertical offsets for single-line elements
 CLICK_OFFSET_Y_MULTI = [0, -10, 10, -20, 20, -30, 30]  # For multi-line elements
 CLICK_OFFSET_D_BUTTON = [
-    (0, 0), (-15, 0), (15, 0),     # Same line, shift X
-    (0, -9), (0, 9),                # One line up/down
-    (-15, -9), (15, -9),            # One line up, shift X
-    (-15, 9), (15, 9),              # One line down, shift X
+    (0, 0),
+    (-15, 0),
+    (15, 0),  # Same line, shift X
+    (0, -9),
+    (0, 9),  # One line up/down
+    (-15, -9),
+    (15, -9),  # One line up, shift X
+    (-15, 9),
+    (15, 9),  # One line down, shift X
 ]
 
 # ══════════════════════════════════════════════════════════════
@@ -193,7 +200,14 @@ MIN_TERMINAL_TEXT_LENGTH = 50  # Minimum chars for valid terminal response
 # FS (Flight Shopping) configuration
 FS_DATE_OFFSET_START = 7  # Start checking from 7 days in future
 FS_DATE_STEP = 2  # Days to jump when a date fails (fast: skip alternate days)
-FS_EXPANSION_KEYWORDS = ["EQU", "TAXES", "TAX", "YQ", "FARE", "BASIS"]  # Expected in D expansion
+FS_EXPANSION_KEYWORDS = [
+    "EQU",
+    "TAXES",
+    "TAX",
+    "YQ",
+    "FARE",
+    "BASIS",
+]  # Expected in D expansion
 
 # ══════════════════════════════════════════════════════════════
 # LOGGING & OUTPUT
@@ -237,7 +251,7 @@ TAX_RATE_SECTION_KEYWORD = "TAX RATE"
 TAX_EXEMPTIONS_KEYWORD = "EXEMPTIONS"
 
 # Currency redirect
-CURRENCY_FARES_EXISTS_PATTERN = r'([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?'
+CURRENCY_FARES_EXISTS_PATTERN = r"([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?"
 
 # ══════════════════════════════════════════════════════════════
 # EXCEL REPORT FORMATTING

@@ -14,7 +14,7 @@ from validators import validate_config
 class ConfigManager:
     """Manages application configuration with environment support."""
 
-    def __init__(self, config_path: Optional[str] = None, environment: str = 'default'):
+    def __init__(self, config_path: Optional[str] = None, environment: str = "default"):
         """
         Initialize configuration manager.
 
@@ -46,13 +46,13 @@ class ConfigManager:
             raise ConfigurationError("No configuration path specified")
 
         # Try environment-specific config first
-        if self.environment != 'default':
+        if self.environment != "default":
             env_path = self._get_env_config_path(path)
             if os.path.exists(env_path):
                 path = env_path
 
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, "r", encoding="utf-8") as f:
                 self.config = json.load(f)
         except FileNotFoundError:
             raise ConfigurationError(f"Config file not found: {path}")
@@ -80,7 +80,7 @@ class ConfigManager:
             raise ConfigurationError("Configuration not loaded. Call load() first.")
 
         # Support dot notation for nested keys
-        keys = key.split('.')
+        keys = key.split(".")
         value = self.config
 
         for k in keys:
@@ -102,7 +102,7 @@ class ConfigManager:
         if not self._loaded:
             raise ConfigurationError("Configuration not loaded. Call load() first.")
 
-        keys = key.split('.')
+        keys = key.split(".")
         config = self.config
 
         # Navigate to the nested dictionary
@@ -128,7 +128,7 @@ class ConfigManager:
         if not save_path:
             raise ConfigurationError("No save path specified")
 
-        with open(save_path, 'w', encoding='utf-8') as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=2, ensure_ascii=False)
 
     def _get_env_config_path(self, base_path: str) -> str:
@@ -156,7 +156,7 @@ class ConfigManager:
         Returns:
             Environment name (default, dev, prod, test)
         """
-        return os.getenv('APP_ENV', 'default')
+        return os.getenv("APP_ENV", "default")
 
 
 # Global configuration instance
@@ -164,8 +164,7 @@ _config_manager: Optional[ConfigManager] = None
 
 
 def get_config_manager(
-    config_path: Optional[str] = None,
-    environment: Optional[str] = None
+    config_path: Optional[str] = None, environment: Optional[str] = None
 ) -> ConfigManager:
     """
     Get the global configuration manager instance.

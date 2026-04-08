@@ -9,7 +9,7 @@ import logging
 import psycopg2
 from typing import Dict, Any
 
-logger = logging.getLogger('travelport.database')
+logger = logging.getLogger("travelport.database")
 
 
 class DatabaseManager:
@@ -42,7 +42,7 @@ class DatabaseManager:
                     total_routes INT
                 )
             """)
-            
+
             # 2. Fare Granular Records
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS fare_records (
@@ -62,7 +62,7 @@ class DatabaseManager:
                     is_unsaleable BOOLEAN
                 )
             """)
-            
+
             # Optional: A dedicated tax breakdown table can be added here in the future
             self.conn.commit()
 
@@ -80,61 +80,95 @@ class DatabaseManager:
                 # 1. Create a Run record
                 cur.execute(
                     "INSERT INTO fare_runs (run_mode, total_routes) VALUES (%s, %s) RETURNING id",
-                    (run_mode, len(all_route_data))
+                    (run_mode, len(all_route_data)),
                 )
                 run_id = cur.fetchone()[0]
 
                 # 2. Extract and format records
                 for file_key, data in all_route_data.items():
                     # Format: AL_ORG-DST
-                    parts = file_key.split('_')
+                    parts = file_key.split("_")
                     airline = parts[0]
                     route = parts[1] if len(parts) > 1 else "UNKNOWN"
-                    
-                    currency = data.get('currency', 'USD')
-                    
-                    # Compute total taxes
-                    fs_taxes = data.get('fs_taxes', {})
-                    total_taxes = float(fs_taxes.get('total_taxes', 0)) if fs_taxes else 0.0
 
-                    rbd_data = data.get('rbd_data', {})
+                    currency = data.get("currency", "USD")
+
+                    # Compute total taxes
+                    fs_taxes = data.get("fs_taxes", {})
+                    total_taxes = (
+                        float(fs_taxes.get("total_taxes", 0)) if fs_taxes else 0.0
+                    )
+
+                    rbd_data = data.get("rbd_data", {})
                     for rbd_key, info in rbd_data.items():
-                        rbd = info.get('rbd', 'UNKNOWN')
+                        rbd = info.get("rbd", "UNKNOWN")
                         is_unsaleable = "Unsaleable" in rbd_key
 
                         # One-Way (OW) Fare
-                        if info.get('ow_fare') is not None or info.get('ow_sold_out'):
-                            base_fare = float(info.get('ow_fare') or 0.0)
-                            is_sold_out = bool(info.get('ow_sold_out', False))
-                            total_fare = base_fare + total_taxes if not is_sold_out else 0.0
-                            fare_basis = info.get('ow_fare_basis', '')
-                            
-                            cur.execute("""
+                        if info.get("ow_fare") is not None or info.get("ow_sold_out"):
+                            base_fare = float(info.get("ow_fare") or 0.0)
+                            is_sold_out = bool(info.get("ow_sold_out", False))
+                            total_fare = (
+                                base_fare + total_taxes if not is_sold_out else 0.0
+                            )
+                            fare_basis = info.get("ow_fare_basis", "")
+
+                            cur.execute(
+                                """
                                 INSERT INTO fare_records 
                                 (run_id, route, airline, rbd, journey_type, currency, base_fare, total_taxes, total_fare, fare_basis, is_sold_out, is_unsaleable)
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            """, (
-                                run_id, route, airline, rbd, 'OW', currency, base_fare, total_taxes, total_fare, fare_basis, is_sold_out, is_unsaleable
-                            ))
+                            """,
+                                (
+                                    run_id,
+                                    route,
+                                    airline,
+                                    rbd,
+                                    "OW",
+                                    currency,
+                                    base_fare,
+                                    total_taxes,
+                                    total_fare,
+                                    fare_basis,
+                                    is_sold_out,
+                                    is_unsaleable,
+                                ),
+                            )
 
                         # Round-Trip (RT) Fare
-                        if info.get('rt_fare') is not None or info.get('rt_sold_out'):
-                            base_fare = float(info.get('rt_fare') or 0.0)
-                            is_sold_out = bool(info.get('rt_sold_out', False))
-                            total_fare = base_fare + total_taxes if not is_sold_out else 0.0
-                            fare_basis = info.get('rt_fare_basis', '')
-                            
-                            cur.execute("""
+                        if info.get("rt_fare") is not None or info.get("rt_sold_out"):
+                            base_fare = float(info.get("rt_fare") or 0.0)
+                            is_sold_out = bool(info.get("rt_sold_out", False))
+                            total_fare = (
+                                base_fare + total_taxes if not is_sold_out else 0.0
+                            )
+                            fare_basis = info.get("rt_fare_basis", "")
+
+                            cur.execute(
+                                """
                                 INSERT INTO fare_records 
                                 (run_id, route, airline, rbd, journey_type, currency, base_fare, total_taxes, total_fare, fare_basis, is_sold_out, is_unsaleable)
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            """, (
-                                run_id, route, airline, rbd, 'RT', currency, base_fare, total_taxes, total_fare, fare_basis, is_sold_out, is_unsaleable
-                            ))
-                            
+                            """,
+                                (
+                                    run_id,
+                                    route,
+                                    airline,
+                                    rbd,
+                                    "RT",
+                                    currency,
+                                    base_fare,
+                                    total_taxes,
+                                    total_fare,
+                                    fare_basis,
+                                    is_sold_out,
+                                    is_unsaleable,
+                                ),
+                            )
+
             self.conn.commit()
             return run_id
-            
+
         except Exception as e:
             self.conn.rollback()
             logger.error(f"  [DB] Failed to insert records into database: {e}")

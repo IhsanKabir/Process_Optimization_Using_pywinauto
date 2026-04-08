@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional, Set, List, Dict, Any
 import logging
 
-logger = logging.getLogger('travelport.checkpoint')
+logger = logging.getLogger("travelport.checkpoint")
 
 
 class CheckpointManager:
@@ -31,11 +31,10 @@ class CheckpointManager:
         if session_name:
             self.session_name = session_name
         else:
-            self.session_name = datetime.now().strftime('%Y-%m-%d_%H%M')
+            self.session_name = datetime.now().strftime("%Y-%m-%d_%H%M")
 
         self.checkpoint_file = os.path.join(
-            checkpoint_dir,
-            f"checkpoint_{self.session_name}.json"
+            checkpoint_dir, f"checkpoint_{self.session_name}.json"
         )
         self.completed_commands: Set[str] = set()
         self.failed_commands: List[str] = []
@@ -53,15 +52,17 @@ class CheckpointManager:
             return False
 
         try:
-            with open(self.checkpoint_file, 'r', encoding='utf-8') as f:
+            with open(self.checkpoint_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            self.completed_commands = set(data.get('completed_commands', []))
-            self.failed_commands = data.get('failed_commands', [])
-            self.session_start = data.get('session_start', self.session_start)
+            self.completed_commands = set(data.get("completed_commands", []))
+            self.failed_commands = data.get("failed_commands", [])
+            self.session_start = data.get("session_start", self.session_start)
 
-            logger.info(f"  Checkpoint loaded: {len(self.completed_commands)} completed, "
-                       f"{len(self.failed_commands)} failed")
+            logger.info(
+                f"  Checkpoint loaded: {len(self.completed_commands)} completed, "
+                f"{len(self.failed_commands)} failed"
+            )
             return True
         except Exception as e:
             logger.warning(f"  Failed to load checkpoint: {e}")
@@ -75,21 +76,23 @@ class CheckpointManager:
             additional_data: Optional additional data to store in checkpoint
         """
         data = {
-            'session_start': self.session_start,
-            'last_updated': datetime.now().isoformat(),
-            'completed_commands': list(self.completed_commands),
-            'failed_commands': self.failed_commands,
-            'total_completed': len(self.completed_commands),
-            'total_failed': len(self.failed_commands)
+            "session_start": self.session_start,
+            "last_updated": datetime.now().isoformat(),
+            "completed_commands": list(self.completed_commands),
+            "failed_commands": self.failed_commands,
+            "total_completed": len(self.completed_commands),
+            "total_failed": len(self.failed_commands),
         }
 
         if additional_data:
             data.update(additional_data)
 
         try:
-            with open(self.checkpoint_file, 'w', encoding='utf-8') as f:
+            with open(self.checkpoint_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            logger.debug(f"  Checkpoint saved: {len(self.completed_commands)} completed")
+            logger.debug(
+                f"  Checkpoint saved: {len(self.completed_commands)} completed"
+            )
         except Exception as e:
             logger.error(f"  Failed to save checkpoint: {e}")
 
@@ -136,7 +139,7 @@ class CheckpointManager:
         """
         remaining = []
         for cmd in all_commands:
-            cmd_str = cmd.get('command', '')
+            cmd_str = cmd.get("command", "")
             if not self.is_completed(cmd_str):
                 remaining.append(cmd)
 
@@ -150,9 +153,9 @@ class CheckpointManager:
             Dict with completed and failed counts
         """
         return {
-            'completed': len(self.completed_commands),
-            'failed': len(self.failed_commands),
-            'total_processed': len(self.completed_commands) + len(self.failed_commands)
+            "completed": len(self.completed_commands),
+            "failed": len(self.failed_commands),
+            "total_processed": len(self.completed_commands) + len(self.failed_commands),
         }
 
     def cleanup_old_checkpoints(self, keep_recent: int = 5):
@@ -164,8 +167,9 @@ class CheckpointManager:
         """
         try:
             checkpoint_files = [
-                f for f in os.listdir(self.checkpoint_dir)
-                if f.startswith('checkpoint_') and f.endswith('.json')
+                f
+                for f in os.listdir(self.checkpoint_dir)
+                if f.startswith("checkpoint_") and f.endswith(".json")
             ]
 
             if len(checkpoint_files) <= keep_recent:
@@ -174,7 +178,7 @@ class CheckpointManager:
             # Sort by modification time
             checkpoint_files.sort(
                 key=lambda f: os.path.getmtime(os.path.join(self.checkpoint_dir, f)),
-                reverse=True
+                reverse=True,
             )
 
             # Remove old checkpoints
@@ -195,8 +199,9 @@ class CheckpointManager:
         """
         try:
             checkpoint_files = [
-                f for f in os.listdir(self.checkpoint_dir)
-                if f.startswith('checkpoint_') and f.endswith('.json')
+                f
+                for f in os.listdir(self.checkpoint_dir)
+                if f.startswith("checkpoint_") and f.endswith(".json")
             ]
 
             if not checkpoint_files:
@@ -205,7 +210,7 @@ class CheckpointManager:
             # Sort by modification time
             checkpoint_files.sort(
                 key=lambda f: os.path.getmtime(os.path.join(self.checkpoint_dir, f)),
-                reverse=True
+                reverse=True,
             )
 
             latest = os.path.join(self.checkpoint_dir, checkpoint_files[0])

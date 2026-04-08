@@ -7,16 +7,19 @@ Defines a hierarchy of exceptions for better error handling and debugging.
 
 class TravelportAutomationError(Exception):
     """Base exception for all Travelport automation errors."""
+
     pass
 
 
 class ConnectionError(TravelportAutomationError):
     """Raised when unable to connect to Smartpoint application."""
+
     pass
 
 
 class AuthenticationError(TravelportAutomationError):
     """Raised when login to Smartpoint fails."""
+
     pass
 
 
@@ -38,6 +41,7 @@ class ParsingError(TravelportAutomationError):
 
 class ConfigurationError(TravelportAutomationError):
     """Raised when configuration is invalid or missing."""
+
     pass
 
 

@@ -15,9 +15,7 @@ class TestDetectChanges:
         """Test detection of new fares."""
         previous = {
             "BG_DAC-CGP": {
-                "rbd_data": {
-                    "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}
-                }
+                "rbd_data": {"Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}}
             }
         }
 
@@ -25,7 +23,7 @@ class TestDetectChanges:
             "BG_DAC-CGP": {
                 "rbd_data": {
                     "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200},
-                    "J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600}  # New
+                    "J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600},  # New
                 }
             }
         }
@@ -43,7 +41,7 @@ class TestDetectChanges:
             "BG_DAC-CGP": {
                 "rbd_data": {
                     "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200},
-                    "J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600}
+                    "J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600},
                 }
             }
         }
@@ -68,9 +66,7 @@ class TestDetectChanges:
         """Test detection of price increases."""
         previous = {
             "BG_DAC-CGP": {
-                "rbd_data": {
-                    "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}
-                }
+                "rbd_data": {"Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}}
             }
         }
 
@@ -94,9 +90,7 @@ class TestDetectChanges:
         """Test detection of price decreases."""
         previous = {
             "BG_DAC-CGP": {
-                "rbd_data": {
-                    "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}
-                }
+                "rbd_data": {"Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}}
             }
         }
 
@@ -120,9 +114,7 @@ class TestDetectChanges:
         """Test when there are no changes."""
         data = {
             "BG_DAC-CGP": {
-                "rbd_data": {
-                    "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}
-                }
+                "rbd_data": {"Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}}
             }
         }
 
@@ -137,7 +129,7 @@ class TestDetectChanges:
                 "rbd_data": {
                     "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200},
                     "J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600},
-                    "C": {"rbd": "C", "ow_fare": 250, "rt_fare": 500}
+                    "C": {"rbd": "C", "ow_fare": 250, "rt_fare": 500},
                 }
             }
         }
@@ -147,7 +139,7 @@ class TestDetectChanges:
                 "rbd_data": {
                     "Y": {"rbd": "Y", "ow_fare": 110, "rt_fare": 200},  # Increased
                     "J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600},  # No change
-                    "F": {"rbd": "F", "ow_fare": 500, "rt_fare": 1000}  # New
+                    "F": {"rbd": "F", "ow_fare": 500, "rt_fare": 1000},  # New
                     # C is gone (sold out)
                 }
             }
@@ -175,7 +167,7 @@ class TestFormatChangeSummary:
                     "old_ow_fare": 100.0,
                     "new_ow_fare": 120.0,
                     "old_rt_fare": 200.0,
-                    "new_rt_fare": 220.0
+                    "new_rt_fare": 220.0,
                 }
             }
         }
@@ -197,12 +189,30 @@ class TestFormatChangeSummary:
         """Test formatting multiple changes."""
         changes = {
             "BG_DAC-CGP": {
-                "Y": {"type": "increased", "old_ow_fare": 100, "new_ow_fare": 120, "old_rt_fare": None, "new_rt_fare": None},
-                "J": {"type": "new", "old_ow_fare": None, "new_ow_fare": 300, "old_rt_fare": None, "new_rt_fare": 600}
+                "Y": {
+                    "type": "increased",
+                    "old_ow_fare": 100,
+                    "new_ow_fare": 120,
+                    "old_rt_fare": None,
+                    "new_rt_fare": None,
+                },
+                "J": {
+                    "type": "new",
+                    "old_ow_fare": None,
+                    "new_ow_fare": 300,
+                    "old_rt_fare": None,
+                    "new_rt_fare": 600,
+                },
             },
             "BG_DAC-MLE": {
-                "C": {"type": "sold_out", "old_ow_fare": 250, "new_ow_fare": None, "old_rt_fare": 500, "new_rt_fare": None}
-            }
+                "C": {
+                    "type": "sold_out",
+                    "old_ow_fare": 250,
+                    "new_ow_fare": None,
+                    "old_rt_fare": 500,
+                    "new_rt_fare": None,
+                }
+            },
         }
 
         summary = format_change_summary(changes)
