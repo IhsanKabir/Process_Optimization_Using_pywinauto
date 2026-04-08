@@ -53,6 +53,10 @@ from validators import (
 from credential_manager import CredentialManager
 from checkpoint_manager import CheckpointManager
 from constants import MAX_RETRIES_COMMAND, MAX_FS_DATE_STEPS, FS_DATE_OFFSET_START
+try:
+    from database import DatabaseManager
+except ImportError:
+    DatabaseManager = None
 
 # Try to load .env file if python-dotenv is available
 try:
@@ -227,6 +231,27 @@ def process_route_data(raw_texts: dict[str, str], raw_fs_texts: dict[str, str], 
     return OrderedDict(sorted(all_route_data.items()))
 
 
+def record_to_database(all_route_data: dict, config: dict, mode: str = "auto"):
+    """Persist the data to PostgreSQL if configured."""
+    db_url = config.get('database_url') or os.environ.get('DATABASE_URL')
+    if not db_url or "postgresql://" not in db_url:
+        return
+
+    if not DatabaseManager:
+        logger.warning("  [!] Database integration skipped (psycopg2-binary not installed)")
+        return
+
+    logger.info(f"[DB] Recording {len(all_route_data)} items to history...")
+    db = DatabaseManager(db_url)
+    if db.connect():
+        run_id = db.record_run(all_route_data, run_mode=mode)
+        if run_id > 0:
+            logger.info(f"  ✓ Database record created (Run ID: {run_id})")
+        db.close()
+    else:
+        logger.warning("  [!] Database integration skipped (connection failed)")
+
+
 def show_usage():
     """Show usage instructions when no data files are found."""
     logger.info("")
@@ -280,7 +305,6 @@ def main():
             logger.error("  [!] Error: 'pyperclip' is not installed. Run 'pip install pyperclip'")
             sys.exit(1)
             
-        from parser import parse_command
         
         commands_input = input("\n  Enter Commands (e.g., FDDACDOH/QR, FDDOHDAC/QR, FDDACMCT/WY): ").strip()
         if not commands_input:
@@ -337,8 +361,10 @@ def main():
         output_name = f"quick_report_{primary_route}_{suffix}_{datetime.now().strftime('%H%M')}.xlsx".replace("__", "_")
         output_path = os.path.join(REPORTS_DIR, output_name)
         
-        from excel_report import generate_report
         result_path = generate_report(all_route_data, output_path, changes=None, config=config)
+        
+        # Record to Database
+        record_to_database(all_route_data, config, mode="quick-paste")
         
         logger.info(f"\n  ✓ Successfully generated: {result_path}")
         try:
@@ -918,6 +944,9 @@ def main():
         save_snapshot(all_route_data, archive_path, date_str=ts)
         logger.info("")
     
+    # [DB] Optional persistence
+    record_to_database(all_route_data, config, mode="auto" if not args.tax else "tax-mode")
+
     # [4/4] Generate Report
     logger.info("[4/4] Generating Excel report...")
     
