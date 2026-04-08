@@ -38,6 +38,23 @@ def parse_command(command: str) -> Optional[dict]:
     }
 
 
+def load_commands_from_text(text: str) -> list[dict]:
+    """Parse commands from a raw string block."""
+    commands = []
+    lines = text.strip().split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        
+        parsed = parse_command(line)
+        if parsed:
+            commands.append(parsed)
+        else:
+            print(f"  [WARNING] Could not parse command: {line}")
+    return commands
+
+
 def load_commands(commands_file: str) -> list[dict]:
     """
     Load and parse commands from the commands.txt file.
@@ -45,21 +62,13 @@ def load_commands(commands_file: str) -> list[dict]:
     
     Returns list of parsed command dicts.
     """
-    commands = []
-    
-    with open(commands_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            
-            parsed = parse_command(line)
-            if parsed:
-                commands.append(parsed)
-            else:
-                print(f"  [WARNING] Could not parse command: {line}")
-    
-    return commands
+    try:
+        with open(commands_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return load_commands_from_text(content)
+    except Exception as e:
+        print(f"  [ERROR] Failed to load commands file: {e}")
+        return []
 
 
 def _extract_currency(raw_text: str):
