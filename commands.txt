@@ -35,6 +35,9 @@
 # 9. Extract Global FTAX ONLY (Skips this file entirely, relies on config.json)
 #    python main.py --auto --tax
 #
+# 10. Manual Quick Paste (Interactive manual clipboard extraction)
+#     python main.py --quick-paste
+#
 # ==============================================================================
 #
 # Command format: FD{ORIGIN}{DEST}/{AIRLINE}
