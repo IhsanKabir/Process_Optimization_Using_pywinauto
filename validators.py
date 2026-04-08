@@ -10,7 +10,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from exceptions import ValidationError, ConfigurationError
 
-logger = logging.getLogger('travelport.validators')
+logger = logging.getLogger("travelport.validators")
 
 
 def validate_airport_code(code: str, field_name: str = "airport code") -> str:
@@ -32,11 +32,9 @@ def validate_airport_code(code: str, field_name: str = "airport code") -> str:
 
     code = code.strip().upper()
 
-    if not re.match(r'^[A-Z]{3}$', code):
+    if not re.match(r"^[A-Z]{3}$", code):
         raise ValidationError(
-            field_name,
-            code,
-            "must be exactly 3 letters (e.g., DAC, MLE, DOH)"
+            field_name, code, "must be exactly 3 letters (e.g., DAC, MLE, DOH)"
         )
 
     return code
@@ -60,11 +58,11 @@ def validate_airline_code(code: str) -> str:
 
     code = code.strip().upper()
 
-    if not re.match(r'^[A-Z0-9]{2}$', code):
+    if not re.match(r"^[A-Z0-9]{2}$", code):
         raise ValidationError(
             "airline code",
             code,
-            "must be exactly 2 alphanumeric characters (e.g., BG, BS, 8D)"
+            "must be exactly 2 alphanumeric characters (e.g., BG, BS, 8D)",
         )
 
     return code
@@ -86,20 +84,22 @@ def validate_route(route: str) -> tuple[str, str]:
     if not route:
         raise ValidationError("route", route, "cannot be empty")
 
-    route = route.strip().upper().replace('-', '')
+    route = route.strip().upper().replace("-", "")
 
     if len(route) != 6:
         raise ValidationError(
             "route",
             route,
-            "must be 6 letters (2 airport codes, e.g., DACMLE or DAC-MLE)"
+            "must be 6 letters (2 airport codes, e.g., DACMLE or DAC-MLE)",
         )
 
     origin = validate_airport_code(route[:3], "origin")
     dest = validate_airport_code(route[3:6], "destination")
 
     if origin == dest:
-        raise ValidationError("route", route, "origin and destination cannot be the same")
+        raise ValidationError(
+            "route", route, "origin and destination cannot be the same"
+        )
 
     return origin, dest
 
@@ -122,11 +122,9 @@ def validate_country_code(code: str) -> str:
 
     code = code.strip().upper()
 
-    if not re.match(r'^[A-Z]{2}$', code):
+    if not re.match(r"^[A-Z]{2}$", code):
         raise ValidationError(
-            "country code",
-            code,
-            "must be exactly 2 letters (e.g., SG, MV, CN)"
+            "country code", code, "must be exactly 2 letters (e.g., SG, MV, CN)"
         )
 
     return code
@@ -146,77 +144,85 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
         ConfigurationError: If config is invalid
     """
     # Check required keys
-    required_keys = ['commands_file', 'airline_names', 'city_names', 'rbd_sort_order']
+    required_keys = ["commands_file", "airline_names", "city_names", "rbd_sort_order"]
     missing = [k for k in required_keys if k not in config]
     if missing:
         raise ConfigurationError(f"Missing required config keys: {', '.join(missing)}")
 
     # Validate commands_file exists (if it's supposed to)
-    if config.get('commands_file') and not os.path.exists(config['commands_file']):
+    if config.get("commands_file") and not os.path.exists(config["commands_file"]):
         # This is just a warning - the file might be created later
         pass
 
     # Validate airline names dict
-    if not isinstance(config.get('airline_names'), dict):
+    if not isinstance(config.get("airline_names"), dict):
         raise ConfigurationError("airline_names must be a dictionary")
 
-    for code, name in config['airline_names'].items():
+    for code, name in config["airline_names"].items():
         try:
             validate_airline_code(code)
         except ValidationError as e:
             raise ConfigurationError(f"Invalid airline code in airline_names: {e}")
 
     # Validate city names dict
-    if not isinstance(config.get('city_names'), dict):
+    if not isinstance(config.get("city_names"), dict):
         raise ConfigurationError("city_names must be a dictionary")
 
-    for code, name in config['city_names'].items():
+    for code, name in config["city_names"].items():
         try:
             validate_airport_code(code)
         except ValidationError as e:
             raise ConfigurationError(f"Invalid airport code in city_names: {e}")
 
     # Validate RBD sort order
-    if not isinstance(config.get('rbd_sort_order'), list):
+    if not isinstance(config.get("rbd_sort_order"), list):
         raise ConfigurationError("rbd_sort_order must be a list")
 
-    for rbd in config['rbd_sort_order']:
+    for rbd in config["rbd_sort_order"]:
         if not isinstance(rbd, str) or len(rbd) != 1 or not rbd.isalpha():
-            raise ConfigurationError(f"Invalid RBD in rbd_sort_order: '{rbd}' (must be single letter)")
+            raise ConfigurationError(
+                f"Invalid RBD in rbd_sort_order: '{rbd}' (must be single letter)"
+            )
 
     # Validate domestic airports (add default if missing)
-    if 'domestic_airports' not in config:
-        config['domestic_airports'] = ['DAC']
+    if "domestic_airports" not in config:
+        config["domestic_airports"] = ["DAC"]
     else:
-        if not isinstance(config['domestic_airports'], list):
+        if not isinstance(config["domestic_airports"], list):
             raise ConfigurationError("domestic_airports must be a list")
-        for code in config['domestic_airports']:
+        for code in config["domestic_airports"]:
             try:
                 validate_airport_code(code)
             except ValidationError as e:
                 raise ConfigurationError(f"Invalid airport in domestic_airports: {e}")
 
     # Validate tax airports if present
-    if 'tax_airports' in config:
-        if not isinstance(config['tax_airports'], dict):
+    if "tax_airports" in config:
+        if not isinstance(config["tax_airports"], dict):
             raise ConfigurationError("tax_airports must be a dictionary")
 
-        for airport_code, info in config['tax_airports'].items():
+        for airport_code, info in config["tax_airports"].items():
             try:
                 validate_airport_code(airport_code)
             except ValidationError as e:
                 raise ConfigurationError(f"Invalid airport code in tax_airports: {e}")
 
             if not isinstance(info, dict):
-                raise ConfigurationError(f"tax_airports[{airport_code}] must be a dictionary")
+                raise ConfigurationError(
+                    f"tax_airports[{airport_code}] must be a dictionary"
+                )
 
-            if 'country' not in info:
-                raise ConfigurationError(f"tax_airports[{airport_code}] missing 'country' key")
+            if "country" not in info:
+                raise ConfigurationError(
+                    f"tax_airports[{airport_code}] missing 'country' key"
+                )
 
             try:
-                validate_country_code(info['country'])
+                validate_country_code(info["country"])
             except ValidationError as e:
-                raise ConfigurationError(f"Invalid country code in tax_airports[{airport_code}]: {e}")
+                raise ConfigurationError(
+                    f"Invalid country code in tax_airports[{airport_code}]: {e}"
+                )
 
     return config
 
@@ -238,18 +244,18 @@ def sanitize_command(command: str) -> str:
     command = command.strip()
 
     # Check for suspicious characters that shouldn't be in GDS commands
-    dangerous_chars = [';', '|', '&', '\n', '\r', '\x00']
+    dangerous_chars = [";", "|", "&", "\n", "\r", "\x00"]
     for char in dangerous_chars:
         if char in command:
             raise ValidationError(
-                "command",
-                command,
-                f"contains prohibited character: {repr(char)}"
+                "command", command, f"contains prohibited character: {repr(char)}"
             )
 
     # Ensure command doesn't exceed reasonable length
     if len(command) > 200:
-        raise ValidationError("command", command, "exceeds maximum length of 200 characters")
+        raise ValidationError(
+            "command", command, "exceeds maximum length of 200 characters"
+        )
 
     return command
 
@@ -282,13 +288,76 @@ def validate_limit(limit: int) -> int:
 
 # Valid currency codes (ISO 4217 - common ones used in aviation)
 VALID_CURRENCY_CODES = {
-    'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'AUD', 'CAD', 'CHF', 'HKD', 'SGD',
-    'SEK', 'KRW', 'NOK', 'NZD', 'INR', 'MXN', 'ZAR', 'BRL', 'RUB', 'THB',
-    'IDR', 'MYR', 'PHP', 'VND', 'BDT', 'PKR', 'EGP', 'SAR', 'AED', 'QAR',
-    'KWD', 'OMR', 'BHD', 'JOD', 'LBP', 'TRY', 'ILS', 'DKK', 'PLN', 'CZK',
-    'HUF', 'RON', 'BGN', 'HRK', 'RSD', 'UAH', 'KZT', 'UZS', 'GEL', 'AMD',
-    'AZN', 'TMT', 'TJS', 'KGS', 'MDL', 'BYN', 'ALL', 'MKD', 'BAM', 'ISK',
-    'LKR', 'NPR', 'BTN', 'MVR', 'AFN', 'MMK', 'LAK', 'KHR', 'BND', 'PGK'
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "CNY",
+    "AUD",
+    "CAD",
+    "CHF",
+    "HKD",
+    "SGD",
+    "SEK",
+    "KRW",
+    "NOK",
+    "NZD",
+    "INR",
+    "MXN",
+    "ZAR",
+    "BRL",
+    "RUB",
+    "THB",
+    "IDR",
+    "MYR",
+    "PHP",
+    "VND",
+    "BDT",
+    "PKR",
+    "EGP",
+    "SAR",
+    "AED",
+    "QAR",
+    "KWD",
+    "OMR",
+    "BHD",
+    "JOD",
+    "LBP",
+    "TRY",
+    "ILS",
+    "DKK",
+    "PLN",
+    "CZK",
+    "HUF",
+    "RON",
+    "BGN",
+    "HRK",
+    "RSD",
+    "UAH",
+    "KZT",
+    "UZS",
+    "GEL",
+    "AMD",
+    "AZN",
+    "TMT",
+    "TJS",
+    "KGS",
+    "MDL",
+    "BYN",
+    "ALL",
+    "MKD",
+    "BAM",
+    "ISK",
+    "LKR",
+    "NPR",
+    "BTN",
+    "MVR",
+    "AFN",
+    "MMK",
+    "LAK",
+    "KHR",
+    "BND",
+    "PGK",
 }
 
 # Maximum reasonable fare amounts (in USD equivalent)
@@ -297,9 +366,7 @@ MAX_FARE_AMOUNT_LOCAL = 10000000  # Local currency max (e.g., 10M IDR ≈ $650)
 
 
 def validate_fare_amount(
-    fare: float,
-    currency: Optional[str] = None,
-    warn_only: bool = True
+    fare: float, currency: Optional[str] = None, warn_only: bool = True
 ) -> bool:
     """
     Validate that a fare amount is reasonable.
@@ -325,7 +392,11 @@ def validate_fare_amount(
             raise ValidationError("fare", fare, "must be greater than 0")
 
     # Check if fare exceeds maximum reasonable amount
-    max_amount = MAX_FARE_AMOUNT_USD if currency in ('USD', 'EUR', 'GBP') else MAX_FARE_AMOUNT_LOCAL
+    max_amount = (
+        MAX_FARE_AMOUNT_USD
+        if currency in ("USD", "EUR", "GBP")
+        else MAX_FARE_AMOUNT_LOCAL
+    )
     if fare > max_amount:
         msg = f"Fare amount {fare} {currency or ''} seems unusually high (max: {max_amount})"
         if warn_only:
@@ -337,10 +408,7 @@ def validate_fare_amount(
     return True
 
 
-def validate_currency_code(
-    code: Optional[str],
-    warn_only: bool = True
-) -> bool:
+def validate_currency_code(code: Optional[str], warn_only: bool = True) -> bool:
     """
     Validate that a currency code is valid.
 
@@ -365,7 +433,7 @@ def validate_currency_code(
     code = code.strip().upper()
 
     # Check format (3 uppercase letters)
-    if not re.match(r'^[A-Z]{3}$', code):
+    if not re.match(r"^[A-Z]{3}$", code):
         msg = f"Currency code '{code}' has invalid format (must be 3 letters)"
         if warn_only:
             logger.warning(f"  [VALIDATION] {msg}")
@@ -386,9 +454,7 @@ def validate_currency_code(
 
 
 def validate_fare_data(
-    fare_dict: Dict[str, Any],
-    currency: Optional[str] = None,
-    warn_only: bool = True
+    fare_dict: Dict[str, Any], currency: Optional[str] = None, warn_only: bool = True
 ) -> List[str]:
     """
     Perform sanity checks on a fare data dictionary.
@@ -404,7 +470,7 @@ def validate_fare_data(
     warnings = []
 
     # Check for required fields
-    required_fields = ['rbd', 'airline', 'fare_basis']
+    required_fields = ["rbd", "airline", "fare_basis"]
     for field in required_fields:
         if field not in fare_dict or not fare_dict[field]:
             msg = f"Missing required field: {field}"
@@ -415,17 +481,17 @@ def validate_fare_data(
                 raise ValidationError("fare_data", fare_dict, msg)
 
     # Validate fare amounts if present
-    for fare_type in ['ow_fare', 'rt_fare', 'fare']:
+    for fare_type in ["ow_fare", "rt_fare", "fare"]:
         if fare_type in fare_dict and fare_dict[fare_type] is not None:
             if not validate_fare_amount(fare_dict[fare_type], currency, warn_only):
                 warnings.append(f"Invalid {fare_type}: {fare_dict[fare_type]}")
 
     # Check RBD format (should be single letter)
-    if 'rbd' in fare_dict and fare_dict['rbd']:
-        rbd = fare_dict['rbd']
+    if "rbd" in fare_dict and fare_dict["rbd"]:
+        rbd = fare_dict["rbd"]
         # Handle "Y (Unsaleable)" format
-        if ' (Unsaleable)' in str(rbd):
-            rbd = rbd.replace(' (Unsaleable)', '')
+        if " (Unsaleable)" in str(rbd):
+            rbd = rbd.replace(" (Unsaleable)", "")
 
         if len(rbd) != 1 or not rbd.isalpha():
             msg = f"RBD '{fare_dict['rbd']}' has unexpected format (should be single letter)"
@@ -437,8 +503,7 @@ def validate_fare_data(
 
 
 def validate_parsed_fares(
-    fares: List[Dict[str, Any]],
-    currency: Optional[str] = None
+    fares: List[Dict[str, Any]], currency: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Validate a list of parsed fares and return validation statistics.
@@ -451,32 +516,34 @@ def validate_parsed_fares(
         Dict with validation statistics and warnings
     """
     stats = {
-        'total_fares': len(fares),
-        'valid_fares': 0,
-        'invalid_fares': 0,
-        'warnings': [],
-        'missing_fields': 0
+        "total_fares": len(fares),
+        "valid_fares": 0,
+        "invalid_fares": 0,
+        "warnings": [],
+        "missing_fields": 0,
     }
 
     # Validate currency if provided
     if currency:
         if not validate_currency_code(currency, warn_only=True):
-            stats['warnings'].append(f"Invalid or missing currency: {currency}")
+            stats["warnings"].append(f"Invalid or missing currency: {currency}")
 
     # Validate each fare
     for i, fare in enumerate(fares):
         fare_warnings = validate_fare_data(fare, currency, warn_only=True)
         if fare_warnings:
-            stats['invalid_fares'] += 1
-            stats['warnings'].extend([f"Fare {i+1}: {w}" for w in fare_warnings])
-            if any('missing' in w.lower() for w in fare_warnings):
-                stats['missing_fields'] += 1
+            stats["invalid_fares"] += 1
+            stats["warnings"].extend([f"Fare {i+1}: {w}" for w in fare_warnings])
+            if any("missing" in w.lower() for w in fare_warnings):
+                stats["missing_fields"] += 1
         else:
-            stats['valid_fares'] += 1
+            stats["valid_fares"] += 1
 
     # Log summary if there are issues
-    if stats['warnings']:
-        logger.warning(f"  [VALIDATION] Found {len(stats['warnings'])} validation issues in {len(fares)} fares")
+    if stats["warnings"]:
+        logger.warning(
+            f"  [VALIDATION] Found {len(stats['warnings'])} validation issues in {len(fares)} fares"
+        )
         logger.debug(f"  [VALIDATION] Details: {stats}")
 
     return stats

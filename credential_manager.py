@@ -46,7 +46,9 @@ class CredentialManager:
             return None, None, None
 
     @staticmethod
-    def validate_credentials(username: str, password: str, pcc: Optional[str] = None) -> bool:
+    def validate_credentials(
+        username: str, password: str, pcc: Optional[str] = None
+    ) -> bool:
         """
         Validate that credentials meet basic requirements.
 
@@ -85,7 +87,7 @@ class CredentialManager:
 
     @staticmethod
     def get_credentials(
-        force_env: bool = False
+        force_env: bool = False,
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Get credentials with fallback strategy.
