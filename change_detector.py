@@ -6,9 +6,12 @@ price changes, new fares, and removed fares.
 """
 
 import json
+import logging
 import os
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger("travelport.change_detector")
 
 
 def detect_changes(current_data: dict, previous_data: dict) -> dict:
@@ -118,11 +121,28 @@ def save_snapshot(data: dict, archive_dir: str, date_str: Optional[str] = None):
     os.makedirs(archive_dir, exist_ok=True)
 
     filepath = os.path.join(archive_dir, f"snapshot_{date_str}.json")
+    temp_filepath = f"{filepath}.tmp"
 
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    # Write compact JSON to a temp file first so interrupted saves do not leave
+    # behind a partially written snapshot.
+    with open(temp_filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+
+    os.replace(temp_filepath, filepath)
 
     return filepath
+
+
+def snapshot_has_changed(current_data: dict, previous_data: Optional[dict]) -> bool:
+    """
+    Return True when the current snapshot differs from the previous archive.
+
+    Identical snapshots do not need a new timestamped archive file.
+    """
+    if previous_data is None:
+        return True
+
+    return current_data != previous_data
 
 
 def load_latest_snapshot(archive_dir: str) -> Optional[dict]:
@@ -146,12 +166,19 @@ def load_latest_snapshot(archive_dir: str) -> Optional[dict]:
 
     # Sort by filename (date-based naming ensures chronological order)
     snapshots.sort(reverse=True)
-    latest = snapshots[0]
 
-    filepath = os.path.join(archive_dir, latest)
+    for snapshot_name in snapshots:
+        filepath = os.path.join(archive_dir, snapshot_name)
 
-    with open(filepath, "r", encoding="utf-8") as f:
-        return json.load(f)
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(
+                "Skipping invalid snapshot '%s': %s", snapshot_name, e
+            )
+
+    return None
 
 
 def format_change_summary(changes: dict) -> str:

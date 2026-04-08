@@ -4,8 +4,16 @@ Unit tests for change_detector.py
 Tests fare change detection logic.
 """
 
-import pytest
-from change_detector import detect_changes, format_change_summary
+import tempfile
+from pathlib import Path
+
+from change_detector import (
+    detect_changes,
+    format_change_summary,
+    load_latest_snapshot,
+    save_snapshot,
+    snapshot_has_changed,
+)
 
 
 class TestDetectChanges:
@@ -220,3 +228,58 @@ class TestFormatChangeSummary:
         assert "BG_DAC-CGP" in summary
         assert "BG_DAC-MLE" in summary
         assert "Total changes: 3" in summary
+
+
+class TestSnapshotPersistence:
+    def test_snapshot_has_changed_detects_identical_data(self):
+        data = {
+            "BG_DAC-CGP": {
+                "rbd_data": {"Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}}
+            }
+        }
+
+        assert snapshot_has_changed(data, data) is False
+        assert snapshot_has_changed(data, None) is True
+
+    def test_save_and_load_snapshot(self):
+        data = {
+            "BG_DAC-MLE": {
+                "currency": "USD",
+                "rbd_data": {"J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600}},
+            }
+        }
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            filepath = save_snapshot(data, temp_dir, date_str="2026-04-08_1200")
+
+            assert filepath.endswith("snapshot_2026-04-08_1200.json")
+            assert filepath.startswith(temp_dir)
+            assert load_latest_snapshot(temp_dir) == data
+
+    def test_load_latest_snapshot_skips_corrupt_newest_file(self):
+        valid_data = {
+            "BG_DAC-MLE": {
+                "currency": "USD",
+                "rbd_data": {"Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}},
+            }
+        }
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            temp_path = Path(temp_dir)
+            save_snapshot(valid_data, temp_dir, date_str="2026-04-08_1700")
+            (temp_path / "snapshot_2026-04-08_1800.json").write_text(
+                '{"broken": true',
+                encoding="utf-8",
+            )
+
+            assert load_latest_snapshot(temp_dir) == valid_data
+
+    def test_load_latest_snapshot_returns_none_when_all_are_invalid(self):
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            temp_path = Path(temp_dir)
+            (temp_path / "snapshot_2026-04-08_1800.json").write_text(
+                '{"broken": true',
+                encoding="utf-8",
+            )
+
+            assert load_latest_snapshot(temp_dir) is None
