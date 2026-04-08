@@ -90,5 +90,6 @@
         "RUH": {"country": "SA", "name": "Saudi Arabia"},
         "JED": {"country": "SA", "name": "Saudi Arabia"},
         "DMM": {"country": "SA", "name": "Saudi Arabia"}
-    }
+    },
+    "database_url": "postgresql://user:password@localhost/travelport_db"
 }
