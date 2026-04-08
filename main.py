@@ -259,6 +259,7 @@ def main():
     arg_parser.add_argument('--only-currency', action='store_true', help='Extract only exchange rates (alias for --only-yq)')
     arg_parser.add_argument('--tax', action='store_true', help='Extract Tax (FTAX) data instead of fares')
     arg_parser.add_argument('--include-ftax', action='store_true', help='Extract global FTAX data alongside the specific route fares')
+    arg_parser.add_argument('--quick-paste', action='store_true', help='Interactive mode: paste terminal texts physically from clipboard')
     arg_parser.add_argument('--speed', type=str, choices=['fast', 'safe'], default=None,
                            help='Speed profile: "fast" (aggressive timings, ~50%% faster) or "safe" (conservative timings for slower machines)')
     arg_parser.add_argument('--checkpoint', action='store_true', help='Enable checkpoint/resume mode for long runs')
@@ -270,6 +271,82 @@ def main():
         args = arg_parser.parse_args(['--auto'])
     else:
         args = arg_parser.parse_args()
+
+    # QUICK PASTE MODE INTERCEPT
+    if getattr(args, 'quick_paste', False):
+        try:
+            import pyperclip
+        except ImportError:
+            logger.error("  [!] Error: 'pyperclip' is not installed. Run 'pip install pyperclip'")
+            sys.exit(1)
+            
+        from parser import parse_command
+        
+        commands_input = input("\n  Enter Commands (e.g., FDDACDOH/QR, FDDOHDAC/QR, FDDACMCT/WY): ").strip()
+        if not commands_input:
+            print("  [!] Commands are required. Exiting.")
+            sys.exit(1)
+            
+        raw_commands = [c.strip().upper() for c in commands_input.split(',')]
+        
+        valid_commands = []
+        for c in raw_commands:
+            parsed = parse_command(c)
+            if parsed:
+                valid_commands.append(parsed)
+            else:
+                print(f"  [!] Invalid command skipped: {c}")
+                
+        if not valid_commands:
+            print("  [!] No valid commands provided. Exiting.")
+            sys.exit(1)
+
+        raw_texts = {}
+        raw_fs_texts = {}
+
+        for i, cmd in enumerate(valid_commands):
+            airline = cmd['airline']
+            route = cmd['route']
+            print(f"\n" + "-"*40)
+            print(f"  GATHERING DATA FOR {airline} {route} ({i+1}/{len(valid_commands)})")
+            print("-"*40)
+            
+            input(f"  [1/2] Please highlight and COPY the FD terminal output for {route}, then press ENTER...")
+            fd_text = pyperclip.paste()
+            if not fd_text or len(fd_text.strip()) < 10:
+                print("  [!] Clipboard seems empty or too short. Continuing anyway...")
+                
+            input(f"  [2/2] Now, highlight and COPY the FS (Tax) terminal output for {route}, then press ENTER...")
+            fs_text = pyperclip.paste()
+            
+            file_key = f"{airline}_{route}"
+            raw_texts[file_key] = fd_text
+            raw_fs_texts[file_key] = fs_text
+        
+        print("\n  Parsing manual data...")
+        config = load_config(args.config)
+        all_route_data = process_route_data(raw_texts, raw_fs_texts, config, enable_validation=False)
+        
+        if not all_route_data:
+            print("  [!] Failed to parse data. Ensure your copied text is valid.")
+            sys.exit(1)
+            
+        # Use first route for filename
+        primary_route = f"{valid_commands[0]['airline']}_{valid_commands[0]['route'].replace('-', '')}"
+        suffix = "etc" if len(valid_commands) > 1 else ""
+        output_name = f"quick_report_{primary_route}_{suffix}_{datetime.now().strftime('%H%M')}.xlsx".replace("__", "_")
+        output_path = os.path.join(REPORTS_DIR, output_name)
+        
+        from excel_report import generate_report
+        result_path = generate_report(all_route_data, output_path, changes=None, config=config)
+        
+        logger.info(f"\n  ✓ Successfully generated: {result_path}")
+        try:
+            os.startfile(result_path)
+            logger.info("  Opening file automatically...")
+        except Exception:
+            pass
+        sys.exit(0)
 
     # Apply speed profile if specified (must be done before any automation imports)
     if args.speed:
