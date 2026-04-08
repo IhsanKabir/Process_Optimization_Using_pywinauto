@@ -149,48 +149,63 @@ def process_route_data(raw_texts: dict[str, str], raw_fs_texts: dict[str, str], 
     rbd_sort_order = config.get('rbd_sort_order', [])
     all_route_data = OrderedDict()
 
+    # Combine all file_keys from both raw_texts and raw_fs_texts
+    all_file_keys = set(raw_texts.keys()) | set(raw_fs_texts.keys())
+
     # Use tqdm progress bar if available
-    items = raw_texts.items()
+    items = sorted(all_file_keys)
     if tqdm:
-        items = tqdm(list(items), desc="Processing routes", unit="route")
+        items = tqdm(items, desc="Processing routes", unit="route")
 
-    for file_key, raw_text in items:
-        result = parse_fare_display(raw_text)
-        fares = result.get('fares', [])
-        currency = result.get('currency')
+    for file_key in items:
+        raw_text = raw_texts.get(file_key, '')
 
-        # Validate currency code
-        if enable_validation and currency:
-            validate_currency_code(currency, warn_only=True)
+        # Parse fare data if available
+        fares = []
+        currency = None
+        if raw_text:
+            result = parse_fare_display(raw_text)
+            fares = result.get('fares', [])
+            currency = result.get('currency')
 
-        # Validate parsed fares
-        if enable_validation and fares:
-            validation_stats = validate_parsed_fares(fares, currency)
-            if validation_stats['invalid_fares'] > 0:
-                logger.warning(
-                    f"  {file_key}: {validation_stats['invalid_fares']}/{validation_stats['total_fares']} "
-                    f"fares have validation issues"
-                )
+            # Validate currency code
+            if enable_validation and currency:
+                validate_currency_code(currency, warn_only=True)
 
+            # Validate parsed fares
+            if enable_validation and fares:
+                validation_stats = validate_parsed_fares(fares, currency)
+                if validation_stats['invalid_fares'] > 0:
+                    logger.warning(
+                        f"  {file_key}: {validation_stats['invalid_fares']}/{validation_stats['total_fares']} "
+                        f"fares have validation issues"
+                    )
+
+        # Parse FS tax data if available
         fs_taxes = {}
         if file_key in raw_fs_texts:
             fs_taxes = parse_fs_tax_breakdown(raw_fs_texts[file_key])
 
-        if fares:
-            grouped = group_fares_by_rbd(fares, rbd_sort_order)
+        # Add to all_route_data if we have either fares or taxes
+        if fares or fs_taxes:
+            grouped = group_fares_by_rbd(fares, rbd_sort_order) if fares else {}
             all_route_data[file_key] = {
                 'rbd_data': grouped,
                 'currency': currency,
                 'fs_taxes': fs_taxes
             }
-            ow_count = sum(1 for d in grouped.values() if d.get('ow_fare') is not None)
-            rt_count = sum(1 for d in grouped.values() if d.get('rt_fare') is not None)
 
             # Only log if not using tqdm (to avoid cluttering progress bar)
             if not tqdm:
-                logger.info(f"  {file_key} → {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]")
+                if fares:
+                    ow_count = sum(1 for d in grouped.values() if d.get('ow_fare') is not None)
+                    rt_count = sum(1 for d in grouped.values() if d.get('rt_fare') is not None)
+                    logger.info(f"  {file_key} → {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]")
+                elif fs_taxes:
+                    logger.info(f"  {file_key} → Tax data only (no fares)")
         else:
-            logger.warning(f"  No fares parsed from: {file_key}")
+            if not tqdm:
+                logger.warning(f"  No data parsed from: {file_key}")
 
     return OrderedDict(sorted(all_route_data.items()))
 
