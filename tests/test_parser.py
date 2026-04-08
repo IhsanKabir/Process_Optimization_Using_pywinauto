@@ -141,7 +141,8 @@ class TestGroupFaresByRBD:
 
         grouped = group_fares_by_rbd(fares)
 
-        assert '(Unsaleable)' in grouped['Y']['ow_fare_basis']
+        assert 'Y (Unsaleable)' in grouped
+        assert '(Unsaleable)' in grouped['Y (Unsaleable)']['ow_fare_basis']
 
 
 class TestGenerateFileKey:

@@ -4,6 +4,8 @@ Unit tests for validators.py
 Tests input validation functions.
 """
 
+from copy import deepcopy
+
 import pytest
 from validators import (
     validate_airport_code,
@@ -126,7 +128,7 @@ class TestValidateConfig:
 
     def test_valid_config(self):
         """Test valid configuration passes validation."""
-        config = SAMPLE_CONFIG.copy()
+        config = deepcopy(SAMPLE_CONFIG)
         result = validate_config(config)
         assert result is not None
         assert 'domestic_airports' in result
@@ -140,7 +142,7 @@ class TestValidateConfig:
 
     def test_invalid_airline_code_in_config(self):
         """Test invalid airline code in config."""
-        config = SAMPLE_CONFIG.copy()
+        config = deepcopy(SAMPLE_CONFIG)
         config['airline_names']['TOOLONG'] = 'Invalid Airline'
 
         with pytest.raises(ConfigurationError, match="Invalid airline code"):
@@ -148,7 +150,7 @@ class TestValidateConfig:
 
     def test_invalid_airport_code_in_config(self):
         """Test invalid airport code in config."""
-        config = SAMPLE_CONFIG.copy()
+        config = deepcopy(SAMPLE_CONFIG)
         config['city_names']['DACC'] = 'Invalid City'
 
         with pytest.raises(ConfigurationError, match="Invalid airport code"):
@@ -156,7 +158,7 @@ class TestValidateConfig:
 
     def test_adds_default_domestic_airports(self):
         """Test default domestic airports are added if missing."""
-        config = SAMPLE_CONFIG.copy()
+        config = deepcopy(SAMPLE_CONFIG)
         del config['domestic_airports']
 
         result = validate_config(config)
@@ -164,7 +166,7 @@ class TestValidateConfig:
 
     def test_invalid_tax_airports(self):
         """Test invalid tax airport configuration."""
-        config = SAMPLE_CONFIG.copy()
+        config = deepcopy(SAMPLE_CONFIG)
         config['tax_airports']['INVALID'] = {'country': 'SG'}
 
         with pytest.raises(ConfigurationError, match="Invalid airport code"):
