@@ -252,6 +252,7 @@ def main():
     arg_parser.add_argument('--only-yq', action='store_true', help='Extract only YQ and Tax Breakdown (skip Fares)')
     arg_parser.add_argument('--only-currency', action='store_true', help='Extract only exchange rates (alias for --only-yq)')
     arg_parser.add_argument('--tax', action='store_true', help='Extract Tax (FTAX) data instead of fares')
+    arg_parser.add_argument('--include-ftax', action='store_true', help='Extract global FTAX data alongside the specific route fares')
     arg_parser.add_argument('--speed', type=str, choices=['fast', 'safe'], default=None,
                            help='Speed profile: "fast" (aggressive timings, ~50%% faster) or "safe" (conservative timings for slower machines)')
     arg_parser.add_argument('--checkpoint', action='store_true', help='Enable checkpoint/resume mode for long runs')
@@ -670,6 +671,56 @@ def main():
                 checkpoint_mgr.save_checkpoint()
                 logger.info(f"  [CHECKPOINT] Final checkpoint saved: {len(checkpoint_mgr.completed_commands)} completed")
 
+            # ── MERGED FTAX EXTRACTION ──
+            ftax_data = None
+            if getattr(args, 'include_ftax', False):
+                logger.info("\n  --include-ftax: Extracting FTAX data for involved airports...")
+                unique_airports = set()
+                for c in commands:
+                    if '-' in c.get('route', ''):
+                        orig, dest = c['route'].split('-')
+                        unique_airports.add(orig)
+                        unique_airports.add(dest)
+                
+                tax_airports_config = config.get('tax_airports', {})
+                target_airports = {}
+                for a in unique_airports:
+                    if a in tax_airports_config:
+                        target_airports[a] = tax_airports_config[a]
+                    else:
+                        logger.warning(f"    Skipping FTAX for {a}: missing in config.json 'tax_airports'")
+                
+                if target_airports:
+                    from tax_parser import parse_ftax_list, parse_ftax_detail
+                    ftax_data = {}
+                    
+                    logger.info(f"  Found {len(target_airports)} airports for FTAX profiling: {', '.join(target_airports.keys())}")
+                    
+                    for index, (acode, ainfo) in enumerate(target_airports.items(), 1):
+                        ccode = ainfo['country']
+                        logger.info(f"  [{index}/{len(target_airports)}] Airport: {acode} ({ccode})")
+                        
+                        list_cmd = f"FTAX-{ccode}"
+                        list_text = automation.run_command(list_cmd, max_pages=1)
+                        tax_types = parse_ftax_list(list_text)
+                        logger.info(f"    Found {len(tax_types)} tax types: {', '.join(t['code'] for t in tax_types)}")
+                        
+                        airport_tax_details = []
+                        for idx, t in enumerate(tax_types, 1):
+                            detail_text = automation.run_ftax_command(ccode, t['code'], tax_index=idx)
+                            if not detail_text or len(detail_text.strip()) < 20:
+                                logger.warning(f"    Failed to extract details for {t['code']}")
+                                continue
+                                
+                            detail_data = parse_ftax_detail(detail_text, t['code'], t['name'])
+                            airport_tax_details.append(detail_data)
+                            logger.info(f"      {t['code']} → {len(detail_data['sections'])} sections extracted.")
+                            
+                            if idx < len(tax_types):
+                                automation.return_to_tax_list(ccode)
+                        
+                        ftax_data[acode] = {'taxes': airport_tax_details}
+
             automation.show_completion_signal()
 
             # Show execution summary
@@ -761,6 +812,22 @@ def main():
     else:
         # Pass only_currency flag down to specifically skip the main sheets if needed
         result_path = generate_report(all_route_data, output_path, changes, config, only_currency=args.only_currency)
+        
+        # Merge FTAX if enabled
+        if getattr(args, 'include_ftax', False) and 'ftax_data' in locals() and ftax_data:
+            logger.info("  Appending FTAX sheets to Fare Report...")
+            import openpyxl
+            from tax_report import _build_summary_sheet, _build_details_sheet
+            try:
+                wb = openpyxl.load_workbook(result_path)
+                ws_summary = wb.create_sheet('FTAX Summary')
+                ws_details = wb.create_sheet('FTAX Detailed Rates')
+                _build_summary_sheet(ws_summary, ftax_data, config)
+                _build_details_sheet(ws_details, ftax_data, config)
+                wb.save(result_path)
+                logger.info(f"  ✓ Attached FTAX to {result_path}")
+            except Exception as e:
+                logger.error(f"  Failed to append FTAX sheets: {e}")
     
     # Run Summary
     elapsed = _time.time() - start_time
