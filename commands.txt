@@ -2,9 +2,44 @@
 # One command per line. The tool reads this file and loops through commands.
 # Lines starting with # are comments/section headers.
 #
-# Command format: FD{ORIGIN}{DEST}-{OW|RT}/{AIRLINE}
-# Commands come in groups of 4:
-#   Origin→Dest OW, Origin→Dest RT, Dest→Origin OW, Dest→Origin RT
+# ==============================================================================
+# 🚀 SEARCH COMMAND CHEAT SHEET
+# ==============================================================================
+# 
+# 1. Standard Full Search (Everything in this file)
+#    python main.py --auto
+#
+# 2. Filter by Route (Single or Multiple)
+#    python main.py --auto --route dac-mct
+#    python main.py --auto --route "dac-mct, dac-doh, dac-ccu"
+#
+# 3. Filter by Airline (Single or Multiple)
+#    python main.py --auto --airline BG
+#    python main.py --auto --airline "QR, EK, GF, WY"
+#
+# 4. Combined Filters (Specific routes for specific airlines)
+#    python main.py --auto --route "dac-mct, dac-doh" --airline "QR, WY"
+#
+# 5. Limit Number of Commands (Great for quick testing)
+#    python main.py --auto --route dac-mct --limit 5
+#
+# 6. Include FTAX (Add global tax extraction for the airports in your routes)
+#    python main.py --auto --route "dac-mct, dac-doh" --include-ftax
+#
+# 7. Extract Fares ONLY (Faster - Skips the FS/YQ checks)
+#    python main.py --auto --only-fd
+#
+# 8. Extract FS/YQ ONLY (Skips the FD Fares checks)
+#    python main.py --auto --only-yq
+#
+# 9. Extract Global FTAX ONLY (Skips this file entirely, relies on config.json)
+#    python main.py --auto --tax
+#
+# ==============================================================================
+#
+# Command format: FD{ORIGIN}{DEST}/{AIRLINE}
+# Commands usually come in groups:
+#   Origin→Dest, Dest→Origin
 #
 #---------------------------
 #MLE ROUTE 
