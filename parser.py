@@ -125,8 +125,7 @@ def parse_fare_display(raw_text: str) -> dict:
         r'-?([A-Z0-9]{2})\s+'    # Optional minus sign, then Airline code (2 chars)
         r'(\d+\.?\d*)(R?)\s+'    # Fare amount + optional R (round-trip marker)
         r'(\S+)\s+'              # Fare basis code
-        r'([A-Z])\s+'            # RBD (single letter)
-        r'(.*)',                  # Rest of line
+        r'([A-Z])(?:\s+(.*))?$',  # RBD followed by optional trailing columns
         re.IGNORECASE
     )
     
@@ -215,14 +214,18 @@ def group_fares_by_rbd(fares: list[dict], rbd_sort_order: list[str] = None) -> d
                 'rt_fare_basis': None
             }
 
+        fare_basis = fare['fare_basis']
+        if fare.get('is_unsaleable') and "(Unsaleable)" not in fare_basis:
+            fare_basis = f"{fare_basis} (Unsaleable)"
+
         if fare['is_rt']:
             if rbd_data[key]['rt_fare'] is None or fare['fare'] < rbd_data[key]['rt_fare']:
                 rbd_data[key]['rt_fare'] = fare['fare']
-                rbd_data[key]['rt_fare_basis'] = fare['fare_basis']
+                rbd_data[key]['rt_fare_basis'] = fare_basis
         else: # is OW
             if rbd_data[key]['ow_fare'] is None or fare['fare'] < rbd_data[key]['ow_fare']:
                 rbd_data[key]['ow_fare'] = fare['fare']
-                rbd_data[key]['ow_fare_basis'] = fare['fare_basis']
+                rbd_data[key]['ow_fare_basis'] = fare_basis
     
     # Sort by RBD order
     if rbd_sort_order:
