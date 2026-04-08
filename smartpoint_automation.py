@@ -267,22 +267,27 @@ class SmartpointAutomation:
             
         return text
     
-    def _wait_for_response(self, text_before: str, timeout: float = 2.0, 
-                           poll_interval: float = 0.15) -> str:
+    def _wait_for_response(self, text_before: str, timeout: float = 2.0,
+                           poll_interval: float = 0.15, min_wait: float = 0.1) -> str:
         """
         Adaptive polling: wait until terminal content changes from text_before.
-        
+
         Returns as soon as the screen changes, or after timeout. This is
         dramatically faster than fixed time.sleep() for fast-responding commands.
-        
+
         Args:
             text_before: The terminal text captured before the action.
             timeout: Maximum seconds to wait.
             poll_interval: Seconds between polls.
-            
+            min_wait: Minimum time to wait before checking (prevents race conditions).
+
         Returns:
             The new terminal text (changed or timed-out).
         """
+        # Always wait at least min_wait to avoid race conditions
+        if min_wait > 0:
+            time.sleep(min_wait)
+
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(poll_interval)
@@ -470,7 +475,7 @@ class SmartpointAutomation:
         """
         Run an FTAX details command and paginate through results,
         ACCUMULATING text from every page.
-        
+
         Strategy:
           1. Try direct command FTAX-{CC}/{CODE} first
           2. If INVALID, fall back to Tab navigation from the tax list
@@ -483,90 +488,128 @@ class SmartpointAutomation:
             return ""
 
         self.logger.info(f"    Extracting tax detail: FTAX-{country_code}/{tax_code}")
-        
+
         # --- Navigate to the tax detail ---
         # Try direct command first (simpler and more reliable)
         direct_cmd = f"FTAX-{country_code}/{tax_code}"
         self.logger.debug(f"      Trying direct command: {direct_cmd}")
+
+        text_before = self._copy_terminal_text()
+
         pyautogui.typewrite(direct_cmd, interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press('enter')
-        time.sleep(constants.COMMAND_WAIT_FTAX)
-        
-        first_page = self._copy_terminal_text()
-        
+
+        # Use adaptive waiting for FTAX (can be slow)
+        first_page = self._wait_for_response(
+            text_before,
+            timeout=constants.COMMAND_WAIT_FTAX + 1.0,
+            min_wait=constants.COMMAND_WAIT_FTAX * 0.5
+        )
+
         # If direct command returned INVALID, fall back to Tab navigation
         if self._has_invalid(first_page):
             self.logger.debug(f"      Direct command returned INVALID. Falling back to Tab navigation (index {tax_index})...")
             # Re-send the list command to get back to the tax list
             list_cmd = f"FTAX-{country_code}"
+
+            text_before = first_page
+
             pyautogui.typewrite(list_cmd, interval=constants.KEYBOARD_INTERVAL)
             pyautogui.press('enter')
-            time.sleep(constants.COMMAND_WAIT_FTAX)
-            
+
+            list_result = self._wait_for_response(
+                text_before,
+                timeout=constants.COMMAND_WAIT_FTAX + 1.0,
+                min_wait=constants.COMMAND_WAIT_FTAX * 0.5
+            )
+
             # Tab to the correct link
             for _ in range(tax_index):
                 pyautogui.press('tab', interval=constants.KEYBOARD_INTERVAL)
+
+            text_before = list_result
+
             pyautogui.press('enter')
-            time.sleep(constants.COMMAND_WAIT_FTAX)
-            first_page = self._copy_terminal_text()
-            
+
+            first_page = self._wait_for_response(
+                text_before,
+                timeout=constants.COMMAND_WAIT_FTAX + 1.0,
+                min_wait=constants.COMMAND_WAIT_FTAX * 0.5
+            )
+
             if self._has_invalid(first_page):
                 self.logger.warning(f"      Tab navigation also returned INVALID for {tax_code}.")
                 return first_page
-        
+
         # --- Accumulate text across pages ---
         all_pages_text = [first_page]
         previous_text = first_page
         current_page = 1
-        
+
         seen_tax_rate = False
-        
+
         while current_page <= max_pages:
             # Check if current screen already has END
             if self._has_end_signal(previous_text):
                 self.logger.debug("      'END' detected. Pagination complete.")
                 break
-            
+
             # Record if we've seen TAX RATE
             if 'TAX RATE' in previous_text.upper():
                 seen_tax_rate = True
-                
+
             # Check if we reached EXEMPTIONS (which always follows TAX RATE)
             # Only trigger this AFTER we have seen the TAX RATE block, as EXEMPTIONS
             # can also appear on page 1 before the rates!
             if seen_tax_rate and ('EXEMPTIONS:' in previous_text.upper() or 'EXEMPTION:' in previous_text.upper()):
                 self.logger.debug("      'EXEMPTIONS:' section reached after TAX RATE. Rates are fully captured. Stopping.")
                 break
-            
+
             # Send MD
             self.logger.debug(f"      Page {current_page}: Sending MD...")
+
             pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
             pyautogui.press('enter')
-            time.sleep(constants.COMMAND_WAIT_FS)
-            
-            page_text = self._copy_terminal_text()
-            
+
+            # Use adaptive waiting for MD pagination
+            page_text = self._wait_for_response(
+                previous_text,
+                timeout=constants.COMMAND_WAIT_FS + 0.5,
+                min_wait=constants.COMMAND_WAIT_FS * 0.4
+            )
+
             # Check if MD returned INVALID
             if self._has_invalid(page_text):
                 self.logger.debug("      MD returned 'INVALID'. End of pagination.")
                 break
-            
+
             # Check if we're stuck (same content as previous page)
             if page_text.strip() == previous_text.strip():
-                # Retry once with a longer wait before declaring stuck
-                self.logger.debug("      Same text detected. Waiting 2s and retrying...")
-                time.sleep(constants.COMMAND_WAIT_LONG)
-                page_text = self._copy_terminal_text()
+                # Retry once with adaptive wait and longer timeout
+                self.logger.debug("      Same text detected. Retrying with extended wait...")
+                time.sleep(0.3)  # Brief pause before retry
+                page_text = self._wait_for_response(
+                    previous_text,
+                    timeout=constants.COMMAND_WAIT_LONG + 0.5,
+                    min_wait=0.5,
+                    poll_interval=0.2
+                )
                 if page_text.strip() == previous_text.strip():
                     self.logger.debug("      Stuck: same content after retry. Stopping.")
                     break
-            
+
             # Handle «More Fares/Flights» prompt
             if self._has_more_prompt(page_text):
+                text_before_prompt = page_text
+
                 pyautogui.press('enter')
-                time.sleep(constants.COMMAND_WAIT_FS)
-                page_text = self._copy_terminal_text()
-            
+
+                page_text = self._wait_for_response(
+                    text_before_prompt,
+                    timeout=constants.COMMAND_WAIT_FS + 0.3,
+                    min_wait=constants.COMMAND_WAIT_FS * 0.4
+                )
+
             all_pages_text.append(page_text)
             previous_text = page_text
             current_page += 1
@@ -585,7 +628,7 @@ class SmartpointAutomation:
         """
         Run an FS (Flight Shopping) command.
         Example: FSDAC28MAYMLE/BS
-        
+
         Returns the raw terminal output showing the Pricing Options.
         """
         if not self.focus():
@@ -593,49 +636,71 @@ class SmartpointAutomation:
 
         command = f"FS{src}{date}{dst}/{airline}"
         self.logger.info(f"    Extracting FS pricing: {command}")
-        
+
+        # Capture screen before command
+        text_before = self._copy_terminal_text()
+
         pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press('enter')
-        time.sleep(constants.COMMAND_WAIT_FS)  # Wait for FS results to load
-        
-        return self._copy_terminal_text()
+
+        # Use adaptive waiting with FS timeout as ceiling
+        result = self._wait_for_response(
+            text_before,
+            timeout=constants.COMMAND_WAIT_FS + 0.5,
+            min_wait=constants.COMMAND_WAIT_FS * 0.5  # Half the expected time as minimum
+        )
+
+        return result
     
     def run_fq_command(self, option_number: int) -> str:
         """
         Run FQ*{N} to get the full fare quote / tax breakdown for a Pricing Option.
-        
+
         This replaces the fragile 'D' button click approach. After an FS command
-        has loaded Pricing Options on screen, typing FQ*{N} (where N is the 
+        has loaded Pricing Options on screen, typing FQ*{N} (where N is the
         pricing option number) returns the same tax breakdown data that clicking
         the 'D' button would show.
-        
+
         Args:
             option_number: The Pricing Option number (1-based, as shown on screen)
-            
+
         Returns:
             Raw terminal text containing base fare, equiv fare, YQ, taxes, total.
         """
         if not self.focus():
             return ""
-        
+
         fq_cmd = f"FQ*{option_number}"
         self.logger.info(f"      Extracting tax breakdown: {fq_cmd}")
-        
+
+        # Capture screen before command
+        text_before = self._copy_terminal_text()
+
         pyautogui.typewrite(fq_cmd, interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press('enter')
-        time.sleep(constants.COMMAND_WAIT_FS)  # Wait for fare quote to load
-        
-        result = self._copy_terminal_text()
-        
+
+        # Use adaptive waiting
+        result = self._wait_for_response(
+            text_before,
+            timeout=constants.COMMAND_WAIT_FS + 0.5,
+            min_wait=constants.COMMAND_WAIT_FS * 0.5
+        )
+
         # If FQ* returned INVALID, this option might not support it
         if self._has_invalid(result):
             self.logger.warning(f"      FQ*{option_number} returned INVALID. Trying FQP*{option_number}...")
             # Fallback: try FQP* (pricing-specific variant)
+            text_before = result
+
             pyautogui.typewrite(f"FQP*{option_number}", interval=constants.KEYBOARD_INTERVAL)
             pyautogui.press('enter')
-            time.sleep(constants.COMMAND_WAIT_FS)
-            result = self._copy_terminal_text()
-        
+
+            result = self._wait_for_response(
+                text_before,
+                timeout=constants.COMMAND_WAIT_FS + 0.5,
+                min_wait=constants.COMMAND_WAIT_FS * 0.5
+            )
+
         # Paginate if needed (fare quotes can span multiple pages)
         page = 1
         while page < 5:
@@ -643,15 +708,23 @@ class SmartpointAutomation:
                 break
             if self._has_invalid(result):
                 break
+
+            prev_result = result
+
             pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
             pyautogui.press('enter')
-            time.sleep(constants.COMMAND_WAIT_FS)
-            md_result = self._copy_terminal_text()
+
+            md_result = self._wait_for_response(
+                prev_result,
+                timeout=constants.COMMAND_WAIT_FS + 0.3,
+                min_wait=constants.COMMAND_WAIT_FS * 0.4
+            )
+
             if self._has_invalid(md_result) or md_result.strip() == result.strip():
                 break
             result = md_result
             page += 1
-        
+
         self.logger.debug(f"      FQ result: {len(result)} chars captured.")
         return result
         
