@@ -268,32 +268,50 @@ class SmartpointAutomation:
         return text
     
     def _wait_for_response(self, text_before: str, timeout: float = 2.0,
-                           poll_interval: float = 0.15, min_wait: float = 0.1) -> str:
+                           poll_interval: float = 0.15, min_wait: float = 0.1,
+                           stability_checks: int = 2) -> str:
         """
-        Adaptive polling: wait until terminal content changes from text_before.
+        Adaptive polling: wait until terminal content changes AND stabilizes.
 
-        Returns as soon as the screen changes, or after timeout. This is
-        dramatically faster than fixed time.sleep() for fast-responding commands.
+        Returns as soon as the screen changes and stops changing (stable), or after timeout.
+        This is dramatically faster than fixed time.sleep() for fast-responding commands
+        while ensuring data is fully loaded.
 
         Args:
             text_before: The terminal text captured before the action.
             timeout: Maximum seconds to wait.
             poll_interval: Seconds between polls.
             min_wait: Minimum time to wait before checking (prevents race conditions).
+            stability_checks: Number of consecutive identical reads to confirm stability.
 
         Returns:
-            The new terminal text (changed or timed-out).
+            The new terminal text (changed and stable, or timed-out).
         """
         # Always wait at least min_wait to avoid race conditions
         if min_wait > 0:
             time.sleep(min_wait)
 
         deadline = time.time() + timeout
+        current = None
+        stable_count = 0
+
         while time.time() < deadline:
             time.sleep(poll_interval)
-            current = self._copy_terminal_text()
-            if current.strip() != text_before.strip():
-                return current
+            new_text = self._copy_terminal_text()
+
+            # First check: has screen changed from original?
+            if new_text.strip() != text_before.strip():
+                # Screen has changed - now verify it's stable
+                if current is not None and new_text.strip() == current.strip():
+                    stable_count += 1
+                    if stable_count >= stability_checks:
+                        # Screen has changed and is now stable
+                        return new_text
+                else:
+                    # Screen is still changing
+                    stable_count = 0
+                    current = new_text
+
         # Final read after timeout
         return self._copy_terminal_text()
     
@@ -502,8 +520,9 @@ class SmartpointAutomation:
         # Use adaptive waiting for FTAX (can be slow)
         first_page = self._wait_for_response(
             text_before,
-            timeout=constants.COMMAND_WAIT_FTAX + 1.0,
-            min_wait=constants.COMMAND_WAIT_FTAX * 0.5
+            timeout=constants.COMMAND_WAIT_FTAX + 1.5,
+            min_wait=constants.COMMAND_WAIT_FTAX * 0.8,
+            stability_checks=2
         )
 
         # If direct command returned INVALID, fall back to Tab navigation
@@ -519,8 +538,9 @@ class SmartpointAutomation:
 
             list_result = self._wait_for_response(
                 text_before,
-                timeout=constants.COMMAND_WAIT_FTAX + 1.0,
-                min_wait=constants.COMMAND_WAIT_FTAX * 0.5
+                timeout=constants.COMMAND_WAIT_FTAX + 1.5,
+                min_wait=constants.COMMAND_WAIT_FTAX * 0.8,
+                stability_checks=2
             )
 
             # Tab to the correct link
@@ -533,8 +553,9 @@ class SmartpointAutomation:
 
             first_page = self._wait_for_response(
                 text_before,
-                timeout=constants.COMMAND_WAIT_FTAX + 1.0,
-                min_wait=constants.COMMAND_WAIT_FTAX * 0.5
+                timeout=constants.COMMAND_WAIT_FTAX + 1.5,
+                min_wait=constants.COMMAND_WAIT_FTAX * 0.8,
+                stability_checks=2
             )
 
             if self._has_invalid(first_page):
@@ -574,8 +595,9 @@ class SmartpointAutomation:
             # Use adaptive waiting for MD pagination
             page_text = self._wait_for_response(
                 previous_text,
-                timeout=constants.COMMAND_WAIT_FS + 0.5,
-                min_wait=constants.COMMAND_WAIT_FS * 0.4
+                timeout=constants.COMMAND_WAIT_FS + 1.0,
+                min_wait=constants.COMMAND_WAIT_FS * 0.6,
+                stability_checks=2
             )
 
             # Check if MD returned INVALID
@@ -590,9 +612,10 @@ class SmartpointAutomation:
                 time.sleep(0.3)  # Brief pause before retry
                 page_text = self._wait_for_response(
                     previous_text,
-                    timeout=constants.COMMAND_WAIT_LONG + 0.5,
-                    min_wait=0.5,
-                    poll_interval=0.2
+                    timeout=constants.COMMAND_WAIT_LONG + 1.0,
+                    min_wait=0.8,
+                    poll_interval=0.2,
+                    stability_checks=3  # More stability checks for stuck retry
                 )
                 if page_text.strip() == previous_text.strip():
                     self.logger.debug("      Stuck: same content after retry. Stopping.")
@@ -606,8 +629,9 @@ class SmartpointAutomation:
 
                 page_text = self._wait_for_response(
                     text_before_prompt,
-                    timeout=constants.COMMAND_WAIT_FS + 0.3,
-                    min_wait=constants.COMMAND_WAIT_FS * 0.4
+                    timeout=constants.COMMAND_WAIT_FS + 0.5,
+                    min_wait=constants.COMMAND_WAIT_FS * 0.6,
+                    stability_checks=2
                 )
 
             all_pages_text.append(page_text)
@@ -644,10 +668,12 @@ class SmartpointAutomation:
         pyautogui.press('enter')
 
         # Use adaptive waiting with FS timeout as ceiling
+        # Wait for screen to change AND stabilize
         result = self._wait_for_response(
             text_before,
-            timeout=constants.COMMAND_WAIT_FS + 0.5,
-            min_wait=constants.COMMAND_WAIT_FS * 0.5  # Half the expected time as minimum
+            timeout=constants.COMMAND_WAIT_FS + 1.0,
+            min_wait=constants.COMMAND_WAIT_FS * 0.8,  # 80% of expected time as minimum
+            stability_checks=2
         )
 
         return result
@@ -679,11 +705,12 @@ class SmartpointAutomation:
         pyautogui.typewrite(fq_cmd, interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press('enter')
 
-        # Use adaptive waiting
+        # Use adaptive waiting - ensure stability
         result = self._wait_for_response(
             text_before,
-            timeout=constants.COMMAND_WAIT_FS + 0.5,
-            min_wait=constants.COMMAND_WAIT_FS * 0.5
+            timeout=constants.COMMAND_WAIT_FS + 1.0,
+            min_wait=constants.COMMAND_WAIT_FS * 0.8,
+            stability_checks=2
         )
 
         # If FQ* returned INVALID, this option might not support it
@@ -697,8 +724,9 @@ class SmartpointAutomation:
 
             result = self._wait_for_response(
                 text_before,
-                timeout=constants.COMMAND_WAIT_FS + 0.5,
-                min_wait=constants.COMMAND_WAIT_FS * 0.5
+                timeout=constants.COMMAND_WAIT_FS + 1.0,
+                min_wait=constants.COMMAND_WAIT_FS * 0.8,
+                stability_checks=2
             )
 
         # Paginate if needed (fare quotes can span multiple pages)
@@ -716,8 +744,9 @@ class SmartpointAutomation:
 
             md_result = self._wait_for_response(
                 prev_result,
-                timeout=constants.COMMAND_WAIT_FS + 0.3,
-                min_wait=constants.COMMAND_WAIT_FS * 0.4
+                timeout=constants.COMMAND_WAIT_FS + 0.5,
+                min_wait=constants.COMMAND_WAIT_FS * 0.6,
+                stability_checks=2
             )
 
             if self._has_invalid(md_result) or md_result.strip() == result.strip():
