@@ -318,12 +318,14 @@ def main():
         if os.path.exists(commands_file):
             commands = load_commands(commands_file)
             if args.route:
-                rt = args.route.upper().replace('-', '')
-                if len(rt) == 6:
-                    srf1 = f"{rt[:3]}{rt[3:]}"
-                    srf2 = f"{rt[3:]}{rt[:3]}"
-                    commands = [c for c in commands if srf1 in c['command'] or srf2 in c['command']]
-                logger.info(f"  [FILTER] Limited to route {args.route}: {len(commands)} commands remaining")
+                routes = [r.strip().upper().replace('-', '') for r in args.route.split(',')]
+                valid_routes = [r for r in routes if len(r) == 6]
+                
+                commands = [
+                    c for c in commands 
+                    if any(f"{rt[:3]}{rt[3:]}" in c['command'] or f"{rt[3:]}{rt[:3]}" in c['command'] for rt in valid_routes)
+                ]
+                logger.info(f"  [FILTER] Limited to route(s) {args.route}: {len(commands)} commands remaining")
             if args.airline:
                 airlines = [a.strip().upper() for a in args.airline.split(',')]
                 commands = [c for c in commands if any(f'/{al}' in c['command'].upper() for al in airlines)]
