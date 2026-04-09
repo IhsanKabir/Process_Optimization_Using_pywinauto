@@ -39,6 +39,32 @@ CONDITION_PREFIXES = (
     "PRIOR TO ",
 )
 
+WORD_NUMBERS = {
+    "ONE": 1,
+    "TWO": 2,
+    "THREE": 3,
+    "FOUR": 4,
+    "FIVE": 5,
+    "SIX": 6,
+    "SEVEN": 7,
+    "EIGHT": 8,
+    "NINE": 9,
+    "TEN": 10,
+    "ELEVEN": 11,
+    "TWELVE": 12,
+    "TWENTY FOUR": 24,
+}
+
+TIMING_PATTERN = re.compile(
+    r"(?:(AT LEAST|UP TO|UPTO|MORE THAN|LESS THAN|WITHIN)\s+)?"
+    r"(\d+|ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN|ELEVEN|TWELVE|TWENTY(?:[- ]FOUR)?)\s+"
+    r"(MINUTE|MINUTES|HOUR|HOURS|DAY|DAYS|MONTH|MONTHS)\s+"
+    r"(BEFORE|AFTER)\s+"
+    r"(?:THE\s+)?"
+    r"(FLIGHT\s+DEPARTURE|DEPARTURE\s+OF\s+THE\s+FLIGHT|DEPARTURE|SCHEDULED\s+DEPARTURE)",
+    re.IGNORECASE,
+)
+
 
 def extract_penalty_section(raw_text: str) -> str:
     """Return only the Rule 16 penalty block from a mixed Smartpoint capture."""
@@ -153,6 +179,54 @@ def _parse_rule_line(category: str, line_text: str) -> dict:
         "currency": None,
         "description": line_text.rstrip("."),
         "status": status,
+    }
+
+
+def _parse_number_token(token: str) -> Optional[int]:
+    normalized = re.sub(r"[-\s]+", " ", (token or "").upper()).strip()
+    if not normalized:
+        return None
+    if normalized.isdigit():
+        return int(normalized)
+    return WORD_NUMBERS.get(normalized)
+
+
+def _extract_timing_details(*texts: str) -> dict:
+    combined_text = " ".join(text for text in texts if text)
+    combined_text = re.sub(r"\s+", " ", combined_text).strip()
+    if not combined_text:
+        return {
+            "timing_text": "",
+            "timing_qualifier": None,
+            "timing_value": None,
+            "timing_unit": None,
+            "timing_direction": None,
+            "timing_reference": None,
+        }
+
+    match = TIMING_PATTERN.search(combined_text)
+    if not match:
+        return {
+            "timing_text": "",
+            "timing_qualifier": None,
+            "timing_value": None,
+            "timing_unit": None,
+            "timing_direction": None,
+            "timing_reference": None,
+        }
+
+    qualifier = match.group(1)
+    unit = match.group(3).lower()
+    if unit.endswith("s"):
+        unit = unit[:-1]
+
+    return {
+        "timing_text": match.group(0),
+        "timing_qualifier": qualifier.lower().replace(" ", "_") if qualifier else None,
+        "timing_value": _parse_number_token(match.group(2)),
+        "timing_unit": unit,
+        "timing_direction": match.group(4).lower(),
+        "timing_reference": "departure",
     }
 
 
@@ -275,6 +349,13 @@ def parse_penalty_text(
             break
 
         rule["note_text"] = "\n".join(note_lines).strip()
+        rule.update(
+            _extract_timing_details(
+                rule.get("criteria_text", ""),
+                rule.get("description", ""),
+                rule.get("note_text", ""),
+            )
+        )
         rules.append(rule)
         index = look_ahead
 
