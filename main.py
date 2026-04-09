@@ -1,4 +1,4 @@
-"""
+﻿"""
 main.py - Travelport Fare Automation Orchestrator
 
 Phase 1 (MVP): Read raw GDS output from text files, parse, and generate Excel report.
@@ -32,6 +32,8 @@ from parser import (
     generate_file_key,
     parse_command,
 )
+from penalty_parser import parse_penalty_text
+from penalty_report import generate_penalty_report
 from tax_breakdown_parser import parse_fs_tax_breakdown
 from excel_report import generate_report
 from change_detector import (
@@ -83,6 +85,7 @@ REPORTS_DIR = os.path.join(SCRIPT_DIR, "data", "reports")
 ARCHIVE_DIR = os.path.join(SCRIPT_DIR, "data", "archive")
 LOG_DIR = os.path.join(SCRIPT_DIR, "data", "logs")
 CHECKPOINT_DIR = os.path.join(SCRIPT_DIR, "data", "checkpoints")
+RAW_PENALTY_DIR = os.path.join(SCRIPT_DIR, "data", "raw_penalty")
 
 
 def setup_logging():
@@ -250,10 +253,10 @@ def process_route_data(
                         1 for d in grouped.values() if d.get("rt_fare") is not None
                     )
                     logger.info(
-                        f"  {file_key} → {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]"
+                        f"  {file_key} â†’ {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]"
                     )
                 elif fs_taxes:
-                    logger.info(f"  {file_key} → Tax data only (no fares)")
+                    logger.info(f"  {file_key} â†’ Tax data only (no fares)")
         else:
             if not tqdm:
                 logger.warning(f"  No data parsed from: {file_key}")
@@ -278,7 +281,7 @@ def record_to_database(all_route_data: dict, config: dict, mode: str = "auto"):
     if db.connect():
         run_id = db.record_run(all_route_data, run_mode=mode)
         if run_id > 0:
-            logger.info(f"  ✓ Database record created (Run ID: {run_id})")
+            logger.info(f"  âœ“ Database record created (Run ID: {run_id})")
         db.close()
     else:
         logger.warning("  [!] Database integration skipped (connection failed)")
@@ -290,12 +293,45 @@ def show_usage():
     logger.info("  [!] No .txt files found in data/raw/")
     logger.info("")
     logger.info("  HOW TO USE:")
-    logger.info("  ───────────")
+    logger.info("  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
     logger.info("  1. Open Travelport Smartpoint")
     logger.info("  2. Run a fare display command (e.g., FDDACMLE/BG)")
     logger.info("  3. Select all output and copy (Ctrl+C)")
     logger.info(f"  4. Save as .txt in: {RAW_DATA_DIR}")
     logger.info("  5. Run: python main.py")
+
+
+def _safe_filename(value: str) -> str:
+    """Convert arbitrary text into a filesystem-safe filename fragment."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or ""))
+    return cleaned.strip("_") or "unknown"
+
+
+def _route_variants(route_code: str, one_direction: bool = False) -> set[str]:
+    """Return the route directions that should be treated as a match."""
+    normalized = (route_code or "").strip().upper().replace("-", "")
+    if len(normalized) != 6:
+        return set()
+    if one_direction:
+        return {normalized}
+    return {normalized, f"{normalized[3:]}{normalized[:3]}"}
+
+
+def _command_matches_route(
+    command_entry: dict, route_code: str, one_direction: bool = False
+) -> bool:
+    """Check whether a command matches a route filter."""
+    route_variants = _route_variants(route_code, one_direction=one_direction)
+    if not route_variants:
+        return False
+
+    origin = str(command_entry.get("origin") or "").upper()
+    destination = str(command_entry.get("destination") or "").upper()
+    if origin and destination:
+        return f"{origin}{destination}" in route_variants
+
+    raw_command = str(command_entry.get("command") or "").upper().replace("-", "")
+    return any(route_variant in raw_command for route_variant in route_variants)
 
 
 def main():
@@ -320,6 +356,12 @@ def main():
         "--route", type=str, help="Filter commands to a specific route (e.g. DAC-MLE)"
     )
     arg_parser.add_argument(
+        "-1d",
+        "--one-direction",
+        action="store_true",
+        help="With --route, match only the exact route direction instead of both directions",
+    )
+    arg_parser.add_argument(
         "--airline",
         type=str,
         help="Filter to specific airline(s), comma-separated (e.g. BG or BG,BS)",
@@ -341,6 +383,11 @@ def main():
     )
     arg_parser.add_argument(
         "--tax", action="store_true", help="Extract Tax (FTAX) data instead of fares"
+    )
+    arg_parser.add_argument(
+        "--penalty",
+        action="store_true",
+        help="Extract Rule 16 penalties per fare basis in a separate run",
     )
     arg_parser.add_argument(
         "--include-ftax",
@@ -466,7 +513,7 @@ def main():
         # Record to Database
         record_to_database(all_route_data, config, mode="quick-paste")
 
-        logger.info(f"\n  ✓ Successfully generated: {result_path}")
+        logger.info(f"\n  âœ“ Successfully generated: {result_path}")
         try:
             os.startfile(result_path)
             logger.info("  Opening file automatically...")
@@ -491,7 +538,8 @@ def main():
     log_file = setup_logging()
 
     logger.info("=" * 60)
-    logger.info(f"  TRAVELPORT {'TAX' if args.tax else 'FARE'} AUTOMATION TOOL")
+    mode_label = "PENALTY" if args.penalty else ("TAX" if args.tax else "FARE")
+    logger.info(f"  TRAVELPORT {mode_label} AUTOMATION TOOL")
     logger.info(f"  {datetime.now().strftime('%d-%b-%Y %H:%M')}")
     logger.info("=" * 60)
 
@@ -508,7 +556,7 @@ def main():
         # [1/4] Config
         logger.info("[1/4] Loading configuration...")
         config = load_config(args.config)
-        logger.info("  Config loaded ✓")
+        logger.info("  Config loaded âœ“")
     except ConfigurationError as e:
         logger.error(f"  Configuration error: {e}")
         logger.error("  Please check your config.json file and try again.")
@@ -520,6 +568,10 @@ def main():
     # Route Commands or Tax Airports
     commands = []
     tax_airports = {}
+    if args.penalty and args.tax:
+        logger.error("  Use either --tax or --penalty, not both together.")
+        sys.exit(1)
+
     if args.tax:
         tax_airports = config.get("tax_airports", {})
         if not tax_airports:
@@ -590,13 +642,19 @@ def main():
                     c
                     for c in commands
                     if any(
-                        f"{rt[:3]}{rt[3:]}" in c["command"]
-                        or f"{rt[3:]}{rt[:3]}" in c["command"]
+                        _command_matches_route(
+                            c, rt, one_direction=args.one_direction
+                        )
                         for rt in valid_routes
                     )
                 ]
+                direction_scope = (
+                    "exact direction only"
+                    if args.one_direction
+                    else "both directions"
+                )
                 logger.info(
-                    f"  [FILTER] Limited to route(s) {args.route}: {len(commands)} commands remaining"
+                    f"  [FILTER] Limited to route(s) {args.route} ({direction_scope}): {len(commands)} commands remaining"
                 )
             if args.airline:
                 airlines = [a.strip().upper() for a in args.airline.split(",")]
@@ -649,6 +707,121 @@ def main():
 
     # [2/4] Extraction
     failed_commands = []
+
+    # PENALTY MODE EXTRACTION
+    if args.penalty:
+        penalty_records = []
+
+        if not args.auto:
+            logger.error("  Penalty mode currently requires --auto.")
+            sys.exit(1)
+
+        logger.info("[2/3] AUTO MODE: Connecting to Smartpoint UI for penalties...")
+        if not commands:
+            logger.error("  No commands found to auto-run.")
+            sys.exit(1)
+
+        from smartpoint_automation import SmartpointAutomation
+
+        automation = SmartpointAutomation()
+        if not automation.connect():
+            logger.error("  Please ensure Smartpoint is open and the title matches.")
+            sys.exit(1)
+
+        username, password, pcc = CredentialManager.get_credentials()
+        if username and password:
+            logger.info("  Credentials loaded from environment")
+            try:
+                automation.login(username, password, pcc)
+            except Exception as e:
+                logger.error(f"  Login failed: {e}")
+                sys.exit(1)
+        else:
+            logger.info("  No credentials found - continuing without login")
+
+        automation.refresh_terminal()
+        os.makedirs(RAW_PENALTY_DIR, exist_ok=True)
+
+        if tqdm:
+            command_iter = tqdm(commands, desc="Extracting penalties", unit="cmd")
+        else:
+            command_iter = commands
+            logger.info(f"  Executing {len(commands)} commands...")
+
+        for i, cmd in enumerate(command_iter, 1):
+            cmd_str = cmd["command"]
+            if not tqdm:
+                logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
+
+            command_penalties = automation.run_penalty_command(cmd_str)
+            if not command_penalties:
+                failed_commands.append(cmd_str)
+                logger.warning(f"    [!] No penalty popups captured for {cmd_str}")
+                continue
+
+            file_key = generate_file_key(cmd)
+            for penalty_capture in command_penalties:
+                fare_basis = penalty_capture.get("fare_basis")
+                journey_type = "RT" if penalty_capture.get("is_rt") else "OW"
+                parsed_penalty = parse_penalty_text(
+                    penalty_capture.get("raw_penalty_text", ""),
+                    airline=penalty_capture.get("airline", cmd.get("airline")),
+                    route=cmd.get("route"),
+                    fare_basis=fare_basis,
+                    rbd=penalty_capture.get("rbd"),
+                    fare_amount=penalty_capture.get("fare"),
+                    journey_type=journey_type,
+                )
+
+                if not parsed_penalty.get("rules"):
+                    logger.warning(
+                        f"    [!] No structured penalty rules parsed for {fare_basis}"
+                    )
+
+                penalty_records.append(parsed_penalty)
+
+                backup_name = f"{file_key}_{journey_type}_{_safe_filename(fare_basis)}_penalty.txt"
+                backup_path = os.path.join(RAW_PENALTY_DIR, backup_name)
+                try:
+                    with open(backup_path, "w", encoding="utf-8") as f:
+                        f.write(parsed_penalty.get("raw_penalty_text", ""))
+                except Exception as e:
+                    logger.warning(f"    Could not save penalty backup: {e}")
+
+        automation.show_completion_signal()
+        logger.info("")
+
+        logger.info("[3/3] Generating penalty report...")
+        timestamp_full = datetime.now().strftime("%Y-%m-%d_%H%M")
+        output_path = (
+            args.output
+            if args.output
+            else os.path.join(REPORTS_DIR, f"penalty_report_{timestamp_full}.xlsx")
+        )
+        result_path = generate_penalty_report(penalty_records, output_path)
+
+        elapsed = _time.time() - start_time
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("  RUN SUMMARY")
+        logger.info("Ã¢â€â‚¬" * 60)
+        logger.info(f"  Report:   {result_path}")
+        logger.info(f"  Items:    {len(penalty_records)} fare basis records parsed")
+        if failed_commands:
+            logger.info(
+                f"  Failed:   {len(failed_commands)} ({', '.join(failed_commands)})"
+            )
+        else:
+            logger.info("  Failed:   None")
+        logger.info(f"  Changes:  Skipped")
+        logger.info(f"  Duration: {minutes}m {seconds}s")
+        logger.info(f"  Log:      {log_file}")
+        logger.info("=" * 60)
+
+        return result_path
 
     # TAX MODE EXTRACTION
     if args.tax:
@@ -729,7 +902,7 @@ def main():
                     detail_data = parse_ftax_detail(detail_text, t["code"], t["name"])
                     airport_tax_details.append(detail_data)
                     logger.info(
-                        f"      {t['code']} → {len(detail_data['sections'])} sections extracted."
+                        f"      {t['code']} â†’ {len(detail_data['sections'])} sections extracted."
                     )
 
                     if not detail_data["sections"]:
@@ -835,7 +1008,7 @@ def main():
                 terminal_text = ""
                 file_key = generate_file_key(cmd)
 
-                # ── FD EXTRACTION ──
+                # â”€â”€ FD EXTRACTION â”€â”€
                 if not args.only_yq and not args.only_currency:
                     for attempt in range(1, MAX_RETRIES + 1):
                         try:
@@ -856,7 +1029,7 @@ def main():
                     if terminal_text and len(terminal_text.strip()) > 50:
                         raw_texts[file_key] = terminal_text
                         logger.info(
-                            f"    ✓ Fare data captured ({len(terminal_text)} chars)"
+                            f"    âœ“ Fare data captured ({len(terminal_text)} chars)"
                         )
 
                         backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
@@ -870,7 +1043,7 @@ def main():
                     else:
                         failed_commands.append(cmd["command"])
                         logger.error(
-                            f"    ✗ FAILED after {MAX_RETRIES} attempts: {cmd['command']}"
+                            f"    âœ— FAILED after {MAX_RETRIES} attempts: {cmd['command']}"
                         )
                         logger.error(
                             f"    Final data length: {len(terminal_text) if terminal_text else 0} chars"
@@ -885,7 +1058,7 @@ def main():
                         "    [SKIP] Skipping FD extraction (--only-yq/--only-currency)"
                     )
 
-                # ── FS EXTRACTION ──
+                # â”€â”€ FS EXTRACTION â”€â”€
                 if not args.only_fd:
                     # Allow extracting YQ/Currency even if FD was skipped or failed
                     base_cmd = cmd["command"].strip()
@@ -988,7 +1161,7 @@ def main():
 
                                     if all(a == airline.upper() for a in leg_airlines):
                                         logger.info(
-                                            f"      [✓] Pure {airline} itinerary found in Option {opt_num}."
+                                            f"      [âœ“] Pure {airline} itinerary found in Option {opt_num}."
                                         )
                                         target_option_index = k
                                         break
@@ -1016,7 +1189,7 @@ def main():
                                 kw in fs_expanded.upper() for kw in D_KEYWORDS
                             ):
                                 logger.info(
-                                    f"      [✓] Tax breakdown extracted via D-click"
+                                    f"      [âœ“] Tax breakdown extracted via D-click"
                                 )
                             else:
                                 logger.warning(
@@ -1050,7 +1223,7 @@ def main():
                     f"  [CHECKPOINT] Final checkpoint saved: {len(checkpoint_mgr.completed_commands)} completed"
                 )
 
-            # ── MERGED FTAX EXTRACTION ──
+            # â”€â”€ MERGED FTAX EXTRACTION â”€â”€
             ftax_data = None
             if getattr(args, "include_ftax", False):
                 logger.info(
@@ -1111,7 +1284,7 @@ def main():
                             )
                             airport_tax_details.append(detail_data)
                             logger.info(
-                                f"      {t['code']} → {len(detail_data['sections'])} sections extracted."
+                                f"      {t['code']} â†’ {len(detail_data['sections'])} sections extracted."
                             )
 
                             if idx < len(tax_types):
@@ -1137,7 +1310,7 @@ def main():
                     logger.warning(f"    - {fc}")
                 logger.warning("  Note: Failed commands will not appear in the report")
             else:
-                logger.info("  ✓ All commands completed successfully!")
+                logger.info("  âœ“ All commands completed successfully!")
             logger.info("=" * 60)
 
         else:
@@ -1186,7 +1359,7 @@ def main():
             else:
                 logger.info("  No changes from previous data.")
         else:
-            logger.info("  No previous data found. First run — baseline saved.")
+            logger.info("  No previous data found. First run â€” baseline saved.")
 
         if snapshot_has_changed(all_route_data, previous_data):
             ts = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -1249,7 +1422,7 @@ def main():
                 _build_summary_sheet(ws_summary, ftax_data, config)
                 _build_details_sheet(ws_details, ftax_data, config)
                 wb.save(result_path)
-                logger.info(f"  ✓ Attached FTAX to {result_path}")
+                logger.info(f"  âœ“ Attached FTAX to {result_path}")
             except Exception as e:
                 logger.error(f"  Failed to append FTAX sheets: {e}")
 
@@ -1269,7 +1442,7 @@ def main():
     logger.info("")
     logger.info("=" * 60)
     logger.info("  RUN SUMMARY")
-    logger.info("─" * 60)
+    logger.info("â”€" * 60)
     logger.info(f"  Report:   {result_path}")
     logger.info(
         f"  Items:    {len(all_route_data)} {'airports' if args.tax else 'routes'} parsed"
@@ -1300,3 +1473,8 @@ if __name__ == "__main__":
     finally:
         if getattr(sys, "frozen", False):
             input("\nPress Enter to exit...")
+
+
+
+
+

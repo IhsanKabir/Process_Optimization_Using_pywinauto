@@ -10,6 +10,7 @@ from parser import (
     group_fares_by_rbd,
     parse_command,
     generate_file_key,
+    select_report_fare_targets,
 )
 from tests.fixtures.sample_data import SAMPLE_FD_OUTPUT
 
@@ -219,3 +220,95 @@ class TestGenerateFileKey:
 
         key = generate_file_key(command_info)
         assert key == "BG_DAC-MLE"
+
+
+class TestSelectReportFareTargets:
+    """Test selecting only the fare lines used by the report."""
+
+    def test_selects_only_unique_lowest_report_fares(self):
+        fares = [
+            {
+                "line": 1,
+                "airline": "BG",
+                "rbd": "K",
+                "fare": 600,
+                "is_rt": True,
+                "fare_basis": "KBD6M",
+                "is_unsaleable": False,
+            },
+            {
+                "line": 2,
+                "airline": "BG",
+                "rbd": "K",
+                "fare": 600,
+                "is_rt": True,
+                "fare_basis": "KBD6M",
+                "is_unsaleable": False,
+            },
+            {
+                "line": 3,
+                "airline": "BG",
+                "rbd": "B",
+                "fare": 630,
+                "is_rt": True,
+                "fare_basis": "BBD6M",
+                "is_unsaleable": False,
+            },
+            {
+                "line": 4,
+                "airline": "BG",
+                "rbd": "B",
+                "fare": 650,
+                "is_rt": True,
+                "fare_basis": "BBD6M",
+                "is_unsaleable": False,
+            },
+            {
+                "line": 5,
+                "airline": "BG",
+                "rbd": "K",
+                "fare": 360,
+                "is_rt": False,
+                "fare_basis": "KBDO",
+                "is_unsaleable": False,
+            },
+            {
+                "line": 6,
+                "airline": "BG",
+                "rbd": "K",
+                "fare": 720,
+                "is_rt": False,
+                "fare_basis": "KBDR",
+                "is_unsaleable": False,
+            },
+        ]
+
+        selected = select_report_fare_targets(fares)
+
+        assert [fare["line"] for fare in selected] == [1, 3, 5]
+
+    def test_preserves_unsaleable_rows_as_separate_targets(self):
+        fares = [
+            {
+                "line": 1,
+                "airline": "BG",
+                "rbd": "Y",
+                "fare": 500,
+                "is_rt": False,
+                "fare_basis": "YOW",
+                "is_unsaleable": False,
+            },
+            {
+                "line": 2,
+                "airline": "BG",
+                "rbd": "Y",
+                "fare": 450,
+                "is_rt": False,
+                "fare_basis": "YOWU",
+                "is_unsaleable": True,
+            },
+        ]
+
+        selected = select_report_fare_targets(fares)
+
+        assert [fare["line"] for fare in selected] == [1, 2]
