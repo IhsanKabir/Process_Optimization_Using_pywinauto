@@ -250,6 +250,81 @@ def group_fares_by_rbd(fares: list[dict], rbd_sort_order: list[str] = None) -> d
     return rbd_data
 
 
+def select_report_fare_targets(
+    fares: list[dict], rbd_sort_order: list[str] = None
+) -> list[dict]:
+    """
+    Return only the unique lowest fare lines that would appear in the report.
+
+    This is used by the penalty workflow so we only click the fare basis rows
+    that survive the report grouping logic, instead of every visible fare line.
+    """
+    grouped_fares = group_fares_by_rbd(fares, rbd_sort_order)
+    selected_fares = []
+    seen_keys = set()
+
+    for grouped_rbd, grouped_data in grouped_fares.items():
+        is_unsaleable_group = "(Unsaleable)" in grouped_rbd
+        target_specs = []
+
+        if (
+            grouped_data.get("ow_fare_basis") is not None
+            and grouped_data.get("ow_fare") is not None
+        ):
+            target_specs.append(
+                (
+                    False,
+                    grouped_data["ow_fare_basis"],
+                    grouped_data["ow_fare"],
+                    is_unsaleable_group,
+                )
+            )
+
+        if (
+            grouped_data.get("rt_fare_basis") is not None
+            and grouped_data.get("rt_fare") is not None
+        ):
+            target_specs.append(
+                (
+                    True,
+                    grouped_data["rt_fare_basis"],
+                    grouped_data["rt_fare"],
+                    is_unsaleable_group,
+                )
+            )
+
+        for is_rt, fare_basis, fare_amount, is_unsaleable in target_specs:
+            normalized_basis = fare_basis.replace(" (Unsaleable)", "")
+            matching_fares = [
+                fare
+                for fare in fares
+                if fare.get("is_rt") == is_rt
+                and fare.get("fare_basis") == normalized_basis
+                and fare.get("fare") == fare_amount
+                and bool(fare.get("is_unsaleable")) == is_unsaleable
+            ]
+
+            if not matching_fares:
+                continue
+
+            target_fare = min(matching_fares, key=lambda item: item["line"])
+            target_key = (
+                target_fare.get("rbd"),
+                target_fare.get("fare_basis"),
+                target_fare.get("fare"),
+                target_fare.get("is_rt"),
+                bool(target_fare.get("is_unsaleable")),
+            )
+
+            if target_key in seen_keys:
+                continue
+
+            seen_keys.add(target_key)
+            selected_fares.append(target_fare)
+
+    return sorted(selected_fares, key=lambda item: item["line"])
+
+
 def generate_file_key(command_info: dict) -> str:
     """
     Generate a consistent file key for a command.

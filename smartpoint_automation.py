@@ -1,4 +1,4 @@
-"""
+﻿"""
 smartpoint_automation.py - Travelport Smartpoint UI Automation
 
 Controls the Travelport Smartpoint terminal using pywinauto.
@@ -245,21 +245,21 @@ class SmartpointAutomation:
         """Helper to copy text from the terminal via clipboard using mouse automation."""
         pyperclip.copy("")
 
-        # Ensure focus hasn't been lost (cached — nearly free if recent)
+        # Ensure focus hasn't been lost (cached â€” nearly free if recent)
         self.focus()
 
         if not self.window:
             return ""
 
-        # Get window coordinates — click in a SAFE area (top-left)
+        # Get window coordinates â€” click in a SAFE area (top-left)
         try:
             rect = self.window.rectangle()
             safe_x = (
                 rect.left + SAFE_CLICK_X_OFFSET
-            )  # Far left — no interactive links here
+            )  # Far left â€” no interactive links here
             safe_y = (
                 rect.top + SAFE_CLICK_Y_OFFSET
-            )  # Near top — above any FS result content
+            )  # Near top â€” above any FS result content
         except Exception:
             safe_x = SAFE_CLICK_X_OFFSET
             safe_y = SAFE_CLICK_Y_OFFSET
@@ -359,7 +359,7 @@ class SmartpointAutomation:
     def show_completion_signal(self):
         """Show a clear completion signal in the terminal (no popup)."""
         self.logger.debug("\n" + "=" * 50)
-        self.logger.debug("      🚀 TRAVELPORT AUTOMATION TASK COMPLETE 🚀")
+        self.logger.debug("      ðŸš€ TRAVELPORT AUTOMATION TASK COMPLETE ðŸš€")
         self.logger.debug("=" * 50 + "\n")
 
     def run_command(self, command: str, max_pages: int = MAX_PAGES_FARE) -> str:
@@ -370,13 +370,13 @@ class SmartpointAutomation:
         eliminates redundant terminal reads, and uses cached focus.
 
         Smartpoint pagination flow:
-          1. Run command → first page of fares appears
-          2. Check for "CURRENCY FARES EXISTS" → re-run in alternate currency
-          3. If no "END" at the bottom → type MD + Enter
-          4. If MD returns "INVALID" → stop (no more data)
-          5. A "«More Fares»" prompt may appear → press Enter again
+          1. Run command â†’ first page of fares appears
+          2. Check for "CURRENCY FARES EXISTS" â†’ re-run in alternate currency
+          3. If no "END" at the bottom â†’ type MD + Enter
+          4. If MD returns "INVALID" â†’ stop (no more data)
+          5. A "Â«More FaresÂ»" prompt may appear â†’ press Enter again
           6. Remaining data loads; repeat until "END" is found
-          7. Check for UNSALEABLE_FARES_KEYWORD → send FU*
+          7. Check for UNSALEABLE_FARES_KEYWORD â†’ send FU*
           8. Ctrl+A, Ctrl+C to capture the full text
 
         Returns the full combined text output from all pages.
@@ -399,12 +399,12 @@ class SmartpointAutomation:
         pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press("enter")
 
-        # SPEED: Adaptive polling — exits as soon as screen changes
+        # SPEED: Adaptive polling â€” exits as soon as screen changes
         initial_text = self._wait_for_response(
             text_before_cmd, timeout=constants.COMMAND_WAIT_FS
         )
 
-        # If terminal returned INVALID immediately, stop — no point retrying
+        # If terminal returned INVALID immediately, stop â€” no point retrying
         if self._has_invalid(initial_text):
             self.logger.warning(
                 f"    [!] Command returned INVALID immediately: {command}"
@@ -427,7 +427,7 @@ class SmartpointAutomation:
             if clicked_text and clicked_text.strip() != initial_text.strip():
                 initial_text = clicked_text
                 self.logger.info(
-                    f"      [CURRENCY] ✓ Clicked {currency_match} redirect, screen updated ({len(initial_text)} chars)"
+                    f"      [CURRENCY] âœ“ Clicked {currency_match} redirect, screen updated ({len(initial_text)} chars)"
                 )
             else:
                 self.logger.warning(
@@ -458,12 +458,12 @@ class SmartpointAutomation:
                 all_pages.append(screen_text)
                 break
 
-            # Attempt to click "«More Flights / Fares»"
+            # Attempt to click "Â«More Flights / FaresÂ»"
             if self.click_more_prompt_link(screen_text):
                 self.logger.debug(f"      Page {current_page}: Clicked 'More' link.")
                 md_response = self._copy_terminal_text()
             else:
-                # Fallback to standard MD — use adaptive polling
+                # Fallback to standard MD â€” use adaptive polling
                 self.logger.debug(
                     f"      Page {current_page}: No 'More' link found. Sending MD..."
                 )
@@ -490,11 +490,11 @@ class SmartpointAutomation:
                 break
             previous_md_text = md_response
 
-            # After MD/click, Smartpoint may show ANOTHER "«More Fares»" or "«More Flights»" prompt
+            # After MD/click, Smartpoint may show ANOTHER "Â«More FaresÂ»" or "Â«More FlightsÂ»" prompt
             # that requires pressing Enter to clear BEFORE the actual data displays.
             if self._has_more_prompt(md_response):
                 self.logger.debug(
-                    "      [DEBUG] '«More Fares/Flights»' prompt detected. Pressing Enter..."
+                    "      [DEBUG] 'Â«More Fares/FlightsÂ»' prompt detected. Pressing Enter..."
                 )
                 pyautogui.press("enter")
                 md_response = self._wait_for_response(
@@ -510,7 +510,7 @@ class SmartpointAutomation:
                 f"      [WARNING] Reached max_pages ({max_pages}). Stopping."
             )
 
-        # Join all pages — use separator so parser can handle overlapping headers
+        # Join all pages â€” use separator so parser can handle overlapping headers
         full_text = "\n--- PAGE BREAK ---\n".join(all_pages)
 
         # Check for unsaleable fares
@@ -552,6 +552,261 @@ class SmartpointAutomation:
                 f"      [DEBUG] Unsaleable fares captured ({len(fu_pages)} pages appended)."
             )
         return full_text
+
+    def click_fare_amount_for_penalty(
+        self, page_text: str, fare: dict
+    ) -> tuple[str, str]:
+        """
+        Click the fare amount for a visible fare line and capture the Rule 16 popup text.
+
+        Returns:
+            (popup_text, restored_page_text)
+        """
+        import re
+
+        if not self.focus():
+            return "", page_text
+
+        target_line_idx = None
+        target_char_idx = None
+        fare_basis = str(fare.get("fare_basis", "")).upper()
+        airline = str(fare.get("airline", "")).upper()
+        line_number = fare.get("line")
+        amount_pattern = rf"{fare.get('fare', 0):.2f}(?:R)?"
+
+        for index, line in enumerate(page_text.split("\n")):
+            if fare_basis not in line.upper() or airline not in line.upper():
+                continue
+
+            if line_number is not None and not re.search(
+                rf"^\s*O?{int(line_number)}\s+", line, re.IGNORECASE
+            ):
+                continue
+
+            amount_match = re.search(amount_pattern, line)
+            if not amount_match:
+                continue
+
+            target_line_idx = index
+            target_char_idx = (amount_match.start() + amount_match.end()) // 2
+            break
+
+        if target_line_idx is None or target_char_idx is None:
+            self.logger.warning(
+                f"      [PENALTY] Could not locate clickable fare line for {fare_basis}"
+            )
+            return "", page_text
+
+        base_x, base_y = self._text_line_to_pixel(
+            page_text, target_line_idx, char_idx=target_char_idx
+        )
+
+        text_before = page_text
+        offsets = [(0, 0), (8, 0), (-8, 0)]
+
+        def close_penalty_popup(click_x: int, click_y: int, popup_text: str) -> str:
+            """Close the popup by toggling the same fare click, then fall back to Escape."""
+            pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+            pyautogui.click()
+
+            restored_text = self._wait_for_response(
+                popup_text,
+                timeout=constants.COMMAND_WAIT_SHORT + 0.8,
+                poll_interval=0.15,
+                min_wait=0.05,
+                stability_checks=1,
+            )
+
+            if "16. PENALTIES" in restored_text.upper():
+                pyautogui.press(
+                    "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
+                )
+                time.sleep(constants.ESCAPE_CLEAR_DELAY)
+                restored_text = self._copy_terminal_text()
+
+            return restored_text
+
+        for x_off, y_off in offsets:
+            click_x = base_x + x_off
+            click_y = base_y + y_off
+            self.logger.debug(
+                f"      [PENALTY] Trying fare click at ({click_x}, {click_y}) [offset=({x_off},{y_off})]"
+            )
+
+            pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+            pyautogui.click()
+            result = self._wait_for_response(
+                text_before,
+                timeout=constants.COMMAND_WAIT_SHORT + 0.8,
+                poll_interval=0.15,
+                min_wait=0.05,
+                stability_checks=1,
+            )
+            upper_result = result.upper()
+            if "16. PENALTIES" in upper_result or (
+                "PENALTIES" in upper_result
+                and ("CHANGES" in upper_result or "CANCELLATIONS" in upper_result)
+            ):
+                restored_text = close_penalty_popup(click_x, click_y, result)
+                return result, restored_text
+
+            if result.strip() != text_before.strip():
+                self.logger.debug(
+                    f"      [PENALTY] Unexpected screen change for {fare_basis}; restoring before moving on."
+                )
+                restored_text = close_penalty_popup(click_x, click_y, result)
+                return "", restored_text
+
+        self.logger.warning(
+            f"      [PENALTY] No Rule 16 popup captured for {fare_basis}"
+        )
+        return "", self._copy_terminal_text()
+
+    def _extract_penalties_from_visible_page(
+        self, page_text: str, seen_fares: set[tuple], visible_fares: list[dict] = None
+    ) -> tuple[list[dict], str]:
+        """Extract penalty popup text for each visible fare line on the current page."""
+        from parser import parse_fare_display, select_report_fare_targets
+
+        if visible_fares is None:
+            parsed = parse_fare_display(page_text)
+            visible_fares = select_report_fare_targets(parsed.get("fares", []))
+
+        extracted = []
+        current_page_text = page_text
+
+        for fare in visible_fares:
+            fare_key = (
+                fare.get("fare_basis"),
+                fare.get("rbd"),
+                fare.get("is_rt"),
+                fare.get("fare"),
+                bool(fare.get("is_unsaleable")),
+            )
+            if fare_key in seen_fares:
+                continue
+
+            self.logger.info(
+                f"      [PENALTY] Line {fare.get('line')}: {fare.get('fare_basis')} "
+                f"{'RT' if fare.get('is_rt') else 'OW'} {fare.get('fare'):.2f}"
+            )
+            popup_text, current_page_text = self.click_fare_amount_for_penalty(
+                current_page_text, fare
+            )
+            seen_fares.add(fare_key)
+
+            if popup_text and "16. PENALTIES" in popup_text.upper():
+                fare_with_penalty = dict(fare)
+                fare_with_penalty["raw_penalty_text"] = popup_text
+                extracted.append(fare_with_penalty)
+
+        return extracted, current_page_text
+
+    def run_penalty_command(
+        self, command: str, max_pages: int = MAX_PAGES_FARE
+    ) -> list[dict]:
+        """
+        Run an FD command page-by-page and capture a Rule 16 popup for each fare basis.
+        """
+        if not self.focus():
+            self.logger.debug(
+                "  [ERROR] Cannot run penalty command, window not focused."
+            )
+            return []
+
+        self.logger.debug(f"    Running penalty extraction: {command}")
+
+        pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
+        pyautogui.press("enter")
+        time.sleep(constants.COMMAND_WAIT_LONG)
+
+        text_before_cmd = self._copy_terminal_text()
+        pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
+        pyautogui.press("enter")
+
+        screen_text = self._wait_for_response(
+            text_before_cmd, timeout=constants.COMMAND_WAIT_FS
+        )
+        if self._has_invalid(screen_text):
+            self.logger.warning(
+                f"    [!] Penalty command returned INVALID immediately: {command}"
+            )
+            return []
+
+        currency_match = self._has_currency_redirect(screen_text)
+        if currency_match:
+            self.logger.info(
+                f"      [PENALTY] {currency_match} currency redirect detected - clicking..."
+            )
+            clicked_text = self.click_currency_link(screen_text)
+            if clicked_text and clicked_text.strip() != screen_text.strip():
+                screen_text = clicked_text
+
+        previous_page_text = screen_text
+        current_page = 1
+        seen_fares = set()
+        penalty_records = []
+
+        while current_page <= max_pages:
+            from parser import parse_fare_display, select_report_fare_targets
+
+            parsed_page = parse_fare_display(screen_text)
+            visible_targets = select_report_fare_targets(parsed_page.get("fares", []))
+
+            if not visible_targets:
+                refreshed_text = self._wait_for_stable_screen(max_polls=3, interval=0.25)
+                if refreshed_text.strip() != screen_text.strip():
+                    screen_text = refreshed_text
+                    parsed_page = parse_fare_display(screen_text)
+                    visible_targets = select_report_fare_targets(
+                        parsed_page.get("fares", [])
+                    )
+
+            self.logger.info(
+                f"      [PENALTY] {len(visible_targets)} report-target fare(s) on page {current_page}"
+            )
+
+            page_records, screen_text = self._extract_penalties_from_visible_page(
+                screen_text, seen_fares, visible_targets
+            )
+            penalty_records.extend(page_records)
+
+            if self._has_end_signal(screen_text):
+                break
+
+            if not visible_targets and not self._has_more_prompt(screen_text):
+                self.logger.warning(
+                    "      [PENALTY] No report-target fare rows detected on this page; stopping before MD."
+                )
+                break
+
+            if self.click_more_prompt_link(screen_text):
+                md_response = self._copy_terminal_text()
+            else:
+                text_before_md = screen_text
+                pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
+                pyautogui.press("enter")
+                md_response = self._wait_for_response(
+                    text_before_md, timeout=constants.COMMAND_WAIT_MEDIUM + 0.5
+                )
+
+            if self._has_invalid(md_response):
+                break
+
+            if md_response.strip() == previous_page_text.strip():
+                break
+
+            if self._has_more_prompt(md_response):
+                pyautogui.press("enter")
+                md_response = self._wait_for_response(
+                    md_response, timeout=constants.COMMAND_WAIT_FS
+                )
+
+            previous_page_text = md_response
+            screen_text = md_response
+            current_page += 1
+
+        return penalty_records
 
     def run_ftax_command(
         self,
@@ -704,7 +959,7 @@ class SmartpointAutomation:
                     )
                     break
 
-            # Handle «More Fares/Flights» prompt
+            # Handle Â«More Fares/FlightsÂ» prompt
             if self._has_more_prompt(page_text):
                 text_before_prompt = page_text
 
@@ -900,7 +1155,7 @@ class SmartpointAutomation:
 
         # Fixed line height for Smartpoint terminal font
         # Empirically measured: probe y=237, terminal top=82, D on line 7
-        # 82 + 5 + 7.5*20 = 237 → LINE_HEIGHT=20, padding=5
+        # 82 + 5 + 7.5*20 = 237 â†’ LINE_HEIGHT=20, padding=5
         # LINE_HEIGHT is imported from constants
 
         # Content starts ~5px below the terminal pane top edge
@@ -1050,13 +1305,13 @@ class SmartpointAutomation:
                 # Return the captured dropdown text instead of discarding it
                 # This ensures fare basis info in dropdowns is included in the report
                 self.logger.info(
-                    f"      [CLICK] ✓ Dropdown text captured ({len(dropdown_text)} chars)"
+                    f"      [CLICK] âœ“ Dropdown text captured ({len(dropdown_text)} chars)"
                 )
                 return dropdown_text
 
             if result.strip() != text_before.strip():
                 self.logger.info(
-                    f"      [CLICK] ✓ Screen changed at offset=({x_off},{y_off})"
+                    f"      [CLICK] âœ“ Screen changed at offset=({x_off},{y_off})"
                 )
                 return result
 
@@ -1068,7 +1323,7 @@ class SmartpointAutomation:
         Click the 'D' (Details) button for a specific Pricing Option in FS results.
 
         Finds the D button by looking for lines containing the "D  R" pattern
-        (which appears on the «BOOK» +TQ line of each Pricing Option), then
+        (which appears on the Â«BOOKÂ» +TQ line of each Pricing Option), then
         calculates the exact pixel position from the character column.
         """
         import re
@@ -1078,12 +1333,12 @@ class SmartpointAutomation:
 
         lines = fs_text.split("\n")
 
-        # Strategy: Find lines containing «BOOK» or +TQ — these markers are
+        # Strategy: Find lines containing Â«BOOKÂ» or +TQ â€” these markers are
         # always on the same line as the D button. Using "D  R" is unreliable
         # because the clipboard sometimes splits D and R across lines.
         d_button_lines = []
         for idx, line in enumerate(lines):
-            if "+TQ" in line or "«BOOK»" in line or "\xabBOOK\xbb" in line:
+            if "+TQ" in line or "Â«BOOKÂ»" in line or "\xabBOOK\xbb" in line:
                 d_button_lines.append(idx)
 
         self.logger.info(
@@ -1168,7 +1423,7 @@ class SmartpointAutomation:
                     for kw in ["EQU", "TAXES", "TAX", "YQ", "FARE COMPONENT", "BASIS"]
                 ):
                     self.logger.info(
-                        f"      [D-CLICK] ✓ Tax breakdown at offset=({x_off},{y_off})"
+                        f"      [D-CLICK] âœ“ Tax breakdown at offset=({x_off},{y_off})"
                     )
                     return result
                 else:
@@ -1243,7 +1498,7 @@ class SmartpointAutomation:
 
         # Click at multiple X positions on the LEFT side of the terminal
         # The text "BDT  CURRENCY  FARES  EXISTS" occupies roughly 5%-40% of terminal width
-        # Also try Y offsets (±10px) in case LINE_HEIGHT varies on different displays
+        # Also try Y offsets (Â±10px) in case LINE_HEIGHT varies on different displays
         x_ratios = [0.15, 0.10, 0.20, 0.25, 0.05, 0.30, 0.35]
         y_offsets = [0, -10, 10]
 
@@ -1278,21 +1533,21 @@ class SmartpointAutomation:
                     time.sleep(constants.ESCAPE_CLEAR_DELAY)
                     # Return the captured dropdown text instead of discarding it
                     self.logger.info(
-                        f"      [CURRENCY] ✓ Dropdown text captured ({len(dropdown_text)} chars)"
+                        f"      [CURRENCY] âœ“ Dropdown text captured ({len(dropdown_text)} chars)"
                     )
                     return dropdown_text
 
                 # Check if screen changed AND redirect is gone
                 if result and not self._has_currency_redirect(result):
                     self.logger.info(
-                        f"      [CURRENCY] ✓ Click succeeded at x={x_ratio:.2f}, y_off={y_off}"
+                        f"      [CURRENCY] âœ“ Click succeeded at x={x_ratio:.2f}, y_off={y_off}"
                     )
 
                     # Poll for fare data to fully load
                     for wait_round in range(5):
                         if len(result.strip()) > 100:
                             self.logger.info(
-                                f"      [CURRENCY] ✓ Fare data loaded ({len(result.strip())} chars)"
+                                f"      [CURRENCY] âœ“ Fare data loaded ({len(result.strip())} chars)"
                             )
                             return result
                         self.logger.debug(
@@ -1317,17 +1572,17 @@ class SmartpointAutomation:
                     f"      [CURRENCY] y_off={y_off} exhausted, trying next Y offset..."
                 )
 
-        # All positions failed — log diagnostic info for remote debugging
+        # All positions failed â€” log diagnostic info for remote debugging
         self.logger.warning("      [CURRENCY] All click positions failed")
         self.logger.warning(
-            f"      [CURRENCY] DEBUG — first 200 chars of screen: {repr(stable_text[:200])}"
+            f"      [CURRENCY] DEBUG â€” first 200 chars of screen: {repr(stable_text[:200])}"
         )
         pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
         return None
 
     def click_more_prompt_link(self, terminal_text: str) -> bool:
         """
-        Dynamically finds and clicks '«More Flights»' by anchoring to the screen bottom.
+        Dynamically finds and clicks 'Â«More FlightsÂ»' by anchoring to the screen bottom.
         Leaves top-down math isolated for other buttons.
         """
         import re
@@ -1442,7 +1697,7 @@ class SmartpointAutomation:
 
                     if result.strip() != text_before.strip():
                         self.logger.info(
-                            "      [CLICK] ✓ 'More' link clicked successfully!"
+                            "      [CLICK] âœ“ 'More' link clicked successfully!"
                         )
                         return True
 
@@ -1477,7 +1732,7 @@ class SmartpointAutomation:
         return False
 
     def _has_more_prompt(self, text: str) -> bool:
-        """Check if the terminal shows a '«More Fares»' or '«More Flights»' prompt."""
+        """Check if the terminal shows a 'Â«More FaresÂ»' or 'Â«More FlightsÂ»' prompt."""
         if not text:
             return False
         lines = text.strip().splitlines()
@@ -1534,8 +1789,8 @@ class SmartpointAutomation:
             )
             return None
 
-        # Also check for "More Fares" or "«More" which indicates fares are present
-        if re.search(r"«More|More\s+Fares", text, re.IGNORECASE):
+        # Also check for "More Fares" or "Â«More" which indicates fares are present
+        if re.search(r"Â«More|More\s+Fares", text, re.IGNORECASE):
             self.logger.debug(
                 f"      [CURRENCY] Found 'More Fares' link - NOT clicking (fares present)"
             )
@@ -1594,3 +1849,4 @@ class SmartpointAutomation:
                 return True
 
         return False
+
