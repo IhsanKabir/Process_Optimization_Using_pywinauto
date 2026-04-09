@@ -174,9 +174,7 @@ def load_latest_snapshot(archive_dir: str) -> Optional[dict]:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning(
-                "Skipping invalid snapshot '%s': %s", snapshot_name, e
-            )
+            logger.warning("Skipping invalid snapshot '%s': %s", snapshot_name, e)
 
     return None
 

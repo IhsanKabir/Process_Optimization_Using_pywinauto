@@ -103,7 +103,10 @@ def test_parse_penalty_text_extracts_structured_rules():
     assert no_show_change_rule["timing_direction"] == "before"
     assert no_show_change_rule["timing_reference"] == "departure"
     assert no_show_change_rule["timing_qualifier"] == "at_least"
-    assert "4 HOURS BEFORE THE DEPARTURE OF THE FLIGHT" in no_show_change_rule["timing_text"].upper()
+    assert (
+        "4 HOURS BEFORE THE DEPARTURE OF THE FLIGHT"
+        in no_show_change_rule["timing_text"].upper()
+    )
 
     permitted_rule = next(
         rule for rule in record["rules"] if rule["status"] == "permitted"
@@ -143,9 +146,7 @@ def test_generate_penalty_report_creates_expected_sheets():
         assert workbook["Penalty Details"]["D2"].value == "WCLIT1BD"
         assert workbook["Penalty Details"]["J1"].value == "Timing Text"
         detail_rows = list(
-            workbook["Penalty Details"].iter_rows(
-                min_row=2, values_only=True
-            )
+            workbook["Penalty Details"].iter_rows(min_row=2, values_only=True)
         )
         no_show_change_row = next(row for row in detail_rows if row[15] == 190)
         assert no_show_change_row[9]

@@ -642,16 +642,12 @@ def main():
                     c
                     for c in commands
                     if any(
-                        _command_matches_route(
-                            c, rt, one_direction=args.one_direction
-                        )
+                        _command_matches_route(c, rt, one_direction=args.one_direction)
                         for rt in valid_routes
                     )
                 ]
                 direction_scope = (
-                    "exact direction only"
-                    if args.one_direction
-                    else "both directions"
+                    "exact direction only" if args.one_direction else "both directions"
                 )
                 logger.info(
                     f"  [FILTER] Limited to route(s) {args.route} ({direction_scope}): {len(commands)} commands remaining"
@@ -1473,8 +1469,3 @@ if __name__ == "__main__":
     finally:
         if getattr(sys, "frozen", False):
             input("\nPress Enter to exit...")
-
-
-
-
-
