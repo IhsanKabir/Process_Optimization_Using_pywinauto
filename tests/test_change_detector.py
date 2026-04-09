@@ -11,6 +11,7 @@ from change_detector import (
     detect_changes,
     format_change_summary,
     load_latest_snapshot,
+    load_snapshot_by_reference,
     save_snapshot,
     snapshot_has_changed,
 )
@@ -283,3 +284,44 @@ class TestSnapshotPersistence:
             )
 
             assert load_latest_snapshot(temp_dir) is None
+
+    def test_load_snapshot_by_reference_exact_timestamp(self):
+        data = {
+            "BG_DAC-MLE": {
+                "currency": "USD",
+                "rbd_data": {"J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600}},
+            }
+        }
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            save_snapshot(data, temp_dir, date_str="2026-04-08_1200")
+
+            loaded, snapshot_id = load_snapshot_by_reference(
+                temp_dir, "2026-04-08_1200"
+            )
+
+            assert loaded == data
+            assert snapshot_id == "2026-04-08_1200"
+
+    def test_load_snapshot_by_reference_chooses_latest_snapshot_for_date(self):
+        early_data = {
+            "BG_DAC-MLE": {
+                "currency": "USD",
+                "rbd_data": {"Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200}},
+            }
+        }
+        late_data = {
+            "BG_DAC-MLE": {
+                "currency": "USD",
+                "rbd_data": {"J": {"rbd": "J", "ow_fare": 300, "rt_fare": 600}},
+            }
+        }
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            save_snapshot(early_data, temp_dir, date_str="2026-04-08_1200")
+            save_snapshot(late_data, temp_dir, date_str="2026-04-08_1805")
+
+            loaded, snapshot_id = load_snapshot_by_reference(temp_dir, "2026-04-08")
+
+            assert loaded == late_data
+            assert snapshot_id == "2026-04-08_1805"
