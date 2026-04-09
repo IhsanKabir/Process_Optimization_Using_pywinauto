@@ -93,11 +93,28 @@ def test_parse_penalty_text_extracts_structured_rules():
     assert no_show_refund_rule["subtype"] == "no_show"
     assert "NON-REFUNDABLE" in no_show_refund_rule["note_text"]
 
+    no_show_change_rule = next(
+        rule
+        for rule in record["rules"]
+        if rule["category"] == "CHANGES" and rule["amount"] == 190.0
+    )
+    assert no_show_change_rule["timing_value"] == 4
+    assert no_show_change_rule["timing_unit"] == "hour"
+    assert no_show_change_rule["timing_direction"] == "before"
+    assert no_show_change_rule["timing_reference"] == "departure"
+    assert no_show_change_rule["timing_qualifier"] == "at_least"
+    assert "4 HOURS BEFORE THE DEPARTURE OF THE FLIGHT" in no_show_change_rule["timing_text"].upper()
+
     permitted_rule = next(
         rule for rule in record["rules"] if rule["status"] == "permitted"
     )
     assert "FOR TICKETING ON/AFTER 26MAR 26" in permitted_rule["criteria_text"]
     assert "FOR TRAVEL ON/BEFORE 31MAR 27" in permitted_rule["criteria_text"]
+    assert permitted_rule["timing_value"] == 4
+    assert permitted_rule["timing_unit"] == "hour"
+    assert permitted_rule["timing_direction"] == "before"
+    assert permitted_rule["timing_reference"] == "departure"
+    assert permitted_rule["timing_qualifier"] == "upto"
 
 
 def test_generate_penalty_report_creates_expected_sheets():
@@ -124,6 +141,18 @@ def test_generate_penalty_report_creates_expected_sheets():
         ]
         assert workbook["Penalty Summary"]["A2"].value == "GF"
         assert workbook["Penalty Details"]["D2"].value == "WCLIT1BD"
+        assert workbook["Penalty Details"]["J1"].value == "Timing Text"
+        detail_rows = list(
+            workbook["Penalty Details"].iter_rows(
+                min_row=2, values_only=True
+            )
+        )
+        no_show_change_row = next(row for row in detail_rows if row[15] == 190)
+        assert no_show_change_row[9]
+        assert no_show_change_row[10] == "at_least"
+        assert no_show_change_row[11] == 4
+        assert no_show_change_row[12] == "hour"
+        assert no_show_change_row[13] == "before"
     finally:
         if workbook is not None:
             workbook.close()

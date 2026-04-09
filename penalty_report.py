@@ -27,13 +27,18 @@ def _summarize_rules(record: dict, category: str) -> str:
         if rule.get("category") != category:
             continue
 
+        timing_suffix = (
+            f" [{rule['timing_text']}]"
+            if rule.get("timing_text")
+            else ""
+        )
         if rule.get("amount") is not None and rule.get("currency"):
             snippets.append(
-                f"{rule['criteria_text'] or 'General'}: {rule['currency']} {rule['amount']:.2f} {rule['description']}"
+                f"{rule['criteria_text'] or 'General'}: {rule['currency']} {rule['amount']:.2f} {rule['description']}{timing_suffix}"
             )
         else:
             snippets.append(
-                f"{rule['criteria_text'] or 'General'}: {rule['description']}"
+                f"{rule['criteria_text'] or 'General'}: {rule['description']}{timing_suffix}"
             )
 
     return "\n".join(snippets)
@@ -93,6 +98,12 @@ def generate_penalty_report(records: list[dict], output_path: str) -> str:
                 "Category",
                 "Subtype",
                 "Criteria",
+                "Timing Text",
+                "Timing Qualifier",
+                "Timing Value",
+                "Timing Unit",
+                "Timing Direction",
+                "Timing Reference",
                 "Amount",
                 "Currency",
                 "Status",
@@ -143,6 +154,12 @@ def generate_penalty_report(records: list[dict], output_path: str) -> str:
                         rule.get("category"),
                         rule.get("subtype"),
                         rule.get("criteria_text"),
+                        rule.get("timing_text"),
+                        rule.get("timing_qualifier"),
+                        rule.get("timing_value"),
+                        rule.get("timing_unit"),
+                        rule.get("timing_direction"),
+                        rule.get("timing_reference"),
                         rule.get("amount"),
                         rule.get("currency"),
                         rule.get("status"),
