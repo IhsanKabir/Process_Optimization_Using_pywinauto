@@ -909,6 +909,9 @@ def _group_rbds_by_cabin_break(rbds, airlines, rbd_sort_order):
 
 
 def _is_unsaleable_rbd(entries, rbd):
+    if "(Unsaleable)" in str(rbd):
+        return True
+
     for _airline, _domestic, _route_key, route_info in entries:
         rbd_data = (
             route_info.get("rbd_data", route_info)

@@ -1,0 +1,12 @@
+{
+  "api_base_url": "https://your-existing-website.com/api/travelport-agent",
+  "device_id": "",
+  "device_token": "",
+  "poll_interval_seconds": 15,
+  "heartbeat_interval_seconds": 20,
+  "upload_reports": true,
+  "upload_logs": true,
+  "keep_local_reports": true,
+  "keep_local_logs": true,
+  "stop_check_interval_seconds": 5
+}

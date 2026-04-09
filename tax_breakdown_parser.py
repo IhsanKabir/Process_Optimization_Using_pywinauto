@@ -1,6 +1,16 @@
 import re
 
 
+FS_DETAIL_MARKERS = [
+    "TOTAL JOURNEY TIME",
+    "FS-1 ADT",
+    "REFUNDABLE:",
+    "LAST DATE TO PURCHASE TICKET",
+    "PLATING CARRIER:",
+    "ADDITIONAL TAXES, SURCHARGES, OR FEES MAY APPLY",
+]
+
+
 def parse_fs_tax_breakdown(text: str) -> dict:
     """
     Parses the expanded tax breakdown from an FS command and returns a dictionary
@@ -36,20 +46,6 @@ def parse_fs_tax_breakdown(text: str) -> dict:
     if equ_match:
         result["equ_currency"] = equ_match.group(1)
         result["equ_fare"] = float(equ_match.group(2))
-
-    # Calculate exchange rate dynamically
-    if result["base_fare"] > 0 and result["equ_fare"] > 0:
-        result["exchange_rate"] = round(result["equ_fare"] / result["base_fare"], 4)
-    elif result["base_fare"] > 0:
-        # If no EQU line, the currency is already in the target format (1:1)
-        result["exchange_rate"] = 1.0
-    elif result["equ_fare"] > 0:
-        # If we have EQU but no base fare (shouldn't happen, but handle it)
-        result["exchange_rate"] = 1.0
-    elif result["total_taxes"] > 0 or result["yq_charge"] > 0:
-        # If we have tax/YQ data but no fare data, assume 1:1 exchange rate
-        # This allows tax data to be displayed even when fare parsing fails
-        result["exchange_rate"] = 1.0
 
     # 3. YQ, YR, Q Charges
     yq_match = re.search(r"\bYQ\s*(\d+\.?\d*)\b", text)
@@ -88,4 +84,45 @@ def parse_fs_tax_breakdown(text: str) -> dict:
             else:
                 result["tax_breakdown"][code] = val
 
+    # Calculate exchange rate dynamically after all fields are parsed.
+    if result["base_fare"] > 0 and result["equ_fare"] > 0:
+        result["exchange_rate"] = round(result["equ_fare"] / result["base_fare"], 4)
+    elif result["base_fare"] > 0 or result["equ_fare"] > 0:
+        # If only one fare side is present, keep the available currency data usable.
+        result["exchange_rate"] = 1.0
+    elif (
+        result["total_taxes"] > 0
+        or result["total_amount"] > 0
+        or result["yq_charge"] > 0
+        or result["yr_charge"] > 0
+        or result["q_charge"] > 0
+        or result["tax_breakdown"]
+    ):
+        # Some airlines render tax details without both fare lines.
+        result["exchange_rate"] = 1.0
+
     return result
+
+
+def looks_like_fs_tax_breakdown(text: str) -> bool:
+    """Return True when the captured FS text looks like a valid detail expansion."""
+    if not text or not text.strip():
+        return False
+
+    upper = text.upper()
+    if any(marker in upper for marker in FS_DETAIL_MARKERS):
+        return True
+
+    parsed = parse_fs_tax_breakdown(text)
+    numeric_keys = (
+        "base_fare",
+        "equ_fare",
+        "yq_charge",
+        "yr_charge",
+        "q_charge",
+        "total_taxes",
+        "total_amount",
+    )
+    return any(parsed.get(key, 0) > 0 for key in numeric_keys) or bool(
+        parsed.get("tax_breakdown")
+    )

@@ -35,7 +35,7 @@ from parser import (
 )
 from penalty_parser import parse_penalty_text
 from penalty_report import generate_penalty_report
-from tax_breakdown_parser import parse_fs_tax_breakdown
+from tax_breakdown_parser import parse_fs_tax_breakdown, looks_like_fs_tax_breakdown
 from excel_report import generate_report
 from change_detector import (
     detect_changes,
@@ -1232,11 +1232,9 @@ def main():
                                 target_option_index, fs_result
                             )
 
-                            # Validate: D expansion should contain tax/fare data
-                            D_KEYWORDS = ["EQU", "TAXES", "TAX", "YQ", "FARE", "BASIS"]
-                            if fs_expanded and any(
-                                kw in fs_expanded.upper() for kw in D_KEYWORDS
-                            ):
+                            # Validate: accept both classic fare/tax lines and airline-
+                            # specific detail screens that still parse into usable tax data.
+                            if fs_expanded and looks_like_fs_tax_breakdown(fs_expanded):
                                 logger.info(
                                     f"      [âœ“] Tax breakdown extracted via D-click"
                                 )

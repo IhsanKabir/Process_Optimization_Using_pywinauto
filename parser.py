@@ -156,6 +156,10 @@ def parse_fare_display(raw_text: str) -> dict:
             fare_amount = float(match.group(3))
             fare_basis = match.group(5).upper()
             rbd = match.group(6).upper()
+            line_token_match = re.match(r"^\s*(O?\d+)", line, re.IGNORECASE)
+            line_token = (
+                line_token_match.group(1).upper() if line_token_match else str(line_num)
+            )
 
             # Check if this line was O-prefixed (unsellable indicator)
             is_o_prefixed = bool(re.match(r"^\s*O\d+", line))
@@ -163,6 +167,7 @@ def parse_fare_display(raw_text: str) -> dict:
             fares.append(
                 {
                     "line": line_num,
+                    "line_token": line_token,
                     "airline": airline,
                     "fare": fare_amount,
                     "is_rt": bool(match.group(4)),  # Group 4 is (R?)
@@ -309,11 +314,10 @@ def select_report_fare_targets(
 
             target_fare = min(matching_fares, key=lambda item: item["line"])
             target_key = (
-                target_fare.get("rbd"),
-                target_fare.get("fare_basis"),
-                target_fare.get("fare"),
-                target_fare.get("is_rt"),
-                bool(target_fare.get("is_unsaleable")),
+                grouped_rbd,
+                fare_basis,
+                fare_amount,
+                is_rt,
             )
 
             if target_key in seen_keys:
