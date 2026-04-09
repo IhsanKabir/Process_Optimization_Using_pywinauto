@@ -291,6 +291,7 @@ class TestSelectReportFareTargets:
         fares = [
             {
                 "line": 1,
+                "line_token": "1",
                 "airline": "BG",
                 "rbd": "Y",
                 "fare": 500,
@@ -300,6 +301,7 @@ class TestSelectReportFareTargets:
             },
             {
                 "line": 2,
+                "line_token": "O2",
                 "airline": "BG",
                 "rbd": "Y",
                 "fare": 450,
@@ -312,3 +314,34 @@ class TestSelectReportFareTargets:
         selected = select_report_fare_targets(fares)
 
         assert [fare["line"] for fare in selected] == [1, 2]
+
+    def test_preserves_unsaleable_targets_when_line_numbers_overlap(self):
+        fares = [
+            {
+                "line": 30,
+                "line_token": "30",
+                "airline": "BG",
+                "rbd": "Y",
+                "fare": 500,
+                "is_rt": False,
+                "fare_basis": "YOW",
+                "is_unsaleable": False,
+                "raw_line": "30 BG 500.00 YOW Y",
+            },
+            {
+                "line": 30,
+                "line_token": "O30",
+                "airline": "BG",
+                "rbd": "Y",
+                "fare": 450,
+                "is_rt": False,
+                "fare_basis": "YOWU",
+                "is_unsaleable": True,
+                "raw_line": "O30 BG 450.00 YOWU Y",
+            },
+        ]
+
+        selected = select_report_fare_targets(fares)
+
+        assert len(selected) == 2
+        assert [fare["line_token"] for fare in selected] == ["30", "O30"]

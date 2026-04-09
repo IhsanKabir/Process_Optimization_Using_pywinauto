@@ -192,13 +192,13 @@ MAX_PAGES_UNSALEABLE = 5  # Maximum pages for unsaleable fares (FU*)
 
 # Retry configuration
 MAX_RETRIES_COMMAND = 3  # Maximum retry attempts for failed commands
-MAX_FS_DATE_STEPS = 14  # Maximum date offsets to try for FS command
+MAX_FS_DATE_STEPS = 37  # Maximum date offsets to try for FS command
 
 # Data validation thresholds
 MIN_TERMINAL_TEXT_LENGTH = 50  # Minimum chars for valid terminal response
 
 # FS (Flight Shopping) configuration
-FS_DATE_OFFSET_START = 7  # Start checking from 7 days in future
+FS_DATE_OFFSET_START = 30  # Start checking from roughly 1 month in the future
 FS_DATE_STEP = 2  # Days to jump when a date fails (fast: skip alternate days)
 FS_EXPANSION_KEYWORDS = [
     "EQU",

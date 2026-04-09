@@ -448,20 +448,29 @@ class SmartpointAutomation:
         screen_text = initial_text
 
         while current_page < max_pages:
-            # SPEED: Reuse screen_text from previous iteration instead of re-reading
+            settled_text = self._wait_for_stable_screen(max_polls=2, interval=0.2)
+            if settled_text.strip() != screen_text.strip():
+                screen_text = settled_text
 
             # Check if END is present anywhere in the captured text
             if self._has_end_signal(screen_text):
                 self.logger.debug(
                     "      [DEBUG] 'END' signal detected. Pagination complete."
                 )
-                all_pages.append(screen_text)
+                if screen_text.strip() != all_pages[-1].strip():
+                    all_pages.append(screen_text)
                 break
 
             # Attempt to click "Â«More Flights / FaresÂ»"
             if self.click_more_prompt_link(screen_text):
                 self.logger.debug(f"      Page {current_page}: Clicked 'More' link.")
-                md_response = self._copy_terminal_text()
+                md_response = self._wait_for_response(
+                    screen_text,
+                    timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
+                    min_wait=0.0,
+                    stability_checks=1,
+                )
+                md_response = self._wait_for_stable_screen(max_polls=3, interval=0.2)
             else:
                 # Fallback to standard MD â€” use adaptive polling
                 self.logger.debug(
@@ -572,13 +581,29 @@ class SmartpointAutomation:
         fare_basis = str(fare.get("fare_basis", "")).upper()
         airline = str(fare.get("airline", "")).upper()
         line_number = fare.get("line")
+        line_token = str(fare.get("line_token", "")).upper()
         amount_pattern = rf"{fare.get('fare', 0):.2f}(?:R)?"
+        raw_line = str(fare.get("raw_line", "")).strip().upper()
 
         for index, line in enumerate(page_text.split("\n")):
-            if fare_basis not in line.upper() or airline not in line.upper():
+            upper_line = line.upper()
+            if fare_basis not in upper_line or airline not in upper_line:
                 continue
 
-            if line_number is not None and not re.search(
+            if raw_line:
+                normalized_line = re.sub(r"\s+", " ", upper_line.strip())
+                normalized_raw_line = re.sub(r"\s+", " ", raw_line)
+                if normalized_line == normalized_raw_line:
+                    amount_match = re.search(amount_pattern, line)
+                    if amount_match:
+                        target_line_idx = index
+                        target_char_idx = (amount_match.start() + amount_match.end()) // 2
+                        break
+
+            if line_token:
+                if not re.search(rf"^\s*{re.escape(line_token)}\s+", line, re.IGNORECASE):
+                    continue
+            elif line_number is not None and not re.search(
                 rf"^\s*O?{int(line_number)}\s+", line, re.IGNORECASE
             ):
                 continue
@@ -748,6 +773,10 @@ class SmartpointAutomation:
         penalty_records = []
 
         while current_page <= max_pages:
+            settled_text = self._wait_for_stable_screen(max_polls=2, interval=0.2)
+            if settled_text.strip() != screen_text.strip():
+                screen_text = settled_text
+
             from parser import parse_fare_display, select_report_fare_targets
 
             parsed_page = parse_fare_display(screen_text)
@@ -783,7 +812,13 @@ class SmartpointAutomation:
                 break
 
             if self.click_more_prompt_link(screen_text):
-                md_response = self._copy_terminal_text()
+                md_response = self._wait_for_response(
+                    screen_text,
+                    timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
+                    min_wait=0.0,
+                    stability_checks=1,
+                )
+                md_response = self._wait_for_stable_screen(max_polls=3, interval=0.2)
             else:
                 text_before_md = screen_text
                 pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
@@ -1724,12 +1759,11 @@ class SmartpointAutomation:
         """Check if the terminal text contains the END signal in its last lines."""
         if not text:
             return False
-        lines = text.strip().splitlines()
-        # Check the last 10 lines for a standalone "END"
-        check_lines = lines[-10:] if len(lines) >= 10 else lines
+        lines = [line.strip().upper() for line in text.splitlines() if line.strip()]
+        # Check the last 20 non-empty lines for a standalone "END"
+        check_lines = lines[-20:] if len(lines) >= 20 else lines
         for line in check_lines:
-            stripped = line.strip().upper()
-            if stripped == END_SIGNAL:
+            if line == END_SIGNAL:
                 return True
         return False
 
@@ -1737,11 +1771,12 @@ class SmartpointAutomation:
         """Check if the terminal shows a 'Â«More FaresÂ»' or 'Â«More FlightsÂ»' prompt."""
         if not text:
             return False
-        lines = text.strip().splitlines()
-        check_lines = lines[-5:] if len(lines) >= 5 else lines
+        if self._has_end_signal(text):
+            return False
+        lines = [line.strip().upper() for line in text.splitlines() if line.strip()]
+        check_lines = lines[-8:] if len(lines) >= 8 else lines
         for line in check_lines:
-            upper = line.strip().upper()
-            if "MORE FARES" in upper or "MORE FLIGHTS" in upper:
+            if "MORE FARES" in line or "MORE FLIGHTS" in line:
                 return True
         return False
 

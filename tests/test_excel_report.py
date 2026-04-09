@@ -167,6 +167,45 @@ def test_write_section_places_unsaleable_rows_last():
     assert ws.cell(row=7, column=1).value == "B (Unsaleable)"
 
 
+def test_write_section_keeps_unsaleable_suffix_when_rbd_key_is_tagged():
+    wb = Workbook()
+    ws = wb.active
+
+    entries = [
+        (
+            "BG",
+            "DAC",
+            "BG_DAC-MLE",
+            {
+                "currency": "USD",
+                "rbd_data": {
+                    "Y": {"ow_fare": 250},
+                    "B (Unsaleable)": {
+                        "ow_fare": 150,
+                        "ow_fare_basis": "BOW",
+                    },
+                },
+            },
+        )
+    ]
+
+    _write_section(
+        ws,
+        1,
+        "MLE",
+        "outbound",
+        entries,
+        {"BG": "Biman Bangladesh"},
+        {"DAC": "Dhaka", "MLE": "Male"},
+        ["DAC"],
+        RBD_SORT_ORDER,
+        None,
+    )
+
+    assert ws.cell(row=3, column=1).value == "Y"
+    assert ws.cell(row=4, column=1).value == "B (Unsaleable)"
+
+
 def test_write_section_sorts_economy_by_highest_fare():
     wb = Workbook()
     ws = wb.active
