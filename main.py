@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import time as _time
+import pyautogui
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from collections import OrderedDict
@@ -91,6 +92,11 @@ PLACEHOLDER_DATABASE_URLS = {
     "postgresql://user:password@localhost/travelport_db",
     "postgresql://user:password@localhost/GDS_Automation",
 }
+FS_OPTION_PATTERN = re.compile(
+    r"PRICING\s+OPTION\s+(\d+)(.*?(?=PRICING\s+OPTION\s+\d+|$))",
+    re.IGNORECASE | re.DOTALL,
+)
+FS_LEG_PATTERN = re.compile(r"^\s*(\d+)\s+[#@-]?([A-Z0-9]{2})\s+", re.MULTILINE)
 
 
 def setup_logging():
@@ -385,6 +391,76 @@ def _command_matches_route(
 
     raw_command = str(command_entry.get("command") or "").upper().replace("-", "")
     return any(route_variant in raw_command for route_variant in route_variants)
+
+
+def _fd_output_has_fares(raw_text: str) -> bool:
+    """Return True when FD output contains actual fare rows."""
+    if not raw_text or not raw_text.strip():
+        return False
+    parsed = parse_fare_display(raw_text)
+    return bool(parsed.get("fares"))
+
+
+def _should_run_fs_extraction(args, fd_terminal_text: str) -> bool:
+    """Skip FS when normal FD extraction produced no fare rows."""
+    if getattr(args, "only_fd", False):
+        return False
+    if getattr(args, "only_yq", False) or getattr(args, "only_currency", False):
+        return True
+    return _fd_output_has_fares(fd_terminal_text)
+
+
+def _find_pure_airline_option_in_fs_page(
+    fs_text: str, airline: str
+) -> tuple[int | None, str | None, int]:
+    """Find the first pricing option on the current FS page containing only the target airline."""
+    options = list(FS_OPTION_PATTERN.finditer(fs_text or ""))
+    airline_upper = (airline or "").upper()
+
+    for option_index, opt_match in enumerate(options):
+        opt_num = opt_match.group(1)
+        block = opt_match.group(2)
+        leg_matches = FS_LEG_PATTERN.findall(block)
+        if not leg_matches:
+            continue
+
+        leg_airlines = [match[1].upper().strip() for match in leg_matches]
+        if all(code == airline_upper for code in leg_airlines):
+            return option_index, opt_num, len(options)
+
+    return None, None, len(options)
+
+
+def _should_recheck_same_fs_page(
+    current_fs_page: str, refreshed_fs_page: str, airline: str
+) -> bool:
+    """Return True when a same-date FS page looks more complete after settling."""
+    current_text = (current_fs_page or "").strip()
+    refreshed_text = (refreshed_fs_page or "").strip()
+    if not refreshed_text or refreshed_text == current_text:
+        return False
+
+    (
+        current_option_index,
+        _current_option_number,
+        current_option_count,
+    ) = _find_pure_airline_option_in_fs_page(current_text, airline)
+    (
+        refreshed_option_index,
+        _refreshed_option_number,
+        refreshed_option_count,
+    ) = _find_pure_airline_option_in_fs_page(refreshed_text, airline)
+
+    if refreshed_option_index is not None and current_option_index is None:
+        return True
+
+    if refreshed_option_count > current_option_count:
+        return True
+
+    return (
+        "PRICING OPTION" in refreshed_text.upper()
+        and len(refreshed_text) > len(current_text) + 40
+    )
 
 
 def main():
@@ -1108,8 +1184,7 @@ def main():
                     )
 
                 # â”€â”€ FS EXTRACTION â”€â”€
-                if not args.only_fd:
-                    # Allow extracting YQ/Currency even if FD was skipped or failed
+                if _should_run_fs_extraction(args, terminal_text):
                     base_cmd = cmd["command"].strip()
                     if (
                         len(base_cmd) >= 11
@@ -1155,74 +1230,115 @@ def main():
                                 f.write(fs_result)
                                 f.write("\n" + "=" * 50 + "\n")
 
-                            # Identify Pricing Option blocks
-                            options_iter = re.finditer(
-                                r"PRICING\s+OPTION\s+(\d+)(.*?(?=PRICING\s+OPTION\s+\d+|$))",
-                                fs_result,
-                                re.IGNORECASE | re.DOTALL,
-                            )
-                            options = list(options_iter)
+                            current_fs_page = fs_result
+                            target_option_index = None
+                            target_option_number = None
+                            fs_page_number = 1
+                            max_fs_pages = 5
+                            rechecked_current_fs_page = False
 
-                            if not options:
-                                if fs_result and any(
-                                    kw in fs_result.upper()
-                                    for kw in [
-                                        "NO FARES FOUND",
-                                        "CHECK ACTION CODE",
-                                        "INVALID",
-                                    ]
-                                ):
-                                    logger.warning(
-                                        f"      [!] No valid FS results for {date_str}. Trying next date..."
+                            while True:
+                                (
+                                    target_option_index,
+                                    target_option_number,
+                                    option_count,
+                                ) = _find_pure_airline_option_in_fs_page(
+                                    current_fs_page, airline
+                                )
+
+                                logger.info(
+                                    f"      [DEBUG] Parsing {option_count} options for {airline} on FS page {fs_page_number}..."
+                                )
+
+                                if target_option_index is not None:
+                                    logger.info(
+                                        f"      [âœ“] Pure {airline} itinerary found in Option {target_option_number} on FS page {fs_page_number}."
                                     )
-                                    fs_date_offset += 1
-                                    _time.sleep(0.5)
-                                    continue  # Retry with next date offset
-                                else:
+                                    fs_result = current_fs_page
+                                    break
+
+                                if not rechecked_current_fs_page:
+                                    settled_fs_page = automation._wait_for_stable_screen(
+                                        max_polls=4, interval=0.25
+                                    )
+                                    rechecked_current_fs_page = True
+
+                                    if _should_recheck_same_fs_page(
+                                        current_fs_page, settled_fs_page, airline
+                                    ):
+                                        logger.info(
+                                            f"      [DEBUG] Rechecking FS page {fs_page_number} for {airline} after additional settle..."
+                                        )
+                                        current_fs_page = settled_fs_page
+                                        continue
+
+                                if option_count == 0:
+                                    if current_fs_page and any(
+                                        kw in current_fs_page.upper()
+                                        for kw in [
+                                            "NO FARES FOUND",
+                                            "CHECK ACTION CODE",
+                                            "INVALID",
+                                        ]
+                                    ):
+                                        logger.warning(
+                                            f"      [!] No valid FS results for {date_str}. Trying next date..."
+                                        )
+                                        break
+
                                     logger.warning(
                                         f"      [!] Waiting for terminal content (offset {fs_date_offset})..."
                                     )
-                                    fs_date_offset += 1
-                                    _time.sleep(0.5)
-                                    continue
+                                    break
 
-                            target_option_index = -1
+                                if (
+                                    fs_page_number >= max_fs_pages
+                                    or automation._has_end_signal(current_fs_page)
+                                ):
+                                    logger.warning(
+                                        f"      [!] No pure {airline} options found on {date_str} after {fs_page_number} FS page(s)."
+                                    )
+                                    break
 
-                            logger.info(
-                                f"      [DEBUG] Parsing {len(options)} options for {airline}..."
-                            )
-
-                            for k, opt_match in enumerate(options):
-                                opt_num = opt_match.group(1)
-                                block = opt_match.group(2)
-
-                                leg_matches = re.findall(
-                                    r"^\s*(\d+)\s+([A-Z0-9]{2})\s+", block, re.MULTILINE
+                                logger.info(
+                                    f"      [DEBUG] No pure {airline} option on FS page {fs_page_number}; checking next FS page on the same date..."
                                 )
 
-                                if leg_matches:
-                                    leg_airlines = [
-                                        m[1].upper().strip() for m in leg_matches
-                                    ]
-                                    logger.debug(
-                                        f"        Option {opt_num}: {leg_airlines}"
+                                if automation.click_more_prompt_link(current_fs_page):
+                                    next_fs_page = automation._wait_for_response(
+                                        current_fs_page,
+                                        timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
+                                        min_wait=0.0,
+                                        stability_checks=1,
                                     )
-
-                                    if all(a == airline.upper() for a in leg_airlines):
-                                        logger.info(
-                                            f"      [âœ“] Pure {airline} itinerary found in Option {opt_num}."
-                                        )
-                                        target_option_index = k
-                                        break
+                                    next_fs_page = automation._wait_for_stable_screen(
+                                        max_polls=3, interval=0.2
+                                    )
                                 else:
-                                    logger.debug(
-                                        f"        Option {opt_num}: No flight legs detected in text block."
+                                    pyautogui.typewrite(
+                                        "MD", interval=constants.KEYBOARD_INTERVAL
+                                    )
+                                    pyautogui.press("enter")
+                                    next_fs_page = automation._wait_for_response(
+                                        current_fs_page,
+                                        timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
                                     )
 
-                            if target_option_index == -1:
-                                logger.warning(
-                                    f"      [!] No pure {airline} options found on {date_str}. (Tried {len(options)} items)"
-                                )
+                                if (
+                                    not next_fs_page
+                                    or automation._has_invalid(next_fs_page)
+                                    or next_fs_page.strip() == current_fs_page.strip()
+                                ):
+                                    logger.warning(
+                                        f"      [!] Could not advance FS pagination on {date_str}; trying next date."
+                                    )
+                                    break
+
+                                current_fs_page = next_fs_page
+                                fs_page_number += 1
+                                rechecked_current_fs_page = False
+
+                            if target_option_index is None:
                                 fs_date_offset += 1
                                 _time.sleep(0.5)
                                 continue
@@ -1255,6 +1371,10 @@ def main():
                                     f.write(fs_expanded)
                             except Exception:
                                 pass
+                else:
+                    logger.info(
+                        "    [SKIP] Skipping FS extraction because FD returned no fare data."
+                    )
 
                 # Mark command as completed and save checkpoint
                 if checkpoint_mgr and cmd_str not in failed_commands:
