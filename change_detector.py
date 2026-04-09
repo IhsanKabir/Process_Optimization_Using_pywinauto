@@ -14,6 +14,58 @@ from typing import Optional
 logger = logging.getLogger("travelport.change_detector")
 
 
+def _list_snapshot_names(archive_dir: str) -> list[str]:
+    """Return snapshot filenames in reverse-chronological order."""
+    if not os.path.exists(archive_dir):
+        return []
+
+    snapshots = [
+        f
+        for f in os.listdir(archive_dir)
+        if f.startswith("snapshot_") and f.endswith(".json")
+    ]
+    snapshots.sort(reverse=True)
+    return snapshots
+
+
+def _load_snapshot_file(filepath: str, snapshot_name: str) -> Optional[dict]:
+    """Load a single snapshot file, returning None when it is invalid."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("Skipping invalid snapshot '%s': %s", snapshot_name, e)
+        return None
+
+
+def _normalize_snapshot_reference(reference: str) -> tuple[str, bool]:
+    """Normalize a user-provided snapshot reference to filename timestamp format."""
+    raw_reference = (reference or "").strip()
+    if not raw_reference:
+        raise ValueError("Snapshot reference cannot be empty.")
+
+    formats = [
+        ("%Y-%m-%d_%H%M", True),
+        ("%Y-%m-%d %H%M", True),
+        ("%Y-%m-%d %H:%M", True),
+        ("%Y-%m-%dT%H%M", True),
+        ("%Y-%m-%dT%H:%M", True),
+        ("%Y-%m-%d", False),
+    ]
+
+    for fmt, has_time in formats:
+        try:
+            parsed = datetime.strptime(raw_reference, fmt)
+            normalized = parsed.strftime("%Y-%m-%d_%H%M" if has_time else "%Y-%m-%d")
+            return normalized, has_time
+        except ValueError:
+            continue
+
+    raise ValueError(
+        "Invalid snapshot reference. Use YYYY-MM-DD or YYYY-MM-DD_HHMM."
+    )
+
+
 def detect_changes(current_data: dict, previous_data: dict) -> dict:
     """
     Compare current fare data with previous data and detect changes.
@@ -152,29 +204,54 @@ def load_latest_snapshot(archive_dir: str) -> Optional[dict]:
     Returns:
         The parsed data dict, or None if no snapshots exist.
     """
-    if not os.path.exists(archive_dir):
-        return None
-
-    snapshots = [
-        f
-        for f in os.listdir(archive_dir)
-        if f.startswith("snapshot_") and f.endswith(".json")
-    ]
-
+    snapshots = _list_snapshot_names(archive_dir)
     if not snapshots:
         return None
 
-    # Sort by filename (date-based naming ensures chronological order)
-    snapshots.sort(reverse=True)
-
     for snapshot_name in snapshots:
         filepath = os.path.join(archive_dir, snapshot_name)
+        snapshot_data = _load_snapshot_file(filepath, snapshot_name)
+        if snapshot_data is not None:
+            return snapshot_data
 
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning("Skipping invalid snapshot '%s': %s", snapshot_name, e)
+    return None
+
+
+def load_snapshot_by_reference(
+    archive_dir: str, reference: str
+) -> tuple[Optional[dict], Optional[str]]:
+    """
+    Load a specific archived snapshot by date or date+time reference.
+
+    Args:
+        archive_dir: Snapshot archive directory.
+        reference: YYYY-MM-DD for the latest snapshot on that day, or
+            YYYY-MM-DD_HHMM for an exact timestamp match.
+
+    Returns:
+        Tuple of (parsed snapshot data, snapshot id without prefix/suffix).
+    """
+    snapshots = _list_snapshot_names(archive_dir)
+    if not snapshots:
+        return None, None
+
+    normalized_reference, has_time = _normalize_snapshot_reference(reference)
+    matching_snapshots = []
+
+    for snapshot_name in snapshots:
+        snapshot_id = snapshot_name.removeprefix("snapshot_").removesuffix(".json")
+        if has_time:
+            if snapshot_id == normalized_reference:
+                matching_snapshots.append(snapshot_name)
+        elif snapshot_id.startswith(normalized_reference):
+            matching_snapshots.append(snapshot_name)
+
+    for snapshot_name in matching_snapshots:
+        filepath = os.path.join(archive_dir, snapshot_name)
+        snapshot_data = _load_snapshot_file(filepath, snapshot_name)
+        if snapshot_data is not None:
+            snapshot_id = snapshot_name.removeprefix("snapshot_").removesuffix(".json")
+            return snapshot_data, snapshot_id
 
     return None
 

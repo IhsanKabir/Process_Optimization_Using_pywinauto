@@ -16,7 +16,7 @@ import os
 import re
 import sys
 import time as _time
-import pyautogui
+import constants
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from collections import OrderedDict
@@ -45,6 +45,7 @@ from change_detector import (
     save_snapshot,
     snapshot_has_changed,
     load_latest_snapshot,
+    load_snapshot_by_reference,
     format_change_summary,
 )
 from exceptions import ConfigurationError, ValidationError
@@ -545,6 +546,12 @@ def main():
         type=str,
         default=None,
         help="Resume from a specific checkpoint file",
+    )
+    arg_parser.add_argument(
+        "--compare-snapshot",
+        type=str,
+        default=None,
+        help="Compare against a specific archived snapshot by date or date+time (e.g. 2026-04-08 or 2026-04-08_1805)",
     )
     arg_parser.add_argument(
         "--no-validation",
@@ -1315,14 +1322,10 @@ def main():
                                         max_polls=3, interval=0.2
                                     )
                                 else:
-                                    pyautogui.typewrite(
-                                        "MD", interval=constants.KEYBOARD_INTERVAL
+                                    logger.warning(
+                                        f"      [!] More Flights was not clickable on {date_str}; staying off MD and trying next date."
                                     )
-                                    pyautogui.press("enter")
-                                    next_fs_page = automation._wait_for_response(
-                                        current_fs_page,
-                                        timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
-                                    )
+                                    break
 
                                 if (
                                     not next_fs_page
@@ -1509,7 +1512,26 @@ def main():
         archive_path = os.path.join(ARCHIVE_DIR, archive_subdir)
         os.makedirs(archive_path, exist_ok=True)
 
-        previous_data = load_latest_snapshot(archive_path)
+        latest_snapshot_data = load_latest_snapshot(archive_path)
+        previous_data = latest_snapshot_data
+        comparison_snapshot_id = None
+
+        if args.compare_snapshot:
+            try:
+                previous_data, comparison_snapshot_id = load_snapshot_by_reference(
+                    archive_path, args.compare_snapshot
+                )
+            except ValueError as e:
+                logger.error(f"  {e}")
+                sys.exit(1)
+
+            if previous_data is None:
+                logger.error(
+                    f"  No archived snapshot found for '{args.compare_snapshot}'."
+                )
+                sys.exit(1)
+
+            logger.info(f"  Comparing against snapshot: {comparison_snapshot_id}")
 
         if previous_data:
             if args.tax:
@@ -1528,7 +1550,7 @@ def main():
         else:
             logger.info("  No previous data found. First run â€” baseline saved.")
 
-        if snapshot_has_changed(all_route_data, previous_data):
+        if snapshot_has_changed(all_route_data, latest_snapshot_data):
             ts = datetime.now().strftime("%Y-%m-%d_%H%M")
             save_snapshot(all_route_data, archive_path, date_str=ts)
         else:

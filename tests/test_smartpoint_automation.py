@@ -86,6 +86,58 @@ def test_parse_fs_tax_breakdown_uses_default_rate_for_tax_only_text():
     assert parsed["exchange_rate"] == 1.0
 
 
+def test_click_d_button_accepts_settled_tax_screen(monkeypatch):
+    automation = SmartpointAutomation()
+    sent_keys = []
+
+    fs_text = """
+PRICING OPTION 1
+1   QR    639  N  09MAY DAC DOH   0305  0615
+             «BOOK»             +TQ                                                     D  R  +1
+>
+"""
+    settled_tax_text = """
+TOTAL JOURNEY TIME
+
+DAC-DOH: 06:10
+
+FS-1 ADT
+
+REFUNDABLE: YES
+
+PLATING CARRIER: QR QATAR AIRWAYS
+
+DAC QR DOH Q20.00 935.00NJR4R1RI NUC955.00END ROE1.0
+
+FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
+"""
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237))
+    monkeypatch.setattr(automation, "_wait_for_response", lambda *args, **kwargs: "INTERIM")
+
+    stable_reads = iter([settled_tax_text])
+    monkeypatch.setattr(
+        automation,
+        "_wait_for_stable_screen",
+        lambda *args, **kwargs: next(stable_reads),
+    )
+
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "typewrite",
+        lambda text, interval=None: sent_keys.append(text),
+    )
+
+    result = automation.click_d_button(0, fs_text)
+
+    assert "FARE USD955.00" in result
+    assert "I" not in sent_keys
+
+
 def test_click_fare_amount_for_penalty_prefers_exact_unsaleable_line(monkeypatch):
     automation = SmartpointAutomation()
     page_text = "\n".join(

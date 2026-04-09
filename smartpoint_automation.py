@@ -1364,6 +1364,7 @@ class SmartpointAutomation:
         calculates the exact pixel position from the character column.
         """
         import re
+        from tax_breakdown_parser import looks_like_fs_tax_breakdown
 
         if not self.focus():
             return ""
@@ -1448,14 +1449,17 @@ class SmartpointAutomation:
 
             pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
             pyautogui.click()
-            time.sleep(constants.COMMAND_WAIT_SHORT)
-
-            result = self._copy_terminal_text()
+            result = self._wait_for_response(
+                text_before,
+                timeout=constants.COMMAND_WAIT_LONG + 0.5,
+                min_wait=constants.COMMAND_WAIT_SHORT,
+                stability_checks=1,
+            )
+            result = self._wait_for_stable_screen(max_polls=4, interval=0.25)
 
             if result.strip() != text_before.strip():
                 upper = result.upper()
-                # D expansion shows: FARE COMPONENT BASIS, tax codes (YQ, BD, etc.), EQU, etc.
-                if any(
+                if looks_like_fs_tax_breakdown(result) or any(
                     kw in upper
                     for kw in ["EQU", "TAXES", "TAX", "YQ", "FARE COMPONENT", "BASIS"]
                 ):
@@ -1465,12 +1469,19 @@ class SmartpointAutomation:
                     return result
                 else:
                     self.logger.debug(
-                        f"      [D-CLICK] Screen changed but no tax/fare data. Sending 'I' to reset..."
+                        "      [D-CLICK] Screen changed but no tax/fare data after settle. Sending 'I' to reset..."
                     )
                     pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
                     pyautogui.press("enter")
-                    time.sleep(constants.COMMAND_WAIT_FS)
-                    text_before = self._copy_terminal_text()
+                    text_before = self._wait_for_response(
+                        result,
+                        timeout=constants.COMMAND_WAIT_FS,
+                        min_wait=constants.COMMAND_WAIT_SHORT,
+                        stability_checks=1,
+                    )
+                    text_before = self._wait_for_stable_screen(
+                        max_polls=3, interval=0.25
+                    )
                     if "PRICING OPTION" not in text_before.upper():
                         self.logger.warning(
                             f"      [D-CLICK] Could not recover FS display. Aborting."
