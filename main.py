@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import time as _time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from collections import OrderedDict
 
@@ -86,6 +87,10 @@ ARCHIVE_DIR = os.path.join(SCRIPT_DIR, "data", "archive")
 LOG_DIR = os.path.join(SCRIPT_DIR, "data", "logs")
 CHECKPOINT_DIR = os.path.join(SCRIPT_DIR, "data", "checkpoints")
 RAW_PENALTY_DIR = os.path.join(SCRIPT_DIR, "data", "raw_penalty")
+PLACEHOLDER_DATABASE_URLS = {
+    "postgresql://user:password@localhost/travelport_db",
+    "postgresql://user:password@localhost/GDS_Automation",
+}
 
 
 def setup_logging():
@@ -266,7 +271,7 @@ def process_route_data(
 
 def record_to_database(all_route_data: dict, config: dict, mode: str = "auto"):
     """Persist the data to PostgreSQL if configured."""
-    db_url = config.get("database_url") or os.environ.get("DATABASE_URL")
+    db_url = _resolve_database_url(config)
     if not db_url or "postgresql://" not in db_url:
         return
 
@@ -305,6 +310,54 @@ def _safe_filename(value: str) -> str:
     """Convert arbitrary text into a filesystem-safe filename fragment."""
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or ""))
     return cleaned.strip("_") or "unknown"
+
+
+def _is_placeholder_database_url(database_url: str | None) -> bool:
+    normalized = (database_url or "").strip()
+    if not normalized:
+        return True
+    if normalized in PLACEHOLDER_DATABASE_URLS:
+        return True
+    return "YOUR_" in normalized.upper()
+
+
+def _normalize_database_url(database_url: str | None) -> str:
+    """Normalize PostgreSQL URLs so psycopg2 can consume them reliably."""
+    normalized = (database_url or "").strip()
+    if not normalized:
+        return ""
+
+    if normalized.startswith("postgresql+"):
+        normalized = "postgresql://" + normalized.split("://", 1)[1]
+
+    if normalized.startswith("postgresql://"):
+        parts = urlsplit(normalized)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query.setdefault("connect_timeout", "5")
+        normalized = urlunsplit(
+            (
+                parts.scheme,
+                parts.netloc,
+                parts.path,
+                urlencode(query),
+                parts.fragment,
+            )
+        )
+
+    return normalized
+
+
+def _resolve_database_url(config: dict) -> str:
+    """Prefer DATABASE_URL, but fall back to config when it isn't a placeholder."""
+    env_database_url = _normalize_database_url(os.environ.get("DATABASE_URL"))
+    if env_database_url:
+        return env_database_url
+
+    config_database_url = config.get("database_url")
+    if _is_placeholder_database_url(config_database_url):
+        return ""
+
+    return _normalize_database_url(config_database_url)
 
 
 def _route_variants(route_code: str, one_direction: bool = False) -> set[str]:
@@ -1364,11 +1417,6 @@ def main():
             logger.info("  Snapshot unchanged; skipping archive write.")
         logger.info("")
 
-    # [DB] Optional persistence
-    record_to_database(
-        all_route_data, config, mode="auto" if not args.tax else "tax-mode"
-    )
-
     # [4/4] Generate Report
     logger.info("[4/4] Generating Excel report...")
 
@@ -1421,6 +1469,11 @@ def main():
                 logger.info(f"  âœ“ Attached FTAX to {result_path}")
             except Exception as e:
                 logger.error(f"  Failed to append FTAX sheets: {e}")
+
+    # [DB] Optional persistence - keep current file/report flow unchanged
+    record_to_database(
+        all_route_data, config, mode="auto" if not args.tax else "tax-mode"
+    )
 
     # Run Summary
     elapsed = _time.time() - start_time
