@@ -27,11 +27,7 @@ def _summarize_rules(record: dict, category: str) -> str:
         if rule.get("category") != category:
             continue
 
-        timing_suffix = (
-            f" [{rule['timing_text']}]"
-            if rule.get("timing_text")
-            else ""
-        )
+        timing_suffix = f" [{rule['timing_text']}]" if rule.get("timing_text") else ""
         if rule.get("amount") is not None and rule.get("currency"):
             snippets.append(
                 f"{rule['criteria_text'] or 'General'}: {rule['currency']} {rule['amount']:.2f} {rule['description']}{timing_suffix}"

@@ -754,7 +754,9 @@ class SmartpointAutomation:
             visible_targets = select_report_fare_targets(parsed_page.get("fares", []))
 
             if not visible_targets:
-                refreshed_text = self._wait_for_stable_screen(max_polls=3, interval=0.25)
+                refreshed_text = self._wait_for_stable_screen(
+                    max_polls=3, interval=0.25
+                )
                 if refreshed_text.strip() != screen_text.strip():
                     screen_text = refreshed_text
                     parsed_page = parse_fare_display(screen_text)
@@ -1849,4 +1851,3 @@ class SmartpointAutomation:
                 return True
 
         return False
-
