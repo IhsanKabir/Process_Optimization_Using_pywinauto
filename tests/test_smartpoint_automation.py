@@ -113,8 +113,12 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
 """
 
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
-    monkeypatch.setattr(automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237))
-    monkeypatch.setattr(automation, "_wait_for_response", lambda *args, **kwargs: "INTERIM")
+    monkeypatch.setattr(
+        automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237)
+    )
+    monkeypatch.setattr(
+        automation, "_wait_for_response", lambda *args, **kwargs: "INTERIM"
+    )
 
     stable_reads = iter([settled_tax_text])
     monkeypatch.setattr(

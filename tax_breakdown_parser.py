@@ -1,6 +1,5 @@
 import re
 
-
 FS_DETAIL_MARKERS = [
     "TOTAL JOURNEY TIME",
     "FS-1 ADT",
