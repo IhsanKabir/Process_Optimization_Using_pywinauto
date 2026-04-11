@@ -336,7 +336,7 @@ def _is_main_category(line: str) -> bool:
     )
 
 
-def _determine_status(condition: str) -> str:
+def _determine_status(condition: str, reference_date: datetime = None) -> str:
     """
     Determine if a tax rate is expired, current, or future based on
     date conditions in the text.
@@ -345,8 +345,10 @@ def _determine_status(condition: str) -> str:
         "TKT ON/BEFORE 31MAR25"          → expired (past date)
         "TVL ON/AFTER 01APR25 AND ON/BEFORE 31MAR27" → current (includes today)
         "TVL ON/AFTER 01APR29"            → future
+
+    reference_date: override today's date (useful for testing).
     """
-    today = datetime.now()
+    today = reference_date if reference_date is not None else datetime.now()
 
     # Extract all dates from the condition
     date_pattern = re.compile(r"(\d{2})([A-Z]{3})(\d{2,4})")
@@ -377,7 +379,12 @@ def _determine_status(condition: str) -> str:
 
         year = int(year_str)
         if year < 100:
+            # 2-digit year: assume 2000s, but cap at current_year+20 to
+            # avoid treating legacy dates like "99" as 2099 instead of 1999
+            current_year = today.year
             year += 2000
+            if year > current_year + 20:
+                year -= 100
 
         try:
             dates.append(datetime(year, month, day))
