@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -l \"database\\\\|DatabaseManager\\\\|db_\" /c/Users/TLL-90134/Documents/travelport-automation/tests/*.py)",
+      "Bash(python -c \"import parser; import tax_parser; import database; print\\('Imports OK'\\)\")",
+      "Bash(python -m pytest tests/ -x -q --ignore=tests/test_smartpoint_automation.py)"
+    ]
+  }
+}

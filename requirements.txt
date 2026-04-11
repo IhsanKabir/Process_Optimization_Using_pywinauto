@@ -7,3 +7,4 @@ openpyxl==3.1.2
 pyperclip==1.8.2
 tqdm==4.66.1
 psycopg2-binary==2.9.9
+google-cloud-bigquery>=3.11.0

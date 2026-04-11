@@ -9,7 +9,10 @@ Example: FDDACMLE-OW/BG -> One-way fares from DAC to MLE on BG
 """
 
 import re
+import logging
 from typing import Optional
+
+logger = logging.getLogger("travelport.parser")
 
 
 def parse_command(command: str) -> Optional[dict]:
@@ -51,7 +54,7 @@ def load_commands_from_text(text: str) -> list[dict]:
         if parsed:
             commands.append(parsed)
         else:
-            print(f"  [WARNING] Could not parse command: {line}")
+            logger.warning("Could not parse command: %s", line)
     return commands
 
 
@@ -67,7 +70,7 @@ def load_commands(commands_file: str) -> list[dict]:
             content = f.read()
         return load_commands_from_text(content)
     except Exception as e:
-        print(f"  [ERROR] Failed to load commands file: {e}")
+        logger.error("Failed to load commands file: %s", e)
         return []
 
 
@@ -80,8 +83,6 @@ def _extract_currency(raw_text: str):
         '         CNY    BASIS       MAX'
         '         OMR    BASIS       MAX'
     """
-    import re
-
     lines = raw_text.strip().split("\n")
     for line in lines:
         # Match the column header line that shows the currency code

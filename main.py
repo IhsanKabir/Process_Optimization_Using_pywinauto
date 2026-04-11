@@ -65,11 +65,16 @@ try:
 except ImportError:
     DatabaseManager = None
 
+try:
+    import bigquery_pusher as _bq_pusher
+except ImportError:
+    _bq_pusher = None
+
 # Try to load .env file if python-dotenv is available
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(override=True)
 except ImportError:
     pass  # python-dotenv not installed, skip
 
@@ -276,28 +281,32 @@ def process_route_data(
     return OrderedDict(sorted(all_route_data.items()))
 
 
-def record_to_database(all_route_data: dict, config: dict, mode: str = "auto"):
-    """Persist the data to PostgreSQL if configured."""
+def record_to_database(all_route_data: dict, config: dict, mode: str = "auto") -> int:
+    """Persist the data to PostgreSQL if configured. Returns run_id (>0) or -1."""
     db_url = _resolve_database_url(config)
     if not db_url or "postgresql://" not in db_url:
-        return
+        return -1
 
     if not DatabaseManager:
         logger.warning(
             "  [!] Database integration skipped (psycopg2-binary not installed)"
         )
-        return
+        return -1
 
     logger.info(f"[DB] Recording {len(all_route_data)} items to history...")
     db = DatabaseManager(db_url)
     if db.connect():
-        run_id = db.record_run(all_route_data, run_mode=mode)
+        if mode == "tax-mode":
+            run_id = db.record_tax_run(all_route_data, run_mode=mode)
+        else:
+            run_id = db.record_run(all_route_data, run_mode=mode)
         if run_id > 0:
-            logger.info(f"  âœ“ Database record created (Run ID: {run_id})")
+            logger.info(f"  ✓ Database record created (Run ID: {run_id})")
         db.close()
+        return run_id
     else:
         logger.warning("  [!] Database integration skipped (connection failed)")
-
+        return -1
 
 def show_usage():
     """Show usage instructions when no data files are found."""
@@ -1515,6 +1524,33 @@ def main():
         latest_snapshot_data = load_latest_snapshot(archive_path)
         previous_data = latest_snapshot_data
         comparison_snapshot_id = None
+        using_db_snapshot = False
+
+        # Try to load previous snapshot from DB first
+        if DatabaseManager and _resolve_database_url(config):
+            try:
+                _db_check = DatabaseManager(_resolve_database_url(config))
+                if _db_check.connect():
+                    _run_mode_for_check = 'tax-mode' if args.tax else None
+                    prev_run_id = _db_check.get_previous_run_id(run_mode=_run_mode_for_check)
+                    if prev_run_id > 0:
+                        if args.tax:
+                            db_snapshot = _db_check.load_tax_snapshot(prev_run_id)
+                        else:
+                            db_snapshot = _db_check.load_fare_snapshot(prev_run_id)
+                        if db_snapshot:
+                            previous_data = db_snapshot
+                            using_db_snapshot = True
+                            logger.info(f'  Using DB snapshot from run {prev_run_id}')
+                    _db_check.close()
+            except Exception as _db_snap_err:
+                logger.debug('  DB snapshot load failed: %s', _db_snap_err)
+
+        if not previous_data:
+            # Fall back to JSON archive
+            previous_data = latest_snapshot_data
+            if previous_data:
+                logger.info('  Using JSON archive snapshot (no DB history yet)')
 
         if args.compare_snapshot:
             try:
@@ -1542,19 +1578,22 @@ def main():
                     logger.info("  No changes from previous tax data.")
             else:
                 changes = detect_changes(all_route_data, previous_data)
+                if changes and any(changes.values()):
+                    logger.info(format_change_summary(changes))
+                else:
+                    logger.info("  No changes from previous data.")
+        else:
+            logger.info("  No previous data found. First run — baseline saved.")
 
-            if changes and any(changes.values()):
-                logger.info(format_change_summary(changes))
+        # Only write JSON snapshot when NOT using DB as primary source
+        if not using_db_snapshot:
+            if snapshot_has_changed(all_route_data, latest_snapshot_data):
+                ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+                save_snapshot(all_route_data, archive_path, date_str=ts)
             else:
-                logger.info("  No changes from previous data.")
+                logger.info("  Snapshot unchanged; skipping archive write.")
         else:
-            logger.info("  No previous data found. First run â€” baseline saved.")
-
-        if snapshot_has_changed(all_route_data, latest_snapshot_data):
-            ts = datetime.now().strftime("%Y-%m-%d_%H%M")
-            save_snapshot(all_route_data, archive_path, date_str=ts)
-        else:
-            logger.info("  Snapshot unchanged; skipping archive write.")
+            logger.info("  DB is primary snapshot source; skipping JSON archive write.")
         logger.info("")
 
     # [4/4] Generate Report
@@ -1611,9 +1650,21 @@ def main():
                 logger.error(f"  Failed to append FTAX sheets: {e}")
 
     # [DB] Optional persistence - keep current file/report flow unchanged
-    record_to_database(
-        all_route_data, config, mode="auto" if not args.tax else "tax-mode"
-    )
+    _run_mode = "auto" if not args.tax else "tax-mode"
+    _db_run_id = record_to_database(all_route_data, config, mode=_run_mode)
+
+    # [BQ] Push to BigQuery if configured
+    if _bq_pusher and _bq_pusher.is_configured():
+        _run_time = datetime.now()
+        try:
+            if args.tax:
+                _bq_pusher.push_tax_snapshot(all_route_data, _db_run_id, _run_time)
+            else:
+                _bq_pusher.push_fare_snapshot(all_route_data, _db_run_id, _run_time)
+                if changes:
+                    _bq_pusher.push_change_events(changes, _run_time)
+        except Exception as _bq_err:
+            logger.warning("  [BQ] Push failed (non-fatal): %s", _bq_err)
 
     # Run Summary
     elapsed = _time.time() - start_time
@@ -1625,8 +1676,12 @@ def main():
     if changes:
         for rc in changes.values():
             for ci in rc.values():
-                ct = ci.get("type", "unknown")
-                change_counts[ct] = change_counts.get(ct, 0) + 1
+                # Tax changes are lists of change dicts; fare changes are plain dicts
+                items = ci if isinstance(ci, list) else [ci]
+                for item in items:
+                    if isinstance(item, dict):
+                        ct = item.get("type", "unknown")
+                        change_counts[ct] = change_counts.get(ct, 0) + 1
 
     logger.info("")
     logger.info("=" * 60)
