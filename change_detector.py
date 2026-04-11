@@ -61,9 +61,7 @@ def _normalize_snapshot_reference(reference: str) -> tuple[str, bool]:
         except ValueError:
             continue
 
-    raise ValueError(
-        "Invalid snapshot reference. Use YYYY-MM-DD or YYYY-MM-DD_HHMM."
-    )
+    raise ValueError("Invalid snapshot reference. Use YYYY-MM-DD or YYYY-MM-DD_HHMM.")
 
 
 def detect_changes(current_data: dict, previous_data: dict) -> dict:

@@ -60,7 +60,10 @@ def _full_table(table: str) -> str:
 # Push fare snapshot
 # ─────────────────────────────────────────────────────────────────────────────
 
-def push_fare_snapshot(all_route_data: dict, run_id: int, run_time: datetime | None = None) -> int:
+
+def push_fare_snapshot(
+    all_route_data: dict, run_id: int, run_time: datetime | None = None
+) -> int:
     """
     Push fare records from a completed run into fact_gds_fare_snapshot.
 
@@ -104,25 +107,27 @@ def push_fare_snapshot(all_route_data: dict, run_id: int, run_time: datetime | N
                     continue
                 base = float(info.get(fare_field) or 0.0)
                 sold = bool(info.get(sold_field, False))
-                rows.append({
-                    "cycle_id": cycle_id,
-                    "captured_at_utc": captured_at,
-                    "airline": airline,
-                    "origin": origin,
-                    "destination": destination,
-                    "route_key": route,
-                    "rbd": rbd,
-                    "cabin": cabin,
-                    "fare_basis": info.get(basis_field) or "",
-                    "journey_type": jt,
-                    "base_fare": base,
-                    "total_taxes": total_taxes,
-                    "total_fare": base + total_taxes if not sold else 0.0,
-                    "currency": currency,
-                    "is_sold_out": sold,
-                    "is_unsaleable": is_unsaleable,
-                    "source": "gds_travelport",
-                })
+                rows.append(
+                    {
+                        "cycle_id": cycle_id,
+                        "captured_at_utc": captured_at,
+                        "airline": airline,
+                        "origin": origin,
+                        "destination": destination,
+                        "route_key": route,
+                        "rbd": rbd,
+                        "cabin": cabin,
+                        "fare_basis": info.get(basis_field) or "",
+                        "journey_type": jt,
+                        "base_fare": base,
+                        "total_taxes": total_taxes,
+                        "total_fare": base + total_taxes if not sold else 0.0,
+                        "currency": currency,
+                        "is_sold_out": sold,
+                        "is_unsaleable": is_unsaleable,
+                        "source": "gds_travelport",
+                    }
+                )
 
     if not rows:
         logger.info("  [BQ] No fare rows to push")
@@ -133,7 +138,9 @@ def push_fare_snapshot(all_route_data: dict, run_id: int, run_time: datetime | N
         if errors:
             logger.error("  [BQ] Insert errors: %s", errors[:3])
             return -1
-        logger.info("  [BQ] Pushed %d fare rows to BigQuery (run %s)", len(rows), cycle_id)
+        logger.info(
+            "  [BQ] Pushed %d fare rows to BigQuery (run %s)", len(rows), cycle_id
+        )
         return len(rows)
     except Exception as e:
         logger.error("  [BQ] Failed to push fare snapshot: %s", e)
@@ -143,6 +150,7 @@ def push_fare_snapshot(all_route_data: dict, run_id: int, run_time: datetime | N
 # ─────────────────────────────────────────────────────────────────────────────
 # Push change events
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def push_change_events(changes: dict, run_time: datetime | None = None) -> int:
     """
@@ -172,21 +180,23 @@ def push_change_events(changes: dict, run_time: datetime | None = None) -> int:
         for rbd, change in rbd_changes.items():
             if not isinstance(change, dict):
                 continue
-            rows.append({
-                "detected_at_utc": detected_at,
-                "report_day": report_day,
-                "airline": airline,
-                "origin": origin,
-                "destination": destination,
-                "route_key": route,
-                "rbd": rbd,
-                "cabin": _rbd_to_cabin(rbd.replace(" (Unsaleable)", "")),
-                "change_type": change.get("type", "unknown"),
-                "old_ow_fare": change.get("old_ow_fare"),
-                "new_ow_fare": change.get("new_ow_fare"),
-                "old_rt_fare": change.get("old_rt_fare"),
-                "new_rt_fare": change.get("new_rt_fare"),
-            })
+            rows.append(
+                {
+                    "detected_at_utc": detected_at,
+                    "report_day": report_day,
+                    "airline": airline,
+                    "origin": origin,
+                    "destination": destination,
+                    "route_key": route,
+                    "rbd": rbd,
+                    "cabin": _rbd_to_cabin(rbd.replace(" (Unsaleable)", "")),
+                    "change_type": change.get("type", "unknown"),
+                    "old_ow_fare": change.get("old_ow_fare"),
+                    "new_ow_fare": change.get("new_ow_fare"),
+                    "old_rt_fare": change.get("old_rt_fare"),
+                    "new_rt_fare": change.get("new_rt_fare"),
+                }
+            )
 
     if not rows:
         return 0
@@ -207,7 +217,10 @@ def push_change_events(changes: dict, run_time: datetime | None = None) -> int:
 # Push tax snapshot
 # ─────────────────────────────────────────────────────────────────────────────
 
-def push_tax_snapshot(tax_data: dict, run_id: int, run_time: datetime | None = None) -> int:
+
+def push_tax_snapshot(
+    tax_data: dict, run_id: int, run_time: datetime | None = None
+) -> int:
     """
     Push tax records into fact_gds_tax_snapshot.
 
@@ -229,20 +242,22 @@ def push_tax_snapshot(tax_data: dict, run_id: int, run_time: datetime | None = N
                 category = section.get("category", "")
                 subcategory = section.get("subcategory", "")
                 for rate in section.get("rates", []):
-                    rows.append({
-                        "cycle_id": cycle_id,
-                        "captured_at_utc": captured_at,
-                        "airport_code": airport_code,
-                        "tax_code": tax_code,
-                        "tax_name": tax_name,
-                        "category": category,
-                        "subcategory": subcategory,
-                        "condition": rate.get("condition", ""),
-                        "currency": rate.get("currency", ""),
-                        "amount": rate.get("amount"),
-                        "status": rate.get("status", ""),
-                        "source": "gds_travelport",
-                    })
+                    rows.append(
+                        {
+                            "cycle_id": cycle_id,
+                            "captured_at_utc": captured_at,
+                            "airport_code": airport_code,
+                            "tax_code": tax_code,
+                            "tax_name": tax_name,
+                            "category": category,
+                            "subcategory": subcategory,
+                            "condition": rate.get("condition", ""),
+                            "currency": rate.get("currency", ""),
+                            "amount": rate.get("amount"),
+                            "status": rate.get("status", ""),
+                            "source": "gds_travelport",
+                        }
+                    )
 
     if not rows:
         return 0
@@ -252,7 +267,9 @@ def push_tax_snapshot(tax_data: dict, run_id: int, run_time: datetime | None = N
         if errors:
             logger.error("  [BQ] Tax insert errors: %s", errors[:3])
             return -1
-        logger.info("  [BQ] Pushed %d tax rows to BigQuery (run %s)", len(rows), cycle_id)
+        logger.info(
+            "  [BQ] Pushed %d tax rows to BigQuery (run %s)", len(rows), cycle_id
+        )
         return len(rows)
     except Exception as e:
         logger.error("  [BQ] Failed to push tax snapshot: %s", e)
@@ -263,13 +280,30 @@ def push_tax_snapshot(tax_data: dict, run_id: int, run_time: datetime | None = N
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _rbd_to_cabin(rbd: str) -> str:
     """Map RBD code to cabin class name."""
     rbd = rbd.upper().strip()
     first_class = {"P", "F", "A"}
     business = {"J", "C", "D", "I", "Z"}
     premium_economy = {"W", "S", "E"}
-    economy = {"Y", "B", "M", "H", "K", "Q", "V", "T", "L", "G", "N", "O", "R", "U", "X"}
+    economy = {
+        "Y",
+        "B",
+        "M",
+        "H",
+        "K",
+        "Q",
+        "V",
+        "T",
+        "L",
+        "G",
+        "N",
+        "O",
+        "R",
+        "U",
+        "X",
+    }
     if rbd in first_class:
         return "First"
     if rbd in business:

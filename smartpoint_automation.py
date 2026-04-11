@@ -597,11 +597,15 @@ class SmartpointAutomation:
                     amount_match = re.search(amount_pattern, line)
                     if amount_match:
                         target_line_idx = index
-                        target_char_idx = (amount_match.start() + amount_match.end()) // 2
+                        target_char_idx = (
+                            amount_match.start() + amount_match.end()
+                        ) // 2
                         break
 
             if line_token:
-                if not re.search(rf"^\s*{re.escape(line_token)}\s+", line, re.IGNORECASE):
+                if not re.search(
+                    rf"^\s*{re.escape(line_token)}\s+", line, re.IGNORECASE
+                ):
                     continue
             elif line_number is not None and not re.search(
                 rf"^\s*O?{int(line_number)}\s+", line, re.IGNORECASE

@@ -308,6 +308,7 @@ def record_to_database(all_route_data: dict, config: dict, mode: str = "auto") -
         logger.warning("  [!] Database integration skipped (connection failed)")
         return -1
 
+
 def show_usage():
     """Show usage instructions when no data files are found."""
     logger.info("")
@@ -1274,8 +1275,10 @@ def main():
                                     break
 
                                 if not rechecked_current_fs_page:
-                                    settled_fs_page = automation._wait_for_stable_screen(
-                                        max_polls=4, interval=0.25
+                                    settled_fs_page = (
+                                        automation._wait_for_stable_screen(
+                                            max_polls=4, interval=0.25
+                                        )
                                     )
                                     rechecked_current_fs_page = True
 
@@ -1531,8 +1534,10 @@ def main():
             try:
                 _db_check = DatabaseManager(_resolve_database_url(config))
                 if _db_check.connect():
-                    _run_mode_for_check = 'tax-mode' if args.tax else None
-                    prev_run_id = _db_check.get_previous_run_id(run_mode=_run_mode_for_check)
+                    _run_mode_for_check = "tax-mode" if args.tax else None
+                    prev_run_id = _db_check.get_previous_run_id(
+                        run_mode=_run_mode_for_check
+                    )
                     if prev_run_id > 0:
                         if args.tax:
                             db_snapshot = _db_check.load_tax_snapshot(prev_run_id)
@@ -1541,16 +1546,16 @@ def main():
                         if db_snapshot:
                             previous_data = db_snapshot
                             using_db_snapshot = True
-                            logger.info(f'  Using DB snapshot from run {prev_run_id}')
+                            logger.info(f"  Using DB snapshot from run {prev_run_id}")
                     _db_check.close()
             except Exception as _db_snap_err:
-                logger.debug('  DB snapshot load failed: %s', _db_snap_err)
+                logger.debug("  DB snapshot load failed: %s", _db_snap_err)
 
         if not previous_data:
             # Fall back to JSON archive
             previous_data = latest_snapshot_data
             if previous_data:
-                logger.info('  Using JSON archive snapshot (no DB history yet)')
+                logger.info("  Using JSON archive snapshot (no DB history yet)")
 
         if args.compare_snapshot:
             try:

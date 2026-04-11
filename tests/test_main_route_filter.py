@@ -81,12 +81,7 @@ def test_database_url_normalizes_sqlalchemy_prefix():
 def test_fd_output_has_fares_requires_actual_fare_rows():
     assert _fd_output_has_fares("") is False
     assert _fd_output_has_fares("NO FARES FOUND") is False
-    assert (
-        _fd_output_has_fares(
-            "DACMCT\n  1  BG  100.00   YOW      Y\nEND"
-        )
-        is True
-    )
+    assert _fd_output_has_fares("DACMCT\n  1  BG  100.00   YOW      Y\nEND") is True
 
 
 def test_should_run_fs_extraction_skips_when_fd_has_no_fares():

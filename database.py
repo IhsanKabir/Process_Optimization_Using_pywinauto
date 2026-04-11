@@ -172,9 +172,18 @@ class DatabaseManager:
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                 (
-                                    run_id, route, airline, rbd, "OW", currency,
-                                    base_fare, total_taxes, total_fare, fare_basis,
-                                    is_sold_out, is_unsaleable,
+                                    run_id,
+                                    route,
+                                    airline,
+                                    rbd,
+                                    "OW",
+                                    currency,
+                                    base_fare,
+                                    total_taxes,
+                                    total_fare,
+                                    fare_basis,
+                                    is_sold_out,
+                                    is_unsaleable,
                                 ),
                             )
 
@@ -195,9 +204,18 @@ class DatabaseManager:
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                 (
-                                    run_id, route, airline, rbd, "RT", currency,
-                                    base_fare, total_taxes, total_fare, fare_basis,
-                                    is_sold_out, is_unsaleable,
+                                    run_id,
+                                    route,
+                                    airline,
+                                    rbd,
+                                    "RT",
+                                    currency,
+                                    base_fare,
+                                    total_taxes,
+                                    total_fare,
+                                    fare_basis,
+                                    is_sold_out,
+                                    is_unsaleable,
                                 ),
                             )
 
@@ -209,7 +227,9 @@ class DatabaseManager:
             logger.error(f"  [DB] Failed to insert fare records: {e}")
             return -1
 
-    def record_tax_run(self, tax_data: Dict[str, Any], run_mode: str = "tax-mode") -> int:
+    def record_tax_run(
+        self, tax_data: Dict[str, Any], run_mode: str = "tax-mode"
+    ) -> int:
         """
         Persist tax rate data extracted from FTAX commands.
 
@@ -290,7 +310,6 @@ class DatabaseManager:
             logger.error(f"  [DB] Failed to insert tax records: {e}")
             return -1
 
-
     def get_previous_run_id(self, current_run_id=None, run_mode=None):
         """Return run_id of the most recent fare run before current_run_id.
         Returns -1 if no previous run found."""
@@ -342,7 +361,17 @@ class DatabaseManager:
                 rows = cur.fetchall()
 
             snapshot = {}
-            for route, airline, rbd, journey_type, currency, base_fare, fare_basis, is_sold_out, is_unsaleable in rows:
+            for (
+                route,
+                airline,
+                rbd,
+                journey_type,
+                currency,
+                base_fare,
+                fare_basis,
+                is_sold_out,
+                is_unsaleable,
+            ) in rows:
                 file_key = f"{airline}_{route}"
                 rbd_key = f"{rbd} (Unsaleable)" if is_unsaleable else rbd
 
@@ -352,22 +381,31 @@ class DatabaseManager:
                 if rbd_key not in snapshot[file_key]["rbd_data"]:
                     snapshot[file_key]["rbd_data"][rbd_key] = {
                         "rbd": rbd,
-                        "ow_fare": None, "rt_fare": None,
-                        "ow_fare_basis": None, "rt_fare_basis": None,
-                        "ow_sold_out": False, "rt_sold_out": False,
+                        "ow_fare": None,
+                        "rt_fare": None,
+                        "ow_fare_basis": None,
+                        "rt_fare_basis": None,
+                        "ow_sold_out": False,
+                        "rt_sold_out": False,
                     }
 
                 entry = snapshot[file_key]["rbd_data"][rbd_key]
                 if journey_type == "OW":
-                    entry["ow_fare"] = float(base_fare) if base_fare and not is_sold_out else None
+                    entry["ow_fare"] = (
+                        float(base_fare) if base_fare and not is_sold_out else None
+                    )
                     entry["ow_fare_basis"] = fare_basis
                     entry["ow_sold_out"] = bool(is_sold_out)
                 elif journey_type == "RT":
-                    entry["rt_fare"] = float(base_fare) if base_fare and not is_sold_out else None
+                    entry["rt_fare"] = (
+                        float(base_fare) if base_fare and not is_sold_out else None
+                    )
                     entry["rt_fare_basis"] = fare_basis
                     entry["rt_sold_out"] = bool(is_sold_out)
 
-            logger.info(f"  [DB] Loaded fare snapshot from run {run_id}: {len(snapshot)} routes")
+            logger.info(
+                f"  [DB] Loaded fare snapshot from run {run_id}: {len(snapshot)} routes"
+            )
             return snapshot
 
         except Exception as e:
@@ -394,31 +432,49 @@ class DatabaseManager:
             tax_index = {}
             section_index = {}
 
-            for airport, tax_code, tax_name, category, subcategory, condition, currency, amount, status in rows:
+            for (
+                airport,
+                tax_code,
+                tax_name,
+                category,
+                subcategory,
+                condition,
+                currency,
+                amount,
+                status,
+            ) in rows:
                 if airport not in snapshot:
                     snapshot[airport] = {"taxes": []}
 
                 tax_key = (airport, tax_code)
                 if tax_key not in tax_index:
-                    snapshot[airport]["taxes"].append({"code": tax_code, "name": tax_name, "sections": []})
+                    snapshot[airport]["taxes"].append(
+                        {"code": tax_code, "name": tax_name, "sections": []}
+                    )
                     tax_index[tax_key] = len(snapshot[airport]["taxes"]) - 1
 
                 tax_entry = snapshot[airport]["taxes"][tax_index[tax_key]]
 
                 sec_key = (airport, tax_code, category, subcategory)
                 if sec_key not in section_index:
-                    tax_entry["sections"].append({"category": category, "subcategory": subcategory, "rates": []})
+                    tax_entry["sections"].append(
+                        {"category": category, "subcategory": subcategory, "rates": []}
+                    )
                     section_index[sec_key] = len(tax_entry["sections"]) - 1
 
                 section = tax_entry["sections"][section_index[sec_key]]
-                section["rates"].append({
-                    "condition": condition or "",
-                    "currency": currency or "",
-                    "amount": float(amount) if amount else None,
-                    "status": status or "",
-                })
+                section["rates"].append(
+                    {
+                        "condition": condition or "",
+                        "currency": currency or "",
+                        "amount": float(amount) if amount else None,
+                        "status": status or "",
+                    }
+                )
 
-            logger.info(f"  [DB] Loaded tax snapshot from run {run_id}: {len(snapshot)} airports")
+            logger.info(
+                f"  [DB] Loaded tax snapshot from run {run_id}: {len(snapshot)} airports"
+            )
             return snapshot
 
         except Exception as e:
