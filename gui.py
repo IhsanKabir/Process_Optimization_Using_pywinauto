@@ -10,13 +10,16 @@ Run directly:  python gui.py
 """
 
 import argparse
+import json
 import logging
 import os
 import queue
 import re
+import shutil
 import sys
 import threading
 import tkinter as tk
+import urllib.request
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 # ── Thread-safe log bridge ────────────────────────────────────────────────────
@@ -63,6 +66,52 @@ def _parse_cmd(cmd_str: str):
     return cmd_str, ""
 
 
+# ── Update checker ───────────────────────────────────────────────────────────
+
+GITHUB_RELEASES_API = (
+    "https://api.github.com/repos/IhsanKabir/"
+    "Process_Optimization_Using_pywinauto/releases/latest"
+)
+
+
+def _parse_version(tag: str) -> tuple:
+    """'v1.3.0' → (1, 3, 0)  — returns (0,) on failure."""
+    try:
+        return tuple(int(x) for x in tag.lstrip("v").split("."))
+    except Exception:
+        return (0,)
+
+
+def _check_for_update(current_version: str) -> dict | None:
+    """Return release dict if a newer version is available, else None."""
+    try:
+        req = urllib.request.Request(
+            GITHUB_RELEASES_API,
+            headers={"User-Agent": "TravelportAuto-updater/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        latest_tag = data.get("tag_name", "")
+        if _parse_version(latest_tag) > _parse_version(current_version):
+            # Find the .exe asset
+            exe_url = next(
+                (
+                    a["browser_download_url"]
+                    for a in data.get("assets", [])
+                    if a["name"].endswith(".exe")
+                ),
+                None,
+            )
+            return {
+                "version": latest_tag,
+                "notes": data.get("body", ""),
+                "exe_url": exe_url,
+            }
+    except Exception:
+        pass
+    return None
+
+
 # ── Main GUI ──────────────────────────────────────────────────────────────────
 
 
@@ -83,6 +132,7 @@ class TravelportGUI:
         self._run_thread: threading.Thread | None = None
         self._last_report: str | None = None
         self._stop_overlay: tk.Toplevel | None = None
+        self._update_info: dict | None = None
         self._feedback_dialog: tk.Toplevel | None = None
         self._feedback_thread: threading.Thread | None = None
         self._feedback_submit_btn = None
@@ -103,6 +153,8 @@ class TravelportGUI:
         self._setup_logging()
         self.root.bind_all("<Escape>", lambda *_: self._stop())
         self._poll()
+        # Check for updates silently in the background
+        threading.Thread(target=self._bg_update_check, daemon=True).start()
 
     # ── Theme ─────────────────────────────────────────────────────────────────
 
@@ -145,6 +197,20 @@ class TravelportGUI:
             fg="#5a7f9a",
             font=("Segoe UI", 9),
         ).pack(side="right")
+        # Update badge — hidden until a newer version is detected
+        self._update_btn = tk.Button(
+            bar,
+            text="",
+            bg="#e8a500",
+            fg="#1a1a1a",
+            font=("Segoe UI", 8, "bold"),
+            relief="flat",
+            cursor="hand2",
+            command=self._show_update_dialog,
+            padx=8,
+            pady=2,
+        )
+        # Not packed yet — shown only when update is available
 
         # Body
         body = tk.Frame(self.root, bg="#f2f2f2")
@@ -465,6 +531,14 @@ class TravelportGUI:
                     self._on_done(payload)
                 elif kind == "feedback_done":
                     self._on_feedback_done(payload)
+                elif kind == "update_available":
+                    self._on_update_available(payload)
+                elif kind == "update_restart":
+                    self._on_update_restart()
+                elif kind == "update_open_browser":
+                    import webbrowser
+
+                    webbrowser.open(payload)
         except queue.Empty:
             pass
         self.root.after(80, self._poll)
@@ -574,6 +648,141 @@ class TravelportGUI:
             self.no_changes_var.set(True)
         else:
             self.no_changes_var.set(False)
+
+    # ── Auto-update ───────────────────────────────────────────────────────────
+
+    def _bg_update_check(self):
+        """Run in background thread; posts result to queue."""
+        info = _check_for_update(self.VERSION)
+        if info:
+            self.log_queue.put(("update_available", info))
+
+    def _on_update_available(self, info: dict):
+        self._update_info = info
+        self._update_btn.configure(text=f"  ↑ Update {info['version']}  ")
+        self._update_btn.pack(side="right", padx=(0, 8))
+
+    def _show_update_dialog(self):
+        info = self._update_info
+        if not info:
+            return
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"Update Available — {info['version']}")
+        dlg.geometry("480x360")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.configure(bg="#f2f2f2")
+
+        body = tk.Frame(dlg, bg="#f2f2f2", padx=20, pady=16)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(
+            body,
+            text=f"TravelportAuto {info['version']} is available",
+            bg="#f2f2f2",
+            fg="#0f3758",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            body,
+            text=f"You are on {self.VERSION}",
+            bg="#f2f2f2",
+            fg="#888",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(2, 12))
+
+        tk.Label(
+            body, text="Release notes:", bg="#f2f2f2", font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w")
+        notes_box = scrolledtext.ScrolledText(
+            body, wrap="word", font=("Segoe UI", 9), height=10, state="normal"
+        )
+        notes_box.insert("end", info.get("notes") or "(no release notes)")
+        notes_box.configure(state="disabled")
+        notes_box.pack(fill="both", expand=True, pady=(4, 12))
+
+        progress_var = tk.StringVar(value="")
+        tk.Label(
+            body,
+            textvariable=progress_var,
+            bg="#f2f2f2",
+            fg="#555",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", pady=(0, 6))
+
+        btn_row = tk.Frame(body, bg="#f2f2f2")
+        btn_row.pack(fill="x")
+        ttk.Button(btn_row, text="Cancel", command=dlg.destroy).pack(side="right")
+        update_btn = ttk.Button(
+            btn_row,
+            text="Download & Update",
+            command=lambda: self._start_update(info, dlg, progress_var, update_btn),
+        )
+        update_btn.pack(side="right", padx=(0, 6))
+
+    def _start_update(self, info, dlg, progress_var, btn):
+        if not info.get("exe_url"):
+            messagebox.showerror(
+                "Update Error", "No download link found for this release."
+            )
+            return
+        btn.configure(state="disabled")
+        progress_var.set("Downloading…")
+        threading.Thread(
+            target=self._download_and_replace,
+            args=(info, dlg, progress_var),
+            daemon=True,
+        ).start()
+
+    def _download_and_replace(self, info, dlg, progress_var):
+        """Download new exe, write an updater batch, then restart."""
+        try:
+            # Work out paths
+            if getattr(sys, "frozen", False):
+                current_exe = sys.executable
+            else:
+                # Dev mode — just open the releases page
+                self.log_queue.put(("update_open_browser", info.get("exe_url", "")))
+                return
+
+            folder = os.path.dirname(current_exe)
+            new_exe = os.path.join(folder, "TravelportAuto_update.exe")
+
+            # Download with simple progress reporting
+            def _reporthook(count, block_size, total):
+                if total > 0:
+                    pct = min(int(count * block_size * 100 / total), 100)
+                    progress_var.set(f"Downloading… {pct}%")
+
+            urllib.request.urlretrieve(info["exe_url"], new_exe, _reporthook)
+            progress_var.set("Installing…")
+
+            # Write batch updater — runs after this process exits
+            bat = os.path.join(folder, "_tpa_update.bat")
+            with open(bat, "w") as f:
+                f.write(
+                    "@echo off\n"
+                    "timeout /t 2 /nobreak > nul\n"
+                    f'move /y "{new_exe}" "{current_exe}"\n'
+                    f'start "" "{current_exe}"\n'
+                    'del "%~f0"\n'
+                )
+
+            import subprocess
+
+            subprocess.Popen(
+                ["cmd", "/c", bat],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+            )
+            self.log_queue.put(("update_restart", None))
+
+        except Exception as exc:
+            progress_var.set(f"Error: {exc}")
+
+    def _on_update_restart(self):
+        self.root.destroy()
 
     # ── Button actions ────────────────────────────────────────────────────────
 
@@ -913,7 +1122,7 @@ class TravelportGUI:
         self.progress.configure(mode="determinate", value=100)
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        self._set_step(len(self.STEPS))
+        self._set_step(len(self.STEPS) + 1)  # +1 so last step shows ✓ not bold
 
         if result_path and os.path.exists(result_path):
             self._last_report = result_path
