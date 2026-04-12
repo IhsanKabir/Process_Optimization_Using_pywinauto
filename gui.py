@@ -84,7 +84,7 @@ class TravelportGUI:
         self._apply_theme()
         self._build_ui()
         self._setup_logging()
-        self.root.bind("<Escape>", lambda *_: self._stop())
+        self.root.bind_all("<Escape>", lambda *_: self._stop())
         self._poll()
 
     # ── Theme ─────────────────────────────────────────────────────────────────
@@ -149,6 +149,7 @@ class TravelportGUI:
         tk.Label(parent, text="Manual: copy terminal output first,\nthen press Start",
                  bg="#f2f2f2", fg="#999",
                  font=("Segoe UI", 7, "italic"), justify="left").pack(anchor="w")
+        self.mode_var.trace_add("write", self._on_mode_change)
 
         self._section(parent, "Speed")
         self.speed_var = tk.StringVar(value="normal")
@@ -163,7 +164,7 @@ class TravelportGUI:
                  font=("Segoe UI", 9)).pack(anchor="w")
         self.route_var = tk.StringVar()
         ttk.Entry(parent, textvariable=self.route_var).pack(fill="x")
-        tk.Label(parent, text="e.g. DAC-MCT  (blank = all routes)",
+        tk.Label(parent, text="e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)",
                  bg="#f2f2f2", fg="#999",
                  font=("Segoe UI", 7, "italic")).pack(anchor="w")
 
@@ -171,7 +172,7 @@ class TravelportGUI:
                  font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
         self.airline_var = tk.StringVar()
         ttk.Entry(parent, textvariable=self.airline_var).pack(fill="x")
-        tk.Label(parent, text="e.g. BG  or  BG,BS  (blank = all)",
+        tk.Label(parent, text="e.g. BG or BG,BS,EK  (blank = all)",
                  bg="#f2f2f2", fg="#999",
                  font=("Segoe UI", 7, "italic")).pack(anchor="w")
 
@@ -181,7 +182,7 @@ class TravelportGUI:
         ttk.Entry(parent, textvariable=self.limit_var, width=8).pack(anchor="w")
 
         self._section(parent, "Options")
-        self.checkpoint_var = tk.BooleanVar(value=False)
+        self.checkpoint_var = tk.BooleanVar(value=True)
         self.no_changes_var = tk.BooleanVar(value=False)
         self.only_fd_var    = tk.BooleanVar(value=False)
         self.only_yq_var    = tk.BooleanVar(value=False)
@@ -450,6 +451,14 @@ class TravelportGUI:
         self.log_text.insert("end", text + "\n", tag)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+    # ── Mode change handler ───────────────────────────────────────────────────
+
+    def _on_mode_change(self, *_):
+        if self.mode_var.get() == "quickpaste":
+            self.no_changes_var.set(True)
+        else:
+            self.no_changes_var.set(False)
 
     # ── Button actions ────────────────────────────────────────────────────────
 
