@@ -80,6 +80,13 @@ class TravelportGUI:
         self.stop_event = threading.Event()
         self._run_thread: threading.Thread | None = None
         self._last_report: str | None = None
+        self._feedback_dialog: tk.Toplevel | None = None
+        self._feedback_thread: threading.Thread | None = None
+        self._feedback_submit_btn = None
+        self._feedback_status_var = tk.StringVar(value="")
+        self._feedback_category_var = tk.StringVar(value="bug")
+        self._feedback_subject_var = tk.StringVar()
+        self._feedback_message_text = None
 
         # Route checklist state
         self._current_row: str | None = None   # treeview iid of the running row
@@ -333,6 +340,11 @@ class TravelportGUI:
                                    state="disabled")
         self.open_btn.pack(side="left", padx=4)
 
+        self.feedback_btn = ttk.Button(
+            bar, text="✉  Feedback", command=self._open_feedback_dialog, width=14
+        )
+        self.feedback_btn.pack(side="left", padx=4)
+
         self.status_label = tk.Label(bar, text="Ready",
                                      bg="#dde3e8", fg="#555",
                                      font=("Segoe UI", 9))
@@ -360,6 +372,8 @@ class TravelportGUI:
                     self._handle_log(payload)
                 elif kind == "done":
                     self._on_done(payload)
+                elif kind == "feedback_done":
+                    self._on_feedback_done(payload)
         except queue.Empty:
             pass
         self.root.after(80, self._poll)
@@ -525,6 +539,170 @@ class TravelportGUI:
             os.startfile(self._last_report)
         else:
             messagebox.showinfo("No Report", "Report file not found.")
+
+    def _open_feedback_dialog(self):
+        if self._feedback_dialog and self._feedback_dialog.winfo_exists():
+            self._feedback_dialog.lift()
+            self._feedback_dialog.focus_force()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Send Feedback")
+        dialog.geometry("520x430")
+        dialog.minsize(460, 360)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.configure(bg="#f2f2f2")
+        dialog.protocol("WM_DELETE_WINDOW", self._close_feedback_dialog)
+        self._feedback_dialog = dialog
+        self._feedback_status_var.set("")
+        self._feedback_subject_var.set("")
+        self._feedback_category_var.set("bug")
+
+        body = tk.Frame(dialog, bg="#f2f2f2", padx=12, pady=12)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(
+            body,
+            text="Send Feedback To Admin",
+            bg="#f2f2f2",
+            fg="#0f3758",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            body,
+            text="Use this for bug reports, suggestions, or questions.",
+            bg="#f2f2f2",
+            fg="#666",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(2, 12))
+
+        tk.Label(body, text="Type", bg="#f2f2f2", font=("Segoe UI", 9)).pack(anchor="w")
+        ttk.Combobox(
+            body,
+            textvariable=self._feedback_category_var,
+            values=("bug", "suggestion", "question", "other"),
+            state="readonly",
+        ).pack(fill="x", pady=(0, 8))
+
+        tk.Label(body, text="Subject", bg="#f2f2f2", font=("Segoe UI", 9)).pack(anchor="w")
+        ttk.Entry(body, textvariable=self._feedback_subject_var).pack(
+            fill="x", pady=(0, 8)
+        )
+
+        tk.Label(body, text="Message", bg="#f2f2f2", font=("Segoe UI", 9)).pack(anchor="w")
+        self._feedback_message_text = scrolledtext.ScrolledText(
+            body,
+            wrap="word",
+            font=("Segoe UI", 9),
+            height=11,
+        )
+        self._feedback_message_text.pack(fill="both", expand=True, pady=(0, 8))
+
+        tk.Label(
+            body,
+            textvariable=self._feedback_status_var,
+            bg="#f2f2f2",
+            fg="#b73632",
+            font=("Segoe UI", 8),
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", pady=(0, 8))
+
+        footer = tk.Frame(body, bg="#f2f2f2")
+        footer.pack(fill="x")
+
+        tk.Label(
+            footer,
+            text="Delivered through the configured agent backend.",
+            bg="#f2f2f2",
+            fg="#666",
+            font=("Segoe UI", 8),
+        ).pack(side="left")
+
+        ttk.Button(footer, text="Cancel", command=self._close_feedback_dialog).pack(
+            side="right", padx=(6, 0)
+        )
+        self._feedback_submit_btn = ttk.Button(
+            footer, text="Submit", command=self._submit_feedback
+        )
+        self._feedback_submit_btn.pack(side="right")
+
+        self._feedback_message_text.focus_set()
+
+    def _close_feedback_dialog(self):
+        if self._feedback_dialog and self._feedback_dialog.winfo_exists():
+            self._feedback_dialog.grab_release()
+            self._feedback_dialog.destroy()
+        self._feedback_dialog = None
+        self._feedback_submit_btn = None
+        self._feedback_message_text = None
+        self._feedback_status_var.set("")
+
+    def _submit_feedback(self):
+        if not self._feedback_message_text:
+            return
+
+        category = self._feedback_category_var.get().strip() or "bug"
+        subject = self._feedback_subject_var.get().strip()
+        message = self._feedback_message_text.get("1.0", "end").strip()
+
+        if not subject:
+            self._feedback_status_var.set("Please enter a short subject.")
+            return
+        if not message:
+            self._feedback_status_var.set("Please enter your feedback message.")
+            return
+
+        if self._feedback_submit_btn:
+            self._feedback_submit_btn.configure(state="disabled")
+        self._feedback_status_var.set("Sending...")
+
+        context = {
+            "mode": self.mode_var.get(),
+            "route_filter": self.route_var.get().strip(),
+            "airline_filter": self.airline_var.get().strip(),
+        }
+
+        self._feedback_thread = threading.Thread(
+            target=self._feedback_worker,
+            args=(category, subject, message, context),
+            daemon=True,
+        )
+        self._feedback_thread.start()
+
+    def _feedback_worker(
+        self,
+        category: str,
+        subject: str,
+        message: str,
+        context: dict[str, str],
+    ):
+        try:
+            from feedback_client import submit_feedback
+
+            result = submit_feedback(
+                category=category,
+                subject=subject,
+                message=message,
+                app_version=self.VERSION,
+                context=context,
+            )
+            self.log_queue.put(("feedback_done", {"ok": True, "result": result}))
+        except Exception as exc:
+            self.log_queue.put(("feedback_done", {"ok": False, "error": str(exc)}))
+
+    def _on_feedback_done(self, payload: dict):
+        if payload.get("ok"):
+            self._close_feedback_dialog()
+            messagebox.showinfo(
+                "Feedback Sent", "Your feedback was sent successfully to admin."
+            )
+            return
+
+        if self._feedback_submit_btn:
+            self._feedback_submit_btn.configure(state="normal")
+        self._feedback_status_var.set(payload.get("error", "Could not send feedback."))
 
     # ── Args builder ──────────────────────────────────────────────────────────
 

@@ -201,6 +201,7 @@ POST   /api/travelport-agent/jobs/{id}/fail
 POST   /api/travelport-agent/jobs/{id}/upload-report
 POST   /api/travelport-agent/jobs/{id}/upload-log
 POST   /api/travelport-agent/jobs/{id}/stop-ack
+POST   /api/travelport-agent/feedback
 ```
 
 Website-side user endpoints:
@@ -213,7 +214,8 @@ POST   /api/travelport/jobs/{id}/stop
 GET    /api/travelport/devices
 POST   /api/travelport/devices/{id}/block
 POST   /api/travelport/devices/{id}/unblock
-```
+GET    /api/travelport-agent/feedback
+``` 
 
 ## EXE Name
 

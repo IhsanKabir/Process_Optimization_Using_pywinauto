@@ -87,3 +87,30 @@ CLUSTER BY airport_code, tax_code, status
 OPTIONS (
     description = 'GDS airport tax rates from Travelport FTAX command extraction runs'
 );
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ops_travelport_feedback
+--   One row per feedback submission sent from the desktop GUI.
+--   Read by the admin feedback page in the website/backend.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS `aeropulseintelligence.aviation_intel.ops_travelport_feedback` (
+    feedback_id       STRING    NOT NULL,
+    submitted_at_utc  TIMESTAMP NOT NULL,
+    category          STRING    NOT NULL,
+    subject           STRING    NOT NULL,
+    message           STRING    NOT NULL,
+    status            STRING    NOT NULL,   -- new | reviewed | resolved
+    app_version       STRING,
+    device_id         STRING,
+    device_name       STRING,
+    hostname          STRING,
+    os_version        STRING,
+    source            STRING,               -- desktop_gui
+    context_json      STRING,               -- serialized UI context for admin review
+    admin_note        STRING
+)
+PARTITION BY DATE(submitted_at_utc)
+CLUSTER BY status, category
+OPTIONS (
+    description = 'Desktop user feedback submitted from TravelportAuto and reviewed in admin'
+);
