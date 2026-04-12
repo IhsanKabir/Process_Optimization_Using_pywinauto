@@ -2066,9 +2066,9 @@ def _write_tax_breakdown_sheet(
             q = fs_taxes.get("q_charge", 0)
 
             for label, val in [
-                ("YQ (Carrier Surcharge)", yq),
-                ("YR (Carrier Surcharge)", yr),
-                ("Q (Fuel Surcharge)", q),
+                ("YQ", yq),
+                ("YR", yr),
+                ("Q",  q),
             ]:
                 if val > 0:
                     c1 = ws.cell(row=row, column=col_offset, value=label)
@@ -2182,7 +2182,7 @@ def _write_yq_charges_sheet(
     ws.cell(
         row=current_row,
         column=1,
-        value="YQ = Carrier Imposed Surcharge  |  YR = Carrier Imposed Surcharge  |  Q = Fuel Surcharge",
+        value="GDS surcharge codes extracted from FS command output",
     ).font = Font(name="Calibri", size=9, italic=True, color="595959")
     current_row += 2
 
@@ -2276,9 +2276,9 @@ def _write_yq_charges_sheet(
             q = fs_taxes.get("q_charge", 0) or 0
 
             for label, val, fill in [
-                ("YQ  —  Carrier Surcharge", yq, YQ_YQ_FILL),
-                ("YR  —  Carrier Surcharge", yr, YQ_YR_FILL),
-                ("Q   —  Fuel Surcharge",    q,  YQ_Q_FILL),
+                ("YQ", yq, YQ_YQ_FILL),
+                ("YR", yr, YQ_YR_FILL),
+                ("Q",  q,  YQ_Q_FILL),
             ]:
                 c1 = ws.cell(row=row, column=col_offset, value=label)
                 c1.font = YQ_LABEL_FONT
