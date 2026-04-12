@@ -866,12 +866,17 @@ class TravelportGUI:
             urllib.request.urlretrieve(info["exe_url"], new_exe, _reporthook)
             progress_var.set("Installing…")
 
-            # Write batch updater — runs after this process exits
+            # Write batch updater — runs after this process exits.
+            # 5-second wait gives the old PyInstaller process time to fully
+            # clean up its _MEI* temp folder before we start the new exe.
+            # We also delete any leftover _MEI* dirs ourselves to avoid the
+            # "Failed to load Python DLL" error on stale extractions.
             bat = os.path.join(folder, "_tpa_update.bat")
             with open(bat, "w") as f:
                 f.write(
                     "@echo off\n"
-                    "timeout /t 2 /nobreak > nul\n"
+                    "timeout /t 5 /nobreak > nul\n"
+                    'for /d %%i in ("%TEMP%\\_MEI*") do rd /s /q "%%i" 2>nul\n'
                     f'move /y "{new_exe}" "{current_exe}"\n'
                     f'start "" "{current_exe}"\n'
                     'del "%~f0"\n'
