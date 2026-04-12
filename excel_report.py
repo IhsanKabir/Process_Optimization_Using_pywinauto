@@ -1108,6 +1108,19 @@ def generate_report(
     _write_currency_sheet(ws_cur, all_route_data, airline_names, city_names)
     _auto_fit_columns(ws_cur)
 
+    # ── YQ/YR/Q Charges Sheet ───────────────────────────
+    if not only_currency:
+        ws_yq = wb.create_sheet("YQ-YR-Q Charges")
+        _write_yq_charges_sheet(
+            ws_yq,
+            all_route_data,
+            _group_by_international(all_route_data, domestic_airports),
+            airline_names,
+            city_names,
+            domestic_airports,
+        )
+        _auto_fit_columns(ws_yq)
+
     # ── Tax Breakdowns Sheet ────────────────────────────
     if not only_currency:
         ws_tax = wb.create_sheet("Tax Breakdowns")
@@ -2123,6 +2136,174 @@ def _write_tax_breakdown_sheet(
                 c2.number_format = "#,##0.00"
                 c2.alignment = Alignment(horizontal="right")
                 row += 1
+
+            table_height = row - table_start_row
+            max_rows_in_group = max(max_rows_in_group, table_height)
+            col_offset += TABLE_WIDTH + GAP
+
+        current_row = table_start_row + max_rows_in_group + 2
+
+
+# ── YQ/YR/Q Charges Sheet ────────────────────────────────
+YQ_HEADER_FILL = PatternFill(start_color="375623", end_color="375623", fill_type="solid")
+YQ_HEADER_FONT = Font(name="Calibri", bold=True, size=10, color="FFFFFF")
+YQ_YQ_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+YQ_YR_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+YQ_Q_FILL = PatternFill(start_color="DEEBF7", end_color="DEEBF7", fill_type="solid")
+YQ_SUBTOTAL_FILL = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
+YQ_LABEL_FONT = Font(name="Calibri", size=10)
+YQ_SUBTOTAL_FONT = Font(name="Calibri", bold=True, size=11)
+
+
+def _write_yq_charges_sheet(
+    ws, all_route_data, sections, airline_names, city_names, domestic_airports
+):
+    """
+    Dedicated sheet showing only YQ / YR / Q (carrier + fuel surcharges) per route/airline.
+
+    Layout per section (grouped by international destination):
+        YQ (Carrier)    246      YQ (Carrier)    318
+        YR (Carrier)      0      YR (Carrier)    100
+        Q  (Fuel)         0      Q  (Fuel)         0
+        Total Charges   246      Total Charges   418
+    """
+    current_row = 1
+
+    ws.cell(row=current_row, column=1, value="YQ / YR / Q Surcharges by Route & Airline").font = Font(
+        name="Calibri", bold=True, size=16
+    )
+    current_row += 1
+    ws.cell(
+        row=current_row,
+        column=1,
+        value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}",
+    ).font = Font(name="Calibri", size=10, italic=True)
+    current_row += 1
+    ws.cell(
+        row=current_row,
+        column=1,
+        value="YQ = Carrier Imposed Surcharge  |  YR = Carrier Imposed Surcharge  |  Q = Fuel Surcharge",
+    ).font = Font(name="Calibri", size=9, italic=True, color="595959")
+    current_row += 2
+
+    TABLE_WIDTH = 2
+    GAP = 1
+
+    dom_order = {code: i for i, code in enumerate(domestic_airports)}
+
+    for section_key in sorted(sections.keys()):
+        entries = sections[section_key]
+        intl_code, direction = section_key
+
+        entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+
+        yq_entries = []
+        for airline, domestic, route_key, route_info in entries:
+            fs_taxes = route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
+            if not fs_taxes:
+                continue
+            yq = fs_taxes.get("yq_charge", 0) or 0
+            yr = fs_taxes.get("yr_charge", 0) or 0
+            q = fs_taxes.get("q_charge", 0) or 0
+            if yq > 0 or yr > 0 or q > 0:
+                yq_entries.append((airline, domestic, route_key, route_info))
+
+        if not yq_entries:
+            continue
+
+        intl_name = city_names.get(intl_code, intl_code)
+        arrow = "→" if direction == "outbound" else "←"
+        section_title = f"{arrow} {intl_name} ({intl_code})"
+
+        ws.cell(row=current_row, column=1, value=section_title).font = Font(
+            name="Calibri", bold=True, size=14
+        )
+        ws.cell(row=current_row, column=1).fill = ROUTE_FILL
+        total_cols = len(yq_entries) * (TABLE_WIDTH + GAP) - GAP
+        if total_cols > 1:
+            ws.merge_cells(
+                start_row=current_row,
+                start_column=1,
+                end_row=current_row,
+                end_column=total_cols,
+            )
+        current_row += 1
+
+        table_start_row = current_row
+        max_rows_in_group = 0
+        col_offset = 1
+
+        for airline, domestic, route_key, route_info in yq_entries:
+            fs_taxes = route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
+            currency = route_info.get("currency", "USD") if isinstance(route_info, dict) else "USD"
+            al_name = airline_names.get(airline, airline)
+
+            row = table_start_row
+
+            if direction == "outbound":
+                table_title = f"{al_name} / {domestic}-{intl_code}"
+            else:
+                table_title = f"{al_name} / {intl_code}-{domestic}"
+
+            title_cell = ws.cell(row=row, column=col_offset, value=table_title)
+            title_cell.font = Font(name="Calibri", bold=True, size=11)
+            ws.merge_cells(
+                start_row=row, start_column=col_offset,
+                end_row=row, end_column=col_offset + TABLE_WIDTH - 1,
+            )
+            row += 1
+
+            base_cur = fs_taxes.get("base_currency", currency)
+            exch_rate = fs_taxes.get("exchange_rate", 0)
+            info_font = Font(name="Calibri", size=9, italic=True)
+            ws.cell(row=row, column=col_offset, value=f"Base: {base_cur or 'N/A'}").font = info_font
+            ws.cell(
+                row=row, column=col_offset + 1,
+                value=f"Rate: {exch_rate:.4f}" if exch_rate else "Rate: N/A"
+            ).font = info_font
+            row += 1
+
+            _styled_cell(ws, row, col_offset, "Charge", YQ_HEADER_FONT, YQ_HEADER_FILL)
+            _styled_cell(
+                ws, row, col_offset + 1, "Amount (BDT)",
+                YQ_HEADER_FONT, YQ_HEADER_FILL,
+                alignment=Alignment(horizontal="right"),
+            )
+            row += 1
+
+            yq = fs_taxes.get("yq_charge", 0) or 0
+            yr = fs_taxes.get("yr_charge", 0) or 0
+            q = fs_taxes.get("q_charge", 0) or 0
+
+            for label, val, fill in [
+                ("YQ  —  Carrier Surcharge", yq, YQ_YQ_FILL),
+                ("YR  —  Carrier Surcharge", yr, YQ_YR_FILL),
+                ("Q   —  Fuel Surcharge",    q,  YQ_Q_FILL),
+            ]:
+                c1 = ws.cell(row=row, column=col_offset, value=label)
+                c1.font = YQ_LABEL_FONT
+                c1.fill = fill
+                c1.border = THIN_BORDER
+                c2 = ws.cell(row=row, column=col_offset + 1, value=val)
+                c2.font = YQ_LABEL_FONT
+                c2.fill = fill
+                c2.border = THIN_BORDER
+                c2.number_format = "#,##0.00"
+                c2.alignment = Alignment(horizontal="right")
+                row += 1
+
+            charges_total = yq + yr + q
+            c1 = ws.cell(row=row, column=col_offset, value="Total Charges")
+            c1.font = YQ_SUBTOTAL_FONT
+            c1.fill = YQ_SUBTOTAL_FILL
+            c1.border = THIN_BORDER
+            c2 = ws.cell(row=row, column=col_offset + 1, value=charges_total)
+            c2.font = YQ_SUBTOTAL_FONT
+            c2.fill = YQ_SUBTOTAL_FILL
+            c2.border = THIN_BORDER
+            c2.number_format = "#,##0.00"
+            c2.alignment = Alignment(horizontal="right")
+            row += 1
 
             table_height = row - table_start_row
             max_rows_in_group = max(max_rows_in_group, table_height)
