@@ -84,6 +84,7 @@ class TravelportGUI:
         self._apply_theme()
         self._build_ui()
         self._setup_logging()
+        self.root.bind("<Escape>", lambda *_: self._stop())
         self._poll()
 
     # ── Theme ─────────────────────────────────────────────────────────────────
@@ -141,9 +142,13 @@ class TravelportGUI:
         self.mode_var = tk.StringVar(value="fare")
         for label, val in [("Fares", "fare"),
                             ("Taxes", "tax"),
-                            ("Penalties", "penalty")]:
+                            ("Penalties", "penalty"),
+                            ("Manual (paste GDS output)", "quickpaste")]:
             ttk.Radiobutton(parent, text=label,
                             variable=self.mode_var, value=val).pack(anchor="w", pady=1)
+        tk.Label(parent, text="Manual: copy terminal output first,\nthen press Start",
+                 bg="#f2f2f2", fg="#999",
+                 font=("Segoe UI", 7, "italic"), justify="left").pack(anchor="w")
 
         self._section(parent, "Speed")
         self.speed_var = tk.StringVar(value="normal")
@@ -512,11 +517,12 @@ class TravelportGUI:
             limit = int(self.limit_var.get().strip() or "0")
         except ValueError:
             limit = 0
+        is_quickpaste = (mode == "quickpaste")
         return argparse.Namespace(
-            auto=True,
+            auto=(not is_quickpaste),
             tax=(mode == "tax"),
             penalty=(mode == "penalty"),
-            quick_paste=False,
+            quick_paste=is_quickpaste,
             route=self.route_var.get().strip() or None,
             one_direction=False,
             airline=self.airline_var.get().strip() or None,
