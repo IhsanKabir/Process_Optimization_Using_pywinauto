@@ -876,6 +876,9 @@ class TravelportGUI:
                 f.write(
                     "@echo off\n"
                     "timeout /t 5 /nobreak > nul\n"
+                    # Clean _MEI* from the exe's own folder (runtime_tmpdir='.')
+                    # and from %TEMP% (fallback for older installs)
+                    f'for /d %%i in ("{folder}\\_MEI*") do rd /s /q "%%i" 2>nul\n'
                     'for /d %%i in ("%TEMP%\\_MEI*") do rd /s /q "%%i" 2>nul\n'
                     f'move /y "{new_exe}" "{current_exe}"\n'
                     f'start "" "{current_exe}"\n'
