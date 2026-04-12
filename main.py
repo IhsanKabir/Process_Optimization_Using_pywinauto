@@ -133,11 +133,15 @@ def setup_logging():
     root = logging.getLogger("travelport")
     root.setLevel(logging.DEBUG)
 
-    # Console: INFO level, concise format
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(logging.Formatter("%(message)s"))
-    root.addHandler(ch)
+    # Console handler — skip when stdout has been replaced (e.g. by the GUI),
+    # otherwise messages would be delivered twice: once via this StreamHandler
+    # (writing to the redirected stdout → queue) and once via the QueueHandler
+    # already attached to this logger by the GUI.
+    if sys.stdout is sys.__stdout__:
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        ch.setFormatter(logging.Formatter("%(message)s"))
+        root.addHandler(ch)
 
     # File: DEBUG level, full format with timestamps
     fh = logging.FileHandler(log_file, encoding="utf-8")
