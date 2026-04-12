@@ -323,14 +323,14 @@ Per-airline, per-route tables showing:
 - Tax breakdown: `BD:500 UT:300 ...`
 
 ### Tab 3 — YQ-YR-Q Charges *(new in v1.3.0)*
-Dedicated sheet showing **only** the YQ, YR and Q surcharges grouped by route and airline. Useful for quickly comparing carrier surcharge levels across routes without the full tax detail.
+Dedicated sheet showing **only** the YQ, YR and Q surcharge codes extracted from the FS command output, grouped by route and airline. Useful for comparing these charges across routes without the full tax detail.
 
 Columns per airline/route block:
 | Charge | Amount (BDT) |
 |--------|-------------|
-| YQ — Carrier Surcharge | 246.00 |
-| YR — Carrier Surcharge | 0.00 |
-| Q — Fuel Surcharge | 0.00 |
+| YQ | 246.00 |
+| YR | 0.00 |
+| Q | 0.00 |
 | **Total Charges** | **246.00** |
 
 ### Tab 4 — Tax Breakdowns
