@@ -474,11 +474,19 @@ def _should_recheck_same_fs_page(
     )
 
 
-def main():
-    """Main entry point."""
+def run_with_args(args, stop_event=None):
+    """Entry point for the GUI: run extraction with a pre-built args Namespace."""
+    if args.config is None:
+        args.config = DEFAULT_CONFIG
+    return main(prebuilt_args=args, stop_event=stop_event)
+
+
+def main(prebuilt_args=None, stop_event=None):
+    """Main entry point. Called directly from CLI or via run_with_args() from GUI."""
     import time as _time
 
     start_time = _time.time()
+    _stop = stop_event  # shorthand used in command loops below
 
     arg_parser = argparse.ArgumentParser(description="Travelport Data Automation")
     arg_parser.add_argument("--config", "-c", default=DEFAULT_CONFIG)
@@ -569,8 +577,11 @@ def main():
         help="Disable data validation and sanity checks",
     )
 
-    # If running as executable and double clicked (no arguments) default to --auto
-    if len(sys.argv) == 1 and getattr(sys, "frozen", False):
+    if prebuilt_args is not None:
+        # Called from GUI with a ready-made Namespace — skip argparse entirely
+        args = prebuilt_args
+    elif len(sys.argv) == 1 and getattr(sys, "frozen", False):
+        # Double-clicked exe with no flags — default to --auto
         args = arg_parser.parse_args(["--auto"])
     else:
         args = arg_parser.parse_args()
@@ -891,6 +902,9 @@ def main():
             logger.info(f"  Executing {len(commands)} commands...")
 
         for i, cmd in enumerate(command_iter, 1):
+            if _stop and _stop.is_set():
+                logger.info("  [STOP] Stop requested — finishing after this point.")
+                break
             cmd_str = cmd["command"]
             if not tqdm:
                 logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
@@ -991,6 +1005,9 @@ def main():
                 airport_items = list(airport_items)
 
             for index, (airport_code, airport_info) in enumerate(airport_items, 1):
+                if _stop and _stop.is_set():
+                    logger.info("  [STOP] Stop requested — finishing after this point.")
+                    break
                 country_code = airport_info["country"]
 
                 # Only log if not using tqdm
@@ -1137,6 +1154,9 @@ def main():
                 logger.info(f"  Executing {len(commands)} commands...")
 
             for i, cmd in enumerate(command_iter, 1):
+                if _stop and _stop.is_set():
+                    logger.info("  [STOP] Stop requested — finishing after this point.")
+                    break
                 cmd_str = cmd["command"]
 
                 # Skip if already completed (double-check in case of concurrent runs)
