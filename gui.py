@@ -82,6 +82,7 @@ class TravelportGUI:
         self.stop_event = threading.Event()
         self._run_thread: threading.Thread | None = None
         self._last_report: str | None = None
+        self._stop_overlay: tk.Toplevel | None = None
         self._feedback_dialog: tk.Toplevel | None = None
         self._feedback_thread: threading.Thread | None = None
         self._feedback_submit_btn = None
@@ -619,13 +620,17 @@ class TravelportGUI:
             target=self._worker, args=(args,), daemon=True
         )
         self._run_thread.start()
-        # Minimize so Smartpoint has focus — pyautogui sends clicks to screen
-        # coordinates, so TravelportAuto must not be on top while running.
+        # In auto mode, minimize the main window and show a small always-on-top
+        # stop overlay so pyautogui can reach Smartpoint, while ESC / Stop
+        # remain accessible to the user.
         if args.auto:
-            self.root.after(800, self.root.iconify)
+            self.root.after(600, self._show_stop_overlay)
 
     def _stop(self):
+        if not self._run_thread or not self._run_thread.is_alive():
+            return
         self.stop_event.set()
+        self._hide_stop_overlay()
         self.status_label.configure(text="Stopping…", fg="#b73632")
         self.stop_btn.configure(state="disabled")
 
@@ -853,9 +858,52 @@ class TravelportGUI:
 
     # ── Completion ────────────────────────────────────────────────────────────
 
-    def _on_done(self, result_path: str | None):
-        self.root.deiconify()  # Restore window now that Smartpoint interaction is done
+    def _show_stop_overlay(self):
+        """Small always-on-top overlay shown while automation is running.
+        Keeps Stop / ESC accessible without blocking Smartpoint."""
+        if self._stop_overlay and self._stop_overlay.winfo_exists():
+            return
+        ov = tk.Toplevel(self.root)
+        ov.title("")
+        ov.geometry("220x64+20+20")  # top-left corner, out of the way
+        ov.resizable(False, False)
+        ov.attributes("-topmost", True)
+        ov.configure(bg="#1e2a35")
+        ov.protocol("WM_DELETE_WINDOW", lambda: None)  # prevent accidental close
+
+        tk.Label(
+            ov,
+            text="TravelportAuto  — running",
+            bg="#1e2a35",
+            fg="#78b4d4",
+            font=("Segoe UI", 8),
+        ).pack(pady=(8, 2))
+        tk.Button(
+            ov,
+            text="■  Stop  (ESC)",
+            bg="#b73632",
+            fg="white",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            activebackground="#8b1f1d",
+            activeforeground="white",
+            command=self._stop,
+            cursor="hand2",
+        ).pack(fill="x", padx=10, pady=(0, 8))
+
+        ov.bind_all("<Escape>", lambda *_: self._stop())
+        self._stop_overlay = ov
+        self.root.iconify()
+
+    def _hide_stop_overlay(self):
+        if self._stop_overlay and self._stop_overlay.winfo_exists():
+            self._stop_overlay.destroy()
+        self._stop_overlay = None
+        self.root.deiconify()
         self.root.lift()
+
+    def _on_done(self, result_path: str | None):
+        self._hide_stop_overlay()
         self.progress.stop()
         self.progress.configure(mode="determinate", value=100)
         self.start_btn.configure(state="normal")
