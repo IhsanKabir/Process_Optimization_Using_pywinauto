@@ -34,6 +34,7 @@ class _QueueHandler(logging.Handler):
 class _StdoutRedirect:
     def __init__(self, q: queue.Queue):
         self.q = q
+        self.encoding = "utf-8"
 
     def write(self, text: str):
         text = text.rstrip()
@@ -42,6 +43,12 @@ class _StdoutRedirect:
 
     def flush(self):
         pass
+
+    def isatty(self):
+        return False
+
+    def writable(self):
+        return True
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -339,7 +346,9 @@ class TravelportGUI:
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.DEBUG)
-        sys.stdout = _StdoutRedirect(self.log_queue)
+        stream = _StdoutRedirect(self.log_queue)
+        sys.stdout = stream
+        sys.stderr = stream
 
     # ── Queue polling (main thread) ───────────────────────────────────────────
 

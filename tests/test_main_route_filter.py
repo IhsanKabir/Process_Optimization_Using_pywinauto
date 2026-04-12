@@ -1,14 +1,28 @@
+import json
+import shutil
+from pathlib import Path
 from main import (
     _command_matches_route,
+    _ensure_commands_template,
     _fd_output_has_fares,
     _find_pure_airline_option_in_fs_page,
     _normalize_database_url,
+    _should_use_tqdm,
     _resolve_database_url,
     _route_variants,
     _should_recheck_same_fs_page,
     _should_run_fs_extraction,
+    load_config,
 )
 from types import SimpleNamespace
+
+
+def _make_local_temp_dir(name: str):
+    path = Path.cwd() / name
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
+    return path
 
 
 def test_route_variants_include_reverse_by_default():
@@ -157,3 +171,54 @@ PRICING OPTION 1
 """
 
     assert _should_recheck_same_fs_page(current_page, current_page, "BG") is False
+
+
+def test_ensure_commands_template_creates_starter_file():
+    tmp_path = _make_local_temp_dir("tmp_test_commands_template")
+    commands_path = tmp_path / "commands.txt"
+
+    try:
+        created = _ensure_commands_template(str(commands_path))
+
+        assert created is True
+        assert commands_path.exists()
+        assert "FDDACMCT/BG" in commands_path.read_text(encoding="utf-8")
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_load_config_seeds_default_config_from_bundle(monkeypatch):
+    tmp_path = _make_local_temp_dir("tmp_test_bundled_config")
+    runtime_config = tmp_path / "config.json"
+    bundled_config = tmp_path / "bundled_config.json"
+    try:
+        bundled_config.write_text(
+            json.dumps(
+                {
+                    "commands_file": "commands.txt",
+                    "rbd_sort_order": ["Y"],
+                    "airline_names": {"BG": "Biman Bangladesh"},
+                    "city_names": {"DAC": "Dhaka"},
+                    "tax_airports": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        import main
+
+        monkeypatch.setattr(main, "DEFAULT_CONFIG", str(runtime_config))
+        monkeypatch.setattr(
+            main, "_resolve_bundled_file", lambda filename: str(bundled_config)
+        )
+
+        config = load_config(str(runtime_config))
+
+        assert runtime_config.exists()
+        assert config["airline_names"]["BG"] == "Biman Bangladesh"
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+
+
+def test_should_use_tqdm_is_disabled_for_gui_mode():
+    assert _should_use_tqdm(gui_mode=True) is False
