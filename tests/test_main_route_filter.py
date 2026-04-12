@@ -211,6 +211,8 @@ def test_load_config_seeds_default_config_from_bundle(monkeypatch):
         monkeypatch.setattr(
             main, "_resolve_bundled_file", lambda filename: str(bundled_config)
         )
+        # Disable remote fetch so the test exercises the local bundle-seed path
+        monkeypatch.setattr(main, "_fetch_remote_config", lambda: None)
 
         config = load_config(str(runtime_config))
 
