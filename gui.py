@@ -865,11 +865,16 @@ class TravelportGUI:
             return
         ov = tk.Toplevel(self.root)
         ov.title("")
-        ov.geometry("220x64+20+20")  # top-left corner, out of the way
         ov.resizable(False, False)
         ov.attributes("-topmost", True)
         ov.configure(bg="#1e2a35")
         ov.protocol("WM_DELETE_WINDOW", lambda: None)  # prevent accidental close
+
+        # Position bottom-right corner, well away from the Smartpoint terminal
+        ov.update_idletasks()
+        sw = ov.winfo_screenwidth()
+        sh = ov.winfo_screenheight()
+        ov.geometry(f"220x64+{sw - 240}+{sh - 120}")
 
         tk.Label(
             ov,
