@@ -190,8 +190,11 @@ def _seed_runtime_config_if_missing(config_path: str) -> str:
 def _fetch_remote_config() -> dict | None:
     """Fetch the latest config.json from GitHub. Returns None if offline or invalid."""
     import urllib.request as _ur
+
     try:
-        req = _ur.Request(REMOTE_CONFIG_URL, headers={"User-Agent": "TravelportAuto/1.0"})
+        req = _ur.Request(
+            REMOTE_CONFIG_URL, headers={"User-Agent": "TravelportAuto/1.0"}
+        )
         with _ur.urlopen(req, timeout=8) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
@@ -898,9 +901,7 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(
                     f"  Downloaded {len(commands)} default commands â†' saved to {commands_file}"
                 )
-                logger.info(
-                    "  You can edit commands.txt to add or remove routes."
-                )
+                logger.info("  You can edit commands.txt to add or remove routes.")
             except Exception as exc:
                 logger.error(f"  Could not download default commands: {exc}")
                 logger.error(

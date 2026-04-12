@@ -25,8 +25,12 @@ load_dotenv(override=True)
 # Validate env before doing anything
 # ─────────────────────────────────────────────────────────────────────────────
 
-required = ["DATABASE_URL", "BIGQUERY_PROJECT_ID", "BIGQUERY_DATASET",
-            "GOOGLE_APPLICATION_CREDENTIALS"]
+required = [
+    "DATABASE_URL",
+    "BIGQUERY_PROJECT_ID",
+    "BIGQUERY_DATASET",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+]
 missing = [v for v in required if not os.environ.get(v, "").strip()]
 if missing:
     print(f"[ERROR] Missing env vars: {', '.join(missing)}")
@@ -43,15 +47,31 @@ PROJECT = os.environ["BIGQUERY_PROJECT_ID"]
 DATASET = os.environ["BIGQUERY_DATASET"]
 
 RBD_CABIN = {
-    "F": "First", "A": "First", "P": "First",
-    "J": "Business", "C": "Business", "D": "Business",
-    "I": "Business", "Z": "Business",
-    "W": "Premium Economy", "S": "Premium Economy",
-    "Y": "Economy", "B": "Economy", "M": "Economy",
-    "H": "Economy", "K": "Economy", "L": "Economy",
-    "Q": "Economy", "T": "Economy", "E": "Economy",
-    "N": "Economy", "R": "Economy", "U": "Economy",
-    "V": "Economy", "X": "Economy", "O": "Economy",
+    "F": "First",
+    "A": "First",
+    "P": "First",
+    "J": "Business",
+    "C": "Business",
+    "D": "Business",
+    "I": "Business",
+    "Z": "Business",
+    "W": "Premium Economy",
+    "S": "Premium Economy",
+    "Y": "Economy",
+    "B": "Economy",
+    "M": "Economy",
+    "H": "Economy",
+    "K": "Economy",
+    "L": "Economy",
+    "Q": "Economy",
+    "T": "Economy",
+    "E": "Economy",
+    "N": "Economy",
+    "R": "Economy",
+    "U": "Economy",
+    "V": "Economy",
+    "X": "Economy",
+    "O": "Economy",
     "G": "Economy",
 }
 
@@ -71,7 +91,7 @@ def _insert_batch(client: bq.Client, table: str, rows: list[dict]) -> int:
     inserted = 0
     chunk_size = 500
     for i in range(0, len(rows), chunk_size):
-        chunk = rows[i: i + chunk_size]
+        chunk = rows[i : i + chunk_size]
         errors = client.insert_rows_json(_full_table(table), chunk)
         if errors:
             print(f"  [BQ] Insert errors on {table}: {errors[:2]}")
@@ -83,6 +103,7 @@ def _insert_batch(client: bq.Client, table: str, rows: list[dict]) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # Backfill fare runs
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def backfill_fare_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
     cur = pg.cursor()
@@ -103,13 +124,16 @@ def backfill_fare_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
             continue
 
         # Load fare records for this run
-        cur.execute("""
+        cur.execute(
+            """
             SELECT route, airline, rbd, journey_type, currency,
                    base_fare, total_taxes, total_fare, fare_basis,
                    is_sold_out, is_unsaleable
             FROM fare_records
             WHERE run_id = %s
-        """, (run_id,))
+        """,
+            (run_id,),
+        )
         records = cur.fetchall()
 
         if not records:
@@ -120,33 +144,47 @@ def backfill_fare_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
         cycle_id = f"gds_run_{run_id}"
 
         rows = []
-        for (route, airline, rbd, jt, currency, base_fare,
-             total_taxes, total_fare, fare_basis,
-             is_sold_out, is_unsaleable) in records:
+        for (
+            route,
+            airline,
+            rbd,
+            jt,
+            currency,
+            base_fare,
+            total_taxes,
+            total_fare,
+            fare_basis,
+            is_sold_out,
+            is_unsaleable,
+        ) in records:
 
             route_parts = (route or "").split("-", 1)
             origin = route_parts[0] if len(route_parts) > 1 else route or ""
             destination = route_parts[1] if len(route_parts) > 1 else ""
 
-            rows.append({
-                "cycle_id": cycle_id,
-                "captured_at_utc": captured_at,
-                "airline": airline or "",
-                "origin": origin,
-                "destination": destination,
-                "route_key": route or "",
-                "rbd": rbd or "",
-                "cabin": _cabin(rbd),
-                "fare_basis": fare_basis or "",
-                "journey_type": jt or "",
-                "base_fare": float(base_fare) if base_fare is not None else 0.0,
-                "total_taxes": float(total_taxes) if total_taxes is not None else 0.0,
-                "total_fare": float(total_fare) if total_fare is not None else 0.0,
-                "currency": currency or "",
-                "is_sold_out": bool(is_sold_out),
-                "is_unsaleable": bool(is_unsaleable),
-                "source": "gds_travelport",
-            })
+            rows.append(
+                {
+                    "cycle_id": cycle_id,
+                    "captured_at_utc": captured_at,
+                    "airline": airline or "",
+                    "origin": origin,
+                    "destination": destination,
+                    "route_key": route or "",
+                    "rbd": rbd or "",
+                    "cabin": _cabin(rbd),
+                    "fare_basis": fare_basis or "",
+                    "journey_type": jt or "",
+                    "base_fare": float(base_fare) if base_fare is not None else 0.0,
+                    "total_taxes": (
+                        float(total_taxes) if total_taxes is not None else 0.0
+                    ),
+                    "total_fare": float(total_fare) if total_fare is not None else 0.0,
+                    "currency": currency or "",
+                    "is_sold_out": bool(is_sold_out),
+                    "is_unsaleable": bool(is_unsaleable),
+                    "source": "gds_travelport",
+                }
+            )
 
         if dry_run:
             print(f"  [DRY-RUN] run {run_id} ({run_mode}): {len(rows)} fare rows")
@@ -167,6 +205,7 @@ def backfill_fare_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
 # Backfill tax runs
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def backfill_tax_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
     cur = pg.cursor()
 
@@ -184,12 +223,15 @@ def backfill_tax_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
             print(f"  [SKIP] tax run {run_id} — already in BigQuery")
             continue
 
-        cur.execute("""
+        cur.execute(
+            """
             SELECT airport_code, tax_code, tax_name,
                    category, subcategory, condition, currency, amount, status
             FROM tax_records
             WHERE run_id = %s
-        """, (run_id,))
+        """,
+            (run_id,),
+        )
         records = cur.fetchall()
 
         if not records:
@@ -200,22 +242,33 @@ def backfill_tax_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
         cycle_id = f"gds_tax_run_{run_id}"
 
         rows = []
-        for (airport_code, tax_code, tax_name, category,
-             subcategory, condition, currency, amount, status) in records:
-            rows.append({
-                "cycle_id": cycle_id,
-                "captured_at_utc": captured_at,
-                "airport_code": airport_code or "",
-                "tax_code": tax_code or "",
-                "tax_name": tax_name or "",
-                "category": category or "",
-                "subcategory": subcategory or "",
-                "condition": condition or "",
-                "currency": currency or "",
-                "amount": float(amount) if amount is not None else None,
-                "status": status or "",
-                "source": "gds_travelport",
-            })
+        for (
+            airport_code,
+            tax_code,
+            tax_name,
+            category,
+            subcategory,
+            condition,
+            currency,
+            amount,
+            status,
+        ) in records:
+            rows.append(
+                {
+                    "cycle_id": cycle_id,
+                    "captured_at_utc": captured_at,
+                    "airport_code": airport_code or "",
+                    "tax_code": tax_code or "",
+                    "tax_name": tax_name or "",
+                    "category": category or "",
+                    "subcategory": subcategory or "",
+                    "condition": condition or "",
+                    "currency": currency or "",
+                    "amount": float(amount) if amount is not None else None,
+                    "status": status or "",
+                    "source": "gds_travelport",
+                }
+            )
 
         if dry_run:
             print(f"  [DRY-RUN] tax run {run_id} ({run_mode}): {len(rows)} tax rows")
@@ -236,13 +289,24 @@ def backfill_tax_runs(pg, bq_client, skip_ids: set[int], dry_run: bool):
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Backfill PostgreSQL GDS data into BigQuery")
-    parser.add_argument("--skip", type=int, nargs="+", default=[111],
-                        metavar="RUN_ID",
-                        help="Run IDs to skip (default: 111, already in BQ)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Count rows only, do not write to BigQuery")
+    parser = argparse.ArgumentParser(
+        description="Backfill PostgreSQL GDS data into BigQuery"
+    )
+    parser.add_argument(
+        "--skip",
+        type=int,
+        nargs="+",
+        default=[111],
+        metavar="RUN_ID",
+        help="Run IDs to skip (default: 111, already in BQ)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Count rows only, do not write to BigQuery",
+    )
     args = parser.parse_args()
 
     skip_ids = set(args.skip)

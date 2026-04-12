@@ -2068,7 +2068,7 @@ def _write_tax_breakdown_sheet(
             for label, val in [
                 ("YQ", yq),
                 ("YR", yr),
-                ("Q",  q),
+                ("Q", q),
             ]:
                 if val > 0:
                     c1 = ws.cell(row=row, column=col_offset, value=label)
@@ -2145,12 +2145,16 @@ def _write_tax_breakdown_sheet(
 
 
 # ── YQ/YR/Q Charges Sheet ────────────────────────────────
-YQ_HEADER_FILL = PatternFill(start_color="375623", end_color="375623", fill_type="solid")
+YQ_HEADER_FILL = PatternFill(
+    start_color="375623", end_color="375623", fill_type="solid"
+)
 YQ_HEADER_FONT = Font(name="Calibri", bold=True, size=10, color="FFFFFF")
 YQ_YQ_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
 YQ_YR_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 YQ_Q_FILL = PatternFill(start_color="DEEBF7", end_color="DEEBF7", fill_type="solid")
-YQ_SUBTOTAL_FILL = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
+YQ_SUBTOTAL_FILL = PatternFill(
+    start_color="D6E4F0", end_color="D6E4F0", fill_type="solid"
+)
 YQ_LABEL_FONT = Font(name="Calibri", size=10)
 YQ_SUBTOTAL_FONT = Font(name="Calibri", bold=True, size=11)
 
@@ -2169,9 +2173,9 @@ def _write_yq_charges_sheet(
     """
     current_row = 1
 
-    ws.cell(row=current_row, column=1, value="YQ / YR / Q Surcharges by Route & Airline").font = Font(
-        name="Calibri", bold=True, size=16
-    )
+    ws.cell(
+        row=current_row, column=1, value="YQ / YR / Q Surcharges by Route & Airline"
+    ).font = Font(name="Calibri", bold=True, size=16)
     current_row += 1
     ws.cell(
         row=current_row,
@@ -2199,7 +2203,9 @@ def _write_yq_charges_sheet(
 
         yq_entries = []
         for airline, domestic, route_key, route_info in entries:
-            fs_taxes = route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
+            fs_taxes = (
+                route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
+            )
             if not fs_taxes:
                 continue
             yq = fs_taxes.get("yq_charge", 0) or 0
@@ -2234,8 +2240,14 @@ def _write_yq_charges_sheet(
         col_offset = 1
 
         for airline, domestic, route_key, route_info in yq_entries:
-            fs_taxes = route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
-            currency = route_info.get("currency", "USD") if isinstance(route_info, dict) else "USD"
+            fs_taxes = (
+                route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
+            )
+            currency = (
+                route_info.get("currency", "USD")
+                if isinstance(route_info, dict)
+                else "USD"
+            )
             al_name = airline_names.get(airline, airline)
 
             row = table_start_row
@@ -2248,25 +2260,34 @@ def _write_yq_charges_sheet(
             title_cell = ws.cell(row=row, column=col_offset, value=table_title)
             title_cell.font = Font(name="Calibri", bold=True, size=11)
             ws.merge_cells(
-                start_row=row, start_column=col_offset,
-                end_row=row, end_column=col_offset + TABLE_WIDTH - 1,
+                start_row=row,
+                start_column=col_offset,
+                end_row=row,
+                end_column=col_offset + TABLE_WIDTH - 1,
             )
             row += 1
 
             base_cur = fs_taxes.get("base_currency", currency)
             exch_rate = fs_taxes.get("exchange_rate", 0)
             info_font = Font(name="Calibri", size=9, italic=True)
-            ws.cell(row=row, column=col_offset, value=f"Base: {base_cur or 'N/A'}").font = info_font
             ws.cell(
-                row=row, column=col_offset + 1,
-                value=f"Rate: {exch_rate:.4f}" if exch_rate else "Rate: N/A"
+                row=row, column=col_offset, value=f"Base: {base_cur or 'N/A'}"
+            ).font = info_font
+            ws.cell(
+                row=row,
+                column=col_offset + 1,
+                value=f"Rate: {exch_rate:.4f}" if exch_rate else "Rate: N/A",
             ).font = info_font
             row += 1
 
             _styled_cell(ws, row, col_offset, "Charge", YQ_HEADER_FONT, YQ_HEADER_FILL)
             _styled_cell(
-                ws, row, col_offset + 1, "Amount (BDT)",
-                YQ_HEADER_FONT, YQ_HEADER_FILL,
+                ws,
+                row,
+                col_offset + 1,
+                "Amount (BDT)",
+                YQ_HEADER_FONT,
+                YQ_HEADER_FILL,
                 alignment=Alignment(horizontal="right"),
             )
             row += 1
@@ -2278,7 +2299,7 @@ def _write_yq_charges_sheet(
             for label, val, fill in [
                 ("YQ", yq, YQ_YQ_FILL),
                 ("YR", yr, YQ_YR_FILL),
-                ("Q",  q,  YQ_Q_FILL),
+                ("Q", q, YQ_Q_FILL),
             ]:
                 c1 = ws.cell(row=row, column=col_offset, value=label)
                 c1.font = YQ_LABEL_FONT

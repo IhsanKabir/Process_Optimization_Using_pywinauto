@@ -19,8 +19,8 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-
 # ── Thread-safe log bridge ────────────────────────────────────────────────────
+
 
 class _QueueHandler(logging.Handler):
     def __init__(self, q: queue.Queue):
@@ -53,6 +53,7 @@ class _StdoutRedirect:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _parse_cmd(cmd_str: str):
     """'FDDACMCT/BG'  →  ('BG', 'DAC → MCT')"""
     m = re.match(r"FD([A-Z]{3})([A-Z]{3})/([A-Z0-9]+)", cmd_str.upper())
@@ -63,6 +64,7 @@ def _parse_cmd(cmd_str: str):
 
 
 # ── Main GUI ──────────────────────────────────────────────────────────────────
+
 
 class TravelportGUI:
     VERSION = "v1.3.0"
@@ -89,7 +91,7 @@ class TravelportGUI:
         self._feedback_message_text = None
 
         # Route checklist state
-        self._current_row: str | None = None   # treeview iid of the running row
+        self._current_row: str | None = None  # treeview iid of the running row
         self._done = 0
         self._total = 0
         self._current_step = 0
@@ -121,13 +123,27 @@ class TravelportGUI:
         # Title bar
         bar = tk.Frame(self.root, bg="#0f3758", pady=9)
         bar.pack(fill="x")
-        tk.Label(bar, text="  TravelportAuto", bg="#0f3758", fg="white",
-                 font=("Segoe UI", 13, "bold")).pack(side="left")
-        tk.Label(bar, text=f"  {self.VERSION}  ", bg="#0f3758", fg="#78b4d4",
-                 font=("Segoe UI", 10)).pack(side="left")
-        tk.Label(bar, text="Travelport Smartpoint Automation Tool  ",
-                 bg="#0f3758", fg="#5a7f9a",
-                 font=("Segoe UI", 9)).pack(side="right")
+        tk.Label(
+            bar,
+            text="  TravelportAuto",
+            bg="#0f3758",
+            fg="white",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left")
+        tk.Label(
+            bar,
+            text=f"  {self.VERSION}  ",
+            bg="#0f3758",
+            fg="#78b4d4",
+            font=("Segoe UI", 10),
+        ).pack(side="left")
+        tk.Label(
+            bar,
+            text="Travelport Smartpoint Automation Tool  ",
+            bg="#0f3758",
+            fg="#5a7f9a",
+            font=("Segoe UI", 9),
+        ).pack(side="right")
 
         # Body
         body = tk.Frame(self.root, bg="#f2f2f2")
@@ -147,79 +163,119 @@ class TravelportGUI:
     # ── Left panel ────────────────────────────────────────────────────────────
 
     def _section(self, parent, text):
-        tk.Label(parent, text=text.upper(), bg="#f2f2f2", fg="#0f3758",
-                 font=("Segoe UI", 8, "bold"), anchor="w").pack(fill="x", pady=(10, 1))
+        tk.Label(
+            parent,
+            text=text.upper(),
+            bg="#f2f2f2",
+            fg="#0f3758",
+            font=("Segoe UI", 8, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(10, 1))
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 5))
 
     def _build_left(self, parent):
         self._section(parent, "What to Extract")
         self.mode_var = tk.StringVar(value="fare")
-        for label, val in [("Fares", "fare"),
-                            ("Taxes", "tax"),
-                            ("Penalties", "penalty"),
-                            ("Manual (paste GDS output)", "quickpaste")]:
-            ttk.Radiobutton(parent, text=label,
-                            variable=self.mode_var, value=val).pack(anchor="w", pady=1)
-        tk.Label(parent, text="Manual: copy terminal output first,\nthen press Start",
-                 bg="#f2f2f2", fg="#999",
-                 font=("Segoe UI", 7, "italic"), justify="left").pack(anchor="w")
+        for label, val in [
+            ("Fares", "fare"),
+            ("Taxes", "tax"),
+            ("Penalties", "penalty"),
+            ("Manual (paste GDS output)", "quickpaste"),
+        ]:
+            ttk.Radiobutton(parent, text=label, variable=self.mode_var, value=val).pack(
+                anchor="w", pady=1
+            )
+        tk.Label(
+            parent,
+            text="Manual: copy terminal output first,\nthen press Start",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+            justify="left",
+        ).pack(anchor="w")
         self.mode_var.trace_add("write", self._on_mode_change)
 
         self._section(parent, "Speed")
         self.speed_var = tk.StringVar(value="normal")
-        for label, val in [("Normal", "normal"),
-                            ("Fast", "fast"),
-                            ("Reliable (slower)", "safe")]:
-            ttk.Radiobutton(parent, text=label,
-                            variable=self.speed_var, value=val).pack(anchor="w", pady=1)
+        for label, val in [
+            ("Normal", "normal"),
+            ("Fast", "fast"),
+            ("Reliable (slower)", "safe"),
+        ]:
+            ttk.Radiobutton(
+                parent, text=label, variable=self.speed_var, value=val
+            ).pack(anchor="w", pady=1)
 
         self._section(parent, "Filters")
-        tk.Label(parent, text="Route:", bg="#f2f2f2",
-                 font=("Segoe UI", 9)).pack(anchor="w")
+        tk.Label(parent, text="Route:", bg="#f2f2f2", font=("Segoe UI", 9)).pack(
+            anchor="w"
+        )
         self.route_var = tk.StringVar()
         ttk.Entry(parent, textvariable=self.route_var).pack(fill="x")
-        tk.Label(parent, text="e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)",
-                 bg="#f2f2f2", fg="#999",
-                 font=("Segoe UI", 7, "italic")).pack(anchor="w")
+        tk.Label(
+            parent,
+            text="e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+        ).pack(anchor="w")
 
-        tk.Label(parent, text="Airline:", bg="#f2f2f2",
-                 font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
+        tk.Label(parent, text="Airline:", bg="#f2f2f2", font=("Segoe UI", 9)).pack(
+            anchor="w", pady=(5, 0)
+        )
         self.airline_var = tk.StringVar()
         ttk.Entry(parent, textvariable=self.airline_var).pack(fill="x")
-        tk.Label(parent, text="e.g. BG or BG,BS,EK  (blank = all)",
-                 bg="#f2f2f2", fg="#999",
-                 font=("Segoe UI", 7, "italic")).pack(anchor="w")
+        tk.Label(
+            parent,
+            text="e.g. BG or BG,BS,EK  (blank = all)",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+        ).pack(anchor="w")
 
-        tk.Label(parent, text="Limit (0 = run all):", bg="#f2f2f2",
-                 font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
+        tk.Label(
+            parent, text="Limit (0 = run all):", bg="#f2f2f2", font=("Segoe UI", 9)
+        ).pack(anchor="w", pady=(5, 0))
         self.limit_var = tk.StringVar(value="0")
         ttk.Entry(parent, textvariable=self.limit_var, width=8).pack(anchor="w")
 
         self._section(parent, "Options")
         self.checkpoint_var = tk.BooleanVar(value=True)
         self.no_changes_var = tk.BooleanVar(value=False)
-        self.only_fd_var    = tk.BooleanVar(value=False)
-        self.only_yq_var    = tk.BooleanVar(value=False)
-        ttk.Checkbutton(parent, text="Save progress (resume if interrupted)",
-                        variable=self.checkpoint_var).pack(anchor="w", pady=1)
-        ttk.Checkbutton(parent, text="Skip change report",
-                        variable=self.no_changes_var).pack(anchor="w", pady=1)
-        ttk.Checkbutton(parent, text="Fares only (skip taxes)",
-                        variable=self.only_fd_var).pack(anchor="w", pady=1)
-        ttk.Checkbutton(parent, text="Taxes only (skip fares)",
-                        variable=self.only_yq_var).pack(anchor="w", pady=1)
+        self.only_fd_var = tk.BooleanVar(value=False)
+        self.only_yq_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            parent,
+            text="Save progress (resume if interrupted)",
+            variable=self.checkpoint_var,
+        ).pack(anchor="w", pady=1)
+        ttk.Checkbutton(
+            parent, text="Skip change report", variable=self.no_changes_var
+        ).pack(anchor="w", pady=1)
+        ttk.Checkbutton(
+            parent, text="Fares only (skip taxes)", variable=self.only_fd_var
+        ).pack(anchor="w", pady=1)
+        ttk.Checkbutton(
+            parent, text="Taxes only (skip fares)", variable=self.only_yq_var
+        ).pack(anchor="w", pady=1)
 
         self._section(parent, "Output Path")
-        tk.Label(parent, text="Leave blank — saved automatically",
-                 bg="#f2f2f2", fg="#999",
-                 font=("Segoe UI", 7, "italic")).pack(anchor="w")
+        tk.Label(
+            parent,
+            text="Leave blank — saved automatically",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+        ).pack(anchor="w")
         row = tk.Frame(parent, bg="#f2f2f2")
         row.pack(fill="x")
         self.output_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.output_var).pack(side="left",
-                                                          fill="x", expand=True)
-        ttk.Button(row, text="…", width=3,
-                   command=self._browse).pack(side="left", padx=(2, 0))
+        ttk.Entry(row, textvariable=self.output_var).pack(
+            side="left", fill="x", expand=True
+        )
+        ttk.Button(row, text="…", width=3, command=self._browse).pack(
+            side="left", padx=(2, 0)
+        )
 
     # ── Right panel ───────────────────────────────────────────────────────────
 
@@ -230,22 +286,34 @@ class TravelportGUI:
 
         self._step_labels: list[tk.Label] = []
         for i, name in enumerate(self.STEPS):
-            lbl = tk.Label(step_frame, text=name, bg="#f2f2f2",
-                           font=("Segoe UI", 9), fg="#aaa")
+            lbl = tk.Label(
+                step_frame, text=name, bg="#f2f2f2", font=("Segoe UI", 9), fg="#aaa"
+            )
             lbl.pack(side="left")
             self._step_labels.append(lbl)
             if i < len(self.STEPS) - 1:
-                tk.Label(step_frame, text="  →  ", bg="#f2f2f2",
-                         fg="#ccc", font=("Segoe UI", 9)).pack(side="left")
+                tk.Label(
+                    step_frame,
+                    text="  →  ",
+                    bg="#f2f2f2",
+                    fg="#ccc",
+                    font=("Segoe UI", 9),
+                ).pack(side="left")
 
         # Progress bar + counter
         prog_row = tk.Frame(parent, bg="#f2f2f2")
         prog_row.pack(fill="x", pady=(0, 4))
         self.progress = ttk.Progressbar(prog_row, mode="indeterminate")
         self.progress.pack(side="left", fill="x", expand=True)
-        self.counter_label = tk.Label(prog_row, text="", bg="#f2f2f2",
-                                      fg="#0f3758", font=("Segoe UI", 9, "bold"),
-                                      width=14, anchor="e")
+        self.counter_label = tk.Label(
+            prog_row,
+            text="",
+            bg="#f2f2f2",
+            fg="#0f3758",
+            font=("Segoe UI", 9, "bold"),
+            width=14,
+            anchor="e",
+        )
         self.counter_label.pack(side="left", padx=(6, 0))
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(2, 6))
@@ -260,25 +328,25 @@ class TravelportGUI:
             show="headings",
             selectmode="none",
         )
-        self.tree.heading("status",  text="")
+        self.tree.heading("status", text="")
         self.tree.heading("airline", text="Airline")
-        self.tree.heading("route",   text="Route")
-        self.tree.column("status",  width=36,  stretch=False, anchor="center")
+        self.tree.heading("route", text="Route")
+        self.tree.column("status", width=36, stretch=False, anchor="center")
         self.tree.column("airline", width=110, stretch=False)
-        self.tree.column("route",   width=200, stretch=True)
+        self.tree.column("route", width=200, stretch=True)
 
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical",
-                            command=self.tree.yview)
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
 
         # Row colour tags
         self.tree.tag_configure("pending", foreground="#aaa")
-        self.tree.tag_configure("running", foreground="#0f6ec4",
-                                font=("Segoe UI", 10, "bold"))
-        self.tree.tag_configure("done",    foreground="#1d8a63")
-        self.tree.tag_configure("failed",  foreground="#b73632")
+        self.tree.tag_configure(
+            "running", foreground="#0f6ec4", font=("Segoe UI", 10, "bold")
+        )
+        self.tree.tag_configure("done", foreground="#1d8a63")
+        self.tree.tag_configure("failed", foreground="#b73632")
 
         # Collapsible technical log
         self._build_log_toggle(parent)
@@ -290,9 +358,11 @@ class TravelportGUI:
         self._toggle_btn = tk.Button(
             toggle_row,
             text="▶  Show technical log",
-            bg="#f2f2f2", fg="#777",
+            bg="#f2f2f2",
+            fg="#777",
             font=("Segoe UI", 8),
-            relief="flat", cursor="hand2",
+            relief="flat",
+            cursor="hand2",
             command=self._toggle_log,
             anchor="w",
         )
@@ -302,13 +372,14 @@ class TravelportGUI:
             parent,
             wrap="word",
             font=("Consolas", 8),
-            bg="#1e1e1e", fg="#d4d4d4",
+            bg="#1e1e1e",
+            fg="#d4d4d4",
             relief="flat",
             state="disabled",
             height=0,
         )
         self.log_text.pack(fill="x")
-        self.log_text.tag_config("ERROR",   foreground="#f44747")
+        self.log_text.tag_config("ERROR", foreground="#f44747")
         self.log_text.tag_config("WARNING", foreground="#ffcc02")
         self.log_text.tag_config("SUCCESS", foreground="#4ec9b0")
 
@@ -316,8 +387,11 @@ class TravelportGUI:
         self._log_visible = not self._log_visible
         self.log_text.configure(height=8 if self._log_visible else 0)
         self._toggle_btn.configure(
-            text="▼  Hide technical log" if self._log_visible
-                 else "▶  Show technical log"
+            text=(
+                "▼  Hide technical log"
+                if self._log_visible
+                else "▶  Show technical log"
+            )
         )
 
     # ── Bottom bar ────────────────────────────────────────────────────────────
@@ -326,18 +400,23 @@ class TravelportGUI:
         bar = tk.Frame(self.root, bg="#dde3e8", pady=8)
         bar.pack(fill="x", side="bottom")
 
-        self.start_btn = ttk.Button(bar, text="▶   Start",
-                                    command=self._start, width=14)
+        self.start_btn = ttk.Button(
+            bar, text="▶   Start", command=self._start, width=14
+        )
         self.start_btn.pack(side="left", padx=(12, 4))
 
-        self.stop_btn = ttk.Button(bar, text="■   Stop",
-                                   command=self._stop, width=14,
-                                   state="disabled")
+        self.stop_btn = ttk.Button(
+            bar, text="■   Stop", command=self._stop, width=14, state="disabled"
+        )
         self.stop_btn.pack(side="left", padx=4)
 
-        self.open_btn = ttk.Button(bar, text="📂  Open Report",
-                                   command=self._open_report, width=16,
-                                   state="disabled")
+        self.open_btn = ttk.Button(
+            bar,
+            text="📂  Open Report",
+            command=self._open_report,
+            width=16,
+            state="disabled",
+        )
         self.open_btn.pack(side="left", padx=4)
 
         self.feedback_btn = ttk.Button(
@@ -345,9 +424,9 @@ class TravelportGUI:
         )
         self.feedback_btn.pack(side="left", padx=4)
 
-        self.status_label = tk.Label(bar, text="Ready",
-                                     bg="#dde3e8", fg="#555",
-                                     font=("Segoe UI", 9))
+        self.status_label = tk.Label(
+            bar, text="Ready", bg="#dde3e8", fg="#555", font=("Segoe UI", 9)
+        )
         self.status_label.pack(side="right", padx=12)
 
     # ── Logging setup ─────────────────────────────────────────────────────────
@@ -395,17 +474,19 @@ class TravelportGUI:
         # ── Route command line:  [45/85] FDDACMCT/BG ──
         m_cmd = re.search(r"\[(\d+)/(\d+)\]\s+(FD[A-Z0-9]+/[A-Z0-9]+)", text)
         if m_cmd:
-            idx   = int(m_cmd.group(1))
+            idx = int(m_cmd.group(1))
             total = int(m_cmd.group(2))
-            cmd   = m_cmd.group(3)
-            self._done  = idx
+            cmd = m_cmd.group(3)
+            self._done = idx
             self._total = total
             self._set_step(3)
             self._add_route_row(cmd, idx)
             self._update_counter()
 
         # ── Route succeeded ──
-        elif re.search(r"✓.*fare data|✓.*tax.*complet|✓.*completed|fare data captured", tl):
+        elif re.search(
+            r"✓.*fare data|✓.*tax.*complet|✓.*completed|fare data captured", tl
+        ):
             self._mark_row("done")
 
         # ── Route failed ──
@@ -422,14 +503,15 @@ class TravelportGUI:
         for i, lbl in enumerate(self._step_labels):
             step_num = i + 1
             if step_num < n:
-                lbl.configure(text=f"✓ {self.STEPS[i]}", fg="#1d8a63",
-                              font=("Segoe UI", 9))
+                lbl.configure(
+                    text=f"✓ {self.STEPS[i]}", fg="#1d8a63", font=("Segoe UI", 9)
+                )
             elif step_num == n:
-                lbl.configure(text=self.STEPS[i], fg="#0f3758",
-                              font=("Segoe UI", 9, "bold"))
+                lbl.configure(
+                    text=self.STEPS[i], fg="#0f3758", font=("Segoe UI", 9, "bold")
+                )
             else:
-                lbl.configure(text=self.STEPS[i], fg="#aaa",
-                              font=("Segoe UI", 9))
+                lbl.configure(text=self.STEPS[i], fg="#aaa", font=("Segoe UI", 9))
 
     def _add_route_row(self, cmd_str: str, idx: int):
         airline, route = _parse_cmd(cmd_str)
@@ -438,9 +520,9 @@ class TravelportGUI:
         if self.tree.exists(iid):
             self.tree.item(iid, values=("⟳", airline, route), tags=("running",))
         else:
-            self.tree.insert("", "end", iid=iid,
-                             values=("⟳", airline, route),
-                             tags=("running",))
+            self.tree.insert(
+                "", "end", iid=iid, values=("⟳", airline, route), tags=("running",)
+            )
         self.tree.see(iid)
         self._current_row = iid
 
@@ -449,16 +531,14 @@ class TravelportGUI:
             return
         icon = "✓" if state == "done" else "✗"
         vals = self.tree.item(self._current_row, "values")
-        self.tree.item(self._current_row,
-                       values=(icon, vals[1], vals[2]),
-                       tags=(state,))
+        self.tree.item(
+            self._current_row, values=(icon, vals[1], vals[2]), tags=(state,)
+        )
 
     def _update_counter(self):
         if self._total:
             pct = int(self._done / self._total * 100)
-            self.counter_label.configure(
-                text=f"{self._done} / {self._total}"
-            )
+            self.counter_label.configure(text=f"{self._done} / {self._total}")
             self.progress.configure(mode="determinate", value=pct)
 
     def _append_raw(self, text: str):
@@ -585,12 +665,16 @@ class TravelportGUI:
             state="readonly",
         ).pack(fill="x", pady=(0, 8))
 
-        tk.Label(body, text="Subject", bg="#f2f2f2", font=("Segoe UI", 9)).pack(anchor="w")
+        tk.Label(body, text="Subject", bg="#f2f2f2", font=("Segoe UI", 9)).pack(
+            anchor="w"
+        )
         ttk.Entry(body, textvariable=self._feedback_subject_var).pack(
             fill="x", pady=(0, 8)
         )
 
-        tk.Label(body, text="Message", bg="#f2f2f2", font=("Segoe UI", 9)).pack(anchor="w")
+        tk.Label(body, text="Message", bg="#f2f2f2", font=("Segoe UI", 9)).pack(
+            anchor="w"
+        )
         self._feedback_message_text = scrolledtext.ScrolledText(
             body,
             wrap="word",
@@ -713,7 +797,7 @@ class TravelportGUI:
             limit = int(self.limit_var.get().strip() or "0")
         except ValueError:
             limit = 0
-        is_quickpaste = (mode == "quickpaste")
+        is_quickpaste = mode == "quickpaste"
         return argparse.Namespace(
             auto=(not is_quickpaste),
             tax=(mode == "tax"),
@@ -743,6 +827,7 @@ class TravelportGUI:
         result_path = None
         try:
             import main as _main
+
             result_path = _main.run_with_args(args, stop_event=self.stop_event)
         except SystemExit:
             pass
@@ -774,10 +859,12 @@ class TravelportGUI:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def launch():
     root = tk.Tk()
     try:
         from ctypes import windll
+
         windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
