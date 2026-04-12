@@ -192,7 +192,7 @@ class TravelportGUI:
         ).pack(side="left")
         tk.Label(
             bar,
-            text="Travelport Smartpoint Automation Tool  ",
+            text="Developed by Ihsan Kabir  ",
             bg="#0f3758",
             fg="#5a7f9a",
             font=("Segoe UI", 9),
@@ -325,6 +325,19 @@ class TravelportGUI:
         ttk.Checkbutton(
             parent, text="Taxes only (skip fares)", variable=self.only_yq_var
         ).pack(anchor="w", pady=1)
+
+        tk.Label(
+            parent, text="Compare against:", bg="#f2f2f2", font=("Segoe UI", 9)
+        ).pack(anchor="w", pady=(6, 0))
+        self.compare_var = tk.StringVar()
+        ttk.Entry(parent, textvariable=self.compare_var).pack(fill="x")
+        tk.Label(
+            parent,
+            text="blank = previous run  |  e.g. 2026-04-08 or 2026-04-08_1805",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+        ).pack(anchor="w")
 
         self._section(parent, "Output Path")
         tk.Label(
@@ -649,6 +662,101 @@ class TravelportGUI:
         else:
             self.no_changes_var.set(False)
 
+    # ── Quick-paste wizard (GUI-native, step-by-step clipboard collection) ────
+
+    def _run_quickpaste_wizard(self) -> dict | None:
+        """Show step-by-step dialogs to collect GDS output from clipboard.
+
+        Returns a dict with keys ``commands``, ``raw_texts``, ``raw_fs_texts``
+        ready to be attached to the args namespace, or *None* if the user
+        cancels at any point.
+        """
+        from tkinter import simpledialog, messagebox as _mb
+
+        # Step 1 — ask for command string
+        cmds_str = simpledialog.askstring(
+            "Manual Paste — Step 1 of …",
+            "Enter one or more GDS commands, separated by commas:\n\n"
+            "Example:  FDDACMCT/BG,  FDDACDOH/QR",
+            parent=self.root,
+        )
+        if not cmds_str or not cmds_str.strip():
+            return None
+
+        # Parse commands (import from main without triggering full module init)
+        try:
+            from main import parse_command
+        except Exception as exc:
+            _mb.showerror("Error", f"Could not load parser: {exc}", parent=self.root)
+            return None
+
+        raw = [c.strip().upper() for c in cmds_str.split(",") if c.strip()]
+        commands = [parse_command(c) for c in raw]
+        commands = [c for c in commands if c]
+        if not commands:
+            _mb.showerror(
+                "Invalid Commands",
+                "No valid commands recognised.\n\n"
+                "Commands must start with FD, e.g.  FDDACMCT/BG",
+                parent=self.root,
+            )
+            return None
+
+        total_steps = 1 + len(commands) * 2
+        raw_texts: dict = {}
+        raw_fs_texts: dict = {}
+
+        for i, cmd in enumerate(commands):
+            airline = cmd["airline"]
+            route = cmd["route"]
+
+            # FD step
+            step = 2 + i * 2
+            proceed = _mb.askokcancel(
+                f"Manual Paste — Step {step}/{total_steps}",
+                f"Command {i + 1}/{len(commands)}:  {airline}  {route}\n\n"
+                "Switch to Travelport Smartpoint and copy the\n"
+                "FD (Fare Display) output to your clipboard,\n"
+                "then click OK.",
+                parent=self.root,
+            )
+            if not proceed:
+                return None
+
+            try:
+                import pyperclip
+
+                fd_text = pyperclip.paste()
+            except Exception:
+                fd_text = ""
+
+            # FS step
+            step += 1
+            proceed = _mb.askokcancel(
+                f"Manual Paste — Step {step}/{total_steps}",
+                f"Command {i + 1}/{len(commands)}:  {airline}  {route}\n\n"
+                "Now copy the FS (Tax Summary) output to your clipboard,\n"
+                "then click OK.\n\n"
+                "(Click Cancel to skip tax data for this route.)",
+                parent=self.root,
+            )
+            fs_text = ""
+            if proceed:
+                try:
+                    fs_text = pyperclip.paste()
+                except Exception:
+                    fs_text = ""
+
+            file_key = f"{airline}_{route}"
+            raw_texts[file_key] = fd_text
+            raw_fs_texts[file_key] = fs_text
+
+        return {
+            "commands": commands,
+            "raw_texts": raw_texts,
+            "raw_fs_texts": raw_fs_texts,
+        }
+
     # ── Auto-update ───────────────────────────────────────────────────────────
 
     def _bg_update_check(self):
@@ -825,6 +933,20 @@ class TravelportGUI:
         self.progress.start(12)
 
         args = self._build_args()
+
+        # For manual paste mode, collect clipboard data now (in the main thread)
+        # before handing off to the worker, so we never touch sys.stdin.
+        if args.quick_paste:
+            qp_data = self._run_quickpaste_wizard()
+            if qp_data is None:
+                # User cancelled — restore buttons and bail out
+                self.start_btn.configure(state="normal")
+                self.stop_btn.configure(state="disabled")
+                self.progress.stop()
+                self.status_label.configure(text="Ready", fg="#555")
+                return
+            args._quick_paste_data = qp_data
+
         self._run_thread = threading.Thread(
             target=self._worker, args=(args,), daemon=True
         )
@@ -1043,7 +1165,7 @@ class TravelportGUI:
             speed=speed if speed != "normal" else None,
             checkpoint=self.checkpoint_var.get(),
             resume=None,
-            compare_snapshot=None,
+            compare_snapshot=self.compare_var.get().strip() or None,
             no_changes=self.no_changes_var.get(),
             no_validation=False,
             output=self.output_var.get().strip() or None,

@@ -720,62 +720,74 @@ def main(prebuilt_args=None, stop_event=None):
 
     # QUICK PASTE MODE INTERCEPT
     if getattr(args, "quick_paste", False):
-        try:
-            import pyperclip
-        except ImportError:
-            logger.error(
-                "  [!] Error: 'pyperclip' is not installed. Run 'pip install pyperclip'"
-            )
-            sys.exit(1)
+        # GUI mode: data was collected interactively before this function was
+        # called and stored on args._quick_paste_data.  Skip all input() calls
+        # so we never touch sys.stdin (which is None in the frozen exe).
+        gui_qp = getattr(args, "_quick_paste_data", None)
+        if gui_qp is not None:
+            valid_commands = gui_qp["commands"]
+            raw_texts = gui_qp["raw_texts"]
+            raw_fs_texts = gui_qp["raw_fs_texts"]
+        else:
+            # CLI fallback — normal interactive flow
+            try:
+                import pyperclip
+            except ImportError:
+                logger.error(
+                    "  [!] Error: 'pyperclip' is not installed. Run 'pip install pyperclip'"
+                )
+                sys.exit(1)
 
-        commands_input = input(
-            "\n  Enter Commands (e.g., FDDACDOH/QR, FDDOHDAC/QR, FDDACMCT/WY): "
-        ).strip()
-        if not commands_input:
-            print("  [!] Commands are required. Exiting.")
-            sys.exit(1)
+            commands_input = input(
+                "\n  Enter Commands (e.g., FDDACDOH/QR, FDDOHDAC/QR, FDDACMCT/WY): "
+            ).strip()
+            if not commands_input:
+                print("  [!] Commands are required. Exiting.")
+                sys.exit(1)
 
-        raw_commands = [c.strip().upper() for c in commands_input.split(",")]
+            raw_commands = [c.strip().upper() for c in commands_input.split(",")]
 
-        valid_commands = []
-        for c in raw_commands:
-            parsed = parse_command(c)
-            if parsed:
-                valid_commands.append(parsed)
-            else:
-                print(f"  [!] Invalid command skipped: {c}")
+            valid_commands = []
+            for c in raw_commands:
+                parsed = parse_command(c)
+                if parsed:
+                    valid_commands.append(parsed)
+                else:
+                    print(f"  [!] Invalid command skipped: {c}")
 
-        if not valid_commands:
-            print("  [!] No valid commands provided. Exiting.")
-            sys.exit(1)
+            if not valid_commands:
+                print("  [!] No valid commands provided. Exiting.")
+                sys.exit(1)
 
-        raw_texts = {}
-        raw_fs_texts = {}
+            raw_texts = {}
+            raw_fs_texts = {}
 
-        for i, cmd in enumerate(valid_commands):
-            airline = cmd["airline"]
-            route = cmd["route"]
-            print(f"\n" + "-" * 40)
-            print(
-                f"  GATHERING DATA FOR {airline} {route} ({i+1}/{len(valid_commands)})"
-            )
-            print("-" * 40)
+            for i, cmd in enumerate(valid_commands):
+                airline = cmd["airline"]
+                route = cmd["route"]
+                print(f"\n" + "-" * 40)
+                print(
+                    f"  GATHERING DATA FOR {airline} {route} ({i+1}/{len(valid_commands)})"
+                )
+                print("-" * 40)
 
-            input(
-                f"  [1/2] Please highlight and COPY the FD terminal output for {route}, then press ENTER..."
-            )
-            fd_text = pyperclip.paste()
-            if not fd_text or len(fd_text.strip()) < 10:
-                print("  [!] Clipboard seems empty or too short. Continuing anyway...")
+                input(
+                    f"  [1/2] Please highlight and COPY the FD terminal output for {route}, then press ENTER..."
+                )
+                fd_text = pyperclip.paste()
+                if not fd_text or len(fd_text.strip()) < 10:
+                    print(
+                        "  [!] Clipboard seems empty or too short. Continuing anyway..."
+                    )
 
-            input(
-                f"  [2/2] Now, highlight and COPY the FS (Tax) terminal output for {route}, then press ENTER..."
-            )
-            fs_text = pyperclip.paste()
+                input(
+                    f"  [2/2] Now, highlight and COPY the FS (Tax) terminal output for {route}, then press ENTER..."
+                )
+                fs_text = pyperclip.paste()
 
-            file_key = f"{airline}_{route}"
-            raw_texts[file_key] = fd_text
-            raw_fs_texts[file_key] = fs_text
+                file_key = f"{airline}_{route}"
+                raw_texts[file_key] = fd_text
+                raw_fs_texts[file_key] = fs_text
 
         print("\n  Parsing manual data...")
         config = load_config(args.config)
