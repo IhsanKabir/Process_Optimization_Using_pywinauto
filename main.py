@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import time as _time
 import constants
@@ -98,6 +99,13 @@ PLACEHOLDER_DATABASE_URLS = {
     "postgresql://user:password@localhost/travelport_db",
     "postgresql://user:password@localhost/GDS_Automation",
 }
+DEFAULT_COMMANDS_TEMPLATE = """# TravelportAuto route commands
+# Add one Fare Display command per line.
+# Examples:
+# FDDACMCT/BG
+# FDDACBKK/BS
+# FDCGPMLE/BG
+"""
 FS_OPTION_PATTERN = re.compile(
     r"PRICING\s+OPTION\s+(\d+)(.*?(?=PRICING\s+OPTION\s+\d+|$))",
     re.IGNORECASE | re.DOTALL,
@@ -132,8 +140,87 @@ def setup_logging():
     return log_file
 
 
+def _resolve_bundled_file(filename: str) -> str | None:
+    """Return a bundled file path when running from a PyInstaller build."""
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if not bundle_dir:
+        return None
+
+    candidate = os.path.join(bundle_dir, filename)
+    if os.path.exists(candidate):
+        return candidate
+    return None
+
+
+def _seed_runtime_config_if_missing(config_path: str) -> str:
+    """
+    Seed the runtime config from the bundled default config when available.
+
+    This keeps the packaged app usable even if a desktop only receives the exe.
+    """
+    if os.path.exists(config_path):
+        return config_path
+
+    bundled_config = _resolve_bundled_file("config.json")
+    if not bundled_config:
+        return config_path
+
+    try:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        shutil.copyfile(bundled_config, config_path)
+        logger.info(f"  Created default config.json at {config_path}")
+        return config_path
+    except OSError as e:
+        logger.warning(
+            f"  Could not create local config.json ({e}). Using bundled defaults."
+        )
+        return bundled_config
+
+
+def _ensure_commands_template(commands_file: str) -> bool:
+    """Create a starter commands.txt file for first-run users if missing."""
+    if os.path.exists(commands_file):
+        return False
+
+    try:
+        parent = os.path.dirname(commands_file)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(commands_file, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_COMMANDS_TEMPLATE)
+        logger.info(f"  Created starter commands file at {commands_file}")
+        return True
+    except OSError as e:
+        logger.warning(f"  Could not create starter commands file: {e}")
+        return False
+
+
+def _has_writable_stream(stream) -> bool:
+    """Return True if tqdm can safely write to this stream."""
+    return stream is not None and callable(getattr(stream, "write", None))
+
+
+def _should_use_tqdm(gui_mode: bool = False) -> bool:
+    """Enable tqdm only when a usable console-like stream exists."""
+    if tqdm is None or gui_mode:
+        return False
+    return _has_writable_stream(sys.stderr) or _has_writable_stream(sys.stdout)
+
+
+def _tqdm_stream():
+    """Choose the best available stream for tqdm output."""
+    if _has_writable_stream(sys.stderr):
+        return sys.stderr
+    if _has_writable_stream(sys.stdout):
+        return sys.stdout
+    return None
+
+
 def load_config(config_path: str) -> dict:
     """Load and validate configuration from JSON file."""
+    if os.path.abspath(config_path) == os.path.abspath(DEFAULT_CONFIG):
+        config_path = _seed_runtime_config_if_missing(config_path)
+
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
@@ -190,18 +277,20 @@ def process_route_data(
     raw_fs_texts: dict[str, str],
     config: dict,
     enable_validation: bool = True,
+    show_progress: bool = True,
 ) -> dict:
     """Process raw text files into route data with optional validation."""
     rbd_sort_order = config.get("rbd_sort_order", [])
     all_route_data = OrderedDict()
+    progress_active = show_progress and _should_use_tqdm()
 
     # Combine all file_keys from both raw_texts and raw_fs_texts
     all_file_keys = set(raw_texts.keys()) | set(raw_fs_texts.keys())
 
     # Use tqdm progress bar if available
     items = sorted(all_file_keys)
-    if tqdm:
-        items = tqdm(items, desc="Processing routes", unit="route")
+    if progress_active:
+        items = tqdm(items, desc="Processing routes", unit="route", file=_tqdm_stream())
 
     for file_key in items:
         raw_text = raw_texts.get(file_key, "")
@@ -233,7 +322,7 @@ def process_route_data(
             fs_taxes = parse_fs_tax_breakdown(raw_fs_texts[file_key])
 
             # Debug logging for tax parsing
-            if not tqdm:
+            if not progress_active:
                 if fs_taxes.get("exchange_rate", 0) > 0:
                     logger.debug(
                         f"      [TAX] {file_key}: Rate={fs_taxes.get('exchange_rate'):.4f}, "
@@ -261,7 +350,7 @@ def process_route_data(
             }
 
             # Only log if not using tqdm (to avoid cluttering progress bar)
-            if not tqdm:
+            if not progress_active:
                 if fares:
                     ow_count = sum(
                         1 for d in grouped.values() if d.get("ow_fare") is not None
@@ -275,7 +364,7 @@ def process_route_data(
                 elif fs_taxes:
                     logger.info(f"  {file_key} â†’ Tax data only (no fares)")
         else:
-            if not tqdm:
+            if not progress_active:
                 logger.warning(f"  No data parsed from: {file_key}")
 
     return OrderedDict(sorted(all_route_data.items()))
@@ -478,6 +567,7 @@ def run_with_args(args, stop_event=None):
     """Entry point for the GUI: run extraction with a pre-built args Namespace."""
     if args.config is None:
         args.config = DEFAULT_CONFIG
+    args._gui_mode = True
     return main(prebuilt_args=args, stop_event=stop_event)
 
 
@@ -586,6 +676,8 @@ def main(prebuilt_args=None, stop_event=None):
     else:
         args = arg_parser.parse_args()
 
+    use_tqdm = _should_use_tqdm(getattr(args, "_gui_mode", False))
+
     # QUICK PASTE MODE INTERCEPT
     if getattr(args, "quick_paste", False):
         try:
@@ -648,7 +740,11 @@ def main(prebuilt_args=None, stop_event=None):
         print("\n  Parsing manual data...")
         config = load_config(args.config)
         all_route_data = process_route_data(
-            raw_texts, raw_fs_texts, config, enable_validation=False
+            raw_texts,
+            raw_fs_texts,
+            config,
+            enable_validation=False,
+            show_progress=use_tqdm,
         )
 
         if not all_route_data:
@@ -784,8 +880,20 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(f"  Loading local commands from {commands_file}")
                 commands = load_commands(commands_file)
             else:
-                logger.error("  No valid commands found from API or local file.")
+                _ensure_commands_template(commands_file)
+                logger.error(
+                    "  No route commands found. A starter commands.txt file has been created."
+                )
+                logger.error(
+                    f"  Add your FD commands to {commands_file}, then run the tool again."
+                )
                 sys.exit(1)
+
+        if not commands:
+            logger.error(
+                "  No valid route commands are configured. Please update commands.txt and try again."
+            )
+            sys.exit(1)
 
         # Apply filters
         if commands:
@@ -895,8 +1003,10 @@ def main(prebuilt_args=None, stop_event=None):
         automation.refresh_terminal()
         os.makedirs(RAW_PENALTY_DIR, exist_ok=True)
 
-        if tqdm:
-            command_iter = tqdm(commands, desc="Extracting penalties", unit="cmd")
+        if use_tqdm:
+            command_iter = tqdm(
+                commands, desc="Extracting penalties", unit="cmd", file=_tqdm_stream()
+            )
         else:
             command_iter = commands
             logger.info(f"  Executing {len(commands)} commands...")
@@ -906,7 +1016,7 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info("  [STOP] Stop requested — finishing after this point.")
                 break
             cmd_str = cmd["command"]
-            if not tqdm:
+            if not use_tqdm:
                 logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
 
             command_penalties = automation.run_penalty_command(cmd_str)
@@ -997,9 +1107,12 @@ def main(prebuilt_args=None, stop_event=None):
 
             # Use tqdm for progress if available
             airport_items = tax_airports.items()
-            if tqdm:
+            if use_tqdm:
                 airport_items = tqdm(
-                    list(airport_items), desc="Extracting tax data", unit="airport"
+                    list(airport_items),
+                    desc="Extracting tax data",
+                    unit="airport",
+                    file=_tqdm_stream(),
                 )
             else:
                 airport_items = list(airport_items)
@@ -1011,7 +1124,7 @@ def main(prebuilt_args=None, stop_event=None):
                 country_code = airport_info["country"]
 
                 # Only log if not using tqdm
-                if not tqdm:
+                if not use_tqdm:
                     logger.info(
                         f"  [{index}/{len(tax_airports)}] Airport: {airport_code} ({country_code})"
                     )
@@ -1136,10 +1249,15 @@ def main(prebuilt_args=None, stop_event=None):
             MAX_RETRIES = MAX_RETRIES_COMMAND
 
             # Use tqdm for progress if available
-            if tqdm and not checkpoint_mgr:
+            if use_tqdm and not checkpoint_mgr:
                 # Use simple progress bar
-                command_iter = tqdm(commands, desc="Executing commands", unit="cmd")
-            elif tqdm and checkpoint_mgr:
+                command_iter = tqdm(
+                    commands,
+                    desc="Executing commands",
+                    unit="cmd",
+                    file=_tqdm_stream(),
+                )
+            elif use_tqdm and checkpoint_mgr:
                 # Use progress bar with initial progress
                 command_iter = tqdm(
                     commands,
@@ -1147,6 +1265,7 @@ def main(prebuilt_args=None, stop_event=None):
                     unit="cmd",
                     initial=len(checkpoint_mgr.completed_commands),
                     total=len(checkpoint_mgr.completed_commands) + len(commands),
+                    file=_tqdm_stream(),
                 )
             else:
                 # No progress bar
@@ -1164,7 +1283,7 @@ def main(prebuilt_args=None, stop_event=None):
                     continue
 
                 # Only log if not using tqdm
-                if not tqdm:
+                if not use_tqdm:
                     logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
 
                 terminal_text = ""
@@ -1529,7 +1648,11 @@ def main(prebuilt_args=None, stop_event=None):
         # Parse Fares
         logger.info("[3/4] Parsing fare and tax data...")
         all_route_data = process_route_data(
-            raw_texts, raw_fs_texts, config, enable_validation
+            raw_texts,
+            raw_fs_texts,
+            config,
+            enable_validation,
+            show_progress=use_tqdm,
         )
         if not all_route_data:
             logger.error("  No fare data could be parsed.")
