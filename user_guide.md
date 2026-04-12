@@ -54,28 +54,24 @@ Results are saved locally as Excel files and JSON snapshots. If configured, data
 
 ## 3. Installation
 
-1. Download **TravelportAuto_vX.X.X.zip** from the Downloads page.
-2. **Extract** the zip to a permanent folder, for example `C:\TravelportAuto\` or your Desktop.
-3. Do **not** move or rename the files inside the folder.
+1. Download **TravelportAuto.exe** from the Downloads page.
+2. Copy it to a permanent folder, for example `C:\TravelportAuto\` or your Desktop.
+3. That is all — no installer, no extra files needed.
 
-Inside the folder you should see:
+On first run the tool automatically downloads `commands.txt` (the default route list) next to the exe. You can then open and edit that file to customise your routes.
 
-```bat
-TravelportAuto.exe
-config.json
-commands.txt
-data/                  ← created automatically on first run
-```
+> **Configuration is managed centrally.** Airline names, airport codes, and all other settings are loaded automatically from the server each time the tool runs — there is nothing to configure. If you need a new airline or route added, use the **Feedback** button inside the tool.
 
 ---
 
 ## 4. Folder structure
 
+After the first run your folder will look like this:
+
 ```text
 TravelportAuto/
 ├── TravelportAuto.exe       Main application
-├── config.json              All configuration (routes, airlines, airports, etc.)
-├── commands.txt             List of GDS commands to run (fare mode)
+├── commands.txt             Your route commands — edit this to add/remove routes
 ├── data/
 │   ├── reports/             Excel output files
 │   │   └── fare_report_YYYY-MM-DD_HHMM.xlsx
@@ -88,23 +84,11 @@ TravelportAuto/
 
 ---
 
-## 5. Configuration — config.json
+## 5. Customising your route list — commands.txt
 
-Open `config.json` with Notepad or any text editor to customise the tool.
+`commands.txt` is created automatically next to the exe on first run. Open it with Notepad to add or remove routes.
 
-### Key settings
-
-| Setting | Description |
-|---------|-------------|
-| `domestic_airports` | Your origin airports, e.g. `["DAC", "CGP", "ZYL"]` |
-| `airline_names` | Short codes mapped to full names, e.g. `"BG": "Biman Bangladesh"` |
-| `city_names` | Airport codes mapped to city names, e.g. `"MCT": "Muscat"` |
-| `tax_airports` | Airports to query for FTAX (tax mode), e.g. `"SIN": "FTAXSIN"` |
-| `database_url` | PostgreSQL connection string (leave blank if not using a local database) |
-
-### commands.txt
-
-Each line is one GDS command the tool will run in fare mode. Format:
+Each line is one GDS Fare Display command:
 
 ```text
 FDDACMCT/BG      ← Fare Display: DAC → MCT, airline BG
@@ -112,7 +96,13 @@ FDDACCGK/BG
 FDDACCGK/BS
 ```
 
-To add a new route, add a new line and save the file. To skip a route temporarily, add `#` at the start of the line.
+To skip a route temporarily, add `#` at the start of the line:
+
+```text
+# FDDACMCT/BG   ← this line is ignored
+```
+
+> **Need a new airline or airport added?** Use the **Feedback** button in the tool to send a request. The admin will update the central configuration — your tool will pick it up automatically on the next run.
 
 ---
 
@@ -124,8 +114,8 @@ Simply **double-click** `TravelportAuto.exe`.
 
 - Smartpoint must already be open and signed in.
 - The tool will run all commands in `commands.txt` automatically.
-- A console window will show progress.
-- When done, it prints the output path and waits for you to press Enter.
+- A window shows live progress — each route updates as it completes.
+- When done, click **Open Report** to open the Excel file.
 
 ### 6.2 Command Prompt — all flags
 

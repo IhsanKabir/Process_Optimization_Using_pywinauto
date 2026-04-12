@@ -99,6 +99,16 @@ PLACEHOLDER_DATABASE_URLS = {
     "postgresql://user:password@localhost/travelport_db",
     "postgresql://user:password@localhost/GDS_Automation",
 }
+# Remote sources — admin updates these files on GitHub; all users get the
+# latest config automatically on next run without needing a new exe.
+REMOTE_CONFIG_URL = (
+    "https://raw.githubusercontent.com/IhsanKabir/"
+    "Process_Optimization_Using_pywinauto/main/config.json"
+)
+REMOTE_COMMANDS_URL = (
+    "https://raw.githubusercontent.com/IhsanKabir/"
+    "Process_Optimization_Using_pywinauto/main/commands.txt"
+)
 DEFAULT_COMMANDS_TEMPLATE = """# TravelportAuto route commands
 # Add one Fare Display command per line.
 # Examples:
@@ -177,6 +187,17 @@ def _seed_runtime_config_if_missing(config_path: str) -> str:
         return bundled_config
 
 
+def _fetch_remote_config() -> dict | None:
+    """Fetch the latest config.json from GitHub. Returns None if offline or invalid."""
+    import urllib.request as _ur
+    try:
+        req = _ur.Request(REMOTE_CONFIG_URL, headers={"User-Agent": "TravelportAuto/1.0"})
+        with _ur.urlopen(req, timeout=8) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
 def _ensure_commands_template(commands_file: str) -> bool:
     """Create a starter commands.txt file for first-run users if missing."""
     if os.path.exists(commands_file):
@@ -217,7 +238,19 @@ def _tqdm_stream():
 
 
 def load_config(config_path: str) -> dict:
-    """Load and validate configuration from JSON file."""
+    """Load config — remote GitHub first (auto-updates), local/bundled fallback."""
+    # Try remote first — this keeps airline names, airport lists, etc. current
+    # without requiring users to update the exe or edit any files.
+    remote = _fetch_remote_config()
+    if remote is not None:
+        try:
+            config = validate_config(remote)
+            logger.debug("  Config loaded from remote (ok)")
+            return config
+        except ConfigurationError:
+            logger.warning("  Remote config failed validation — falling back to local.")
+
+    # Fall back to bundled / local config.json
     if os.path.abspath(config_path) == os.path.abspath(DEFAULT_CONFIG):
         config_path = _seed_runtime_config_if_missing(config_path)
 
@@ -837,55 +870,41 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info(f"  [TESTING] Limited to first {args.limit} airports")
         logger.info(f"  {len(tax_airports)} tax airports loaded from config")
     else:
-        api_url = config.get("commands_url")
-        if api_url:
-            import urllib.request
-            import urllib.error
-            import json
-            from parser import load_commands_from_text
+        import urllib.request as _ur
+        from parser import load_commands_from_text
 
-            logger.info(f"  [API] Fetching commands from {api_url}")
+        commands_file = os.path.join(
+            SCRIPT_DIR, config.get("commands_file", "commands.txt")
+        )
+
+        if os.path.exists(commands_file):
+            # User's local commands.txt — may have been customised; always prefer it.
+            logger.info(f"  Loading local commands from {commands_file}")
+            commands = load_commands(commands_file)
+        else:
+            # First run — download the default command list from GitHub and save
+            # it next to the exe so the user can edit it later.
+            remote_url = config.get("commands_url", REMOTE_COMMANDS_URL)
+            logger.info("  No commands.txt found — downloading defaults from remote...")
             try:
-                req = urllib.request.Request(
-                    api_url, headers={"User-Agent": "TravelportAutoAgent/1.0"}
+                req = _ur.Request(
+                    remote_url, headers={"User-Agent": "TravelportAuto/1.0"}
                 )
-                api_key = config.get("api_key")
-                if api_key:
-                    req.add_header("Authorization", f"Bearer {api_key}")
-
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    content = response.read().decode("utf-8")
-                    try:
-                        data = json.loads(content)
-                        if isinstance(data, list):
-                            commands = data
-                        elif isinstance(data, dict) and "commands" in data:
-                            commands = data["commands"]
-                        else:
-                            commands = load_commands_from_text(content)
-                    except json.JSONDecodeError:
-                        commands = load_commands_from_text(content)
-
-                logger.info(f"  [API] Successfully downloaded {len(commands)} commands")
-            except Exception as e:
-                logger.warning(f"  [API] Failed to fetch commands: {e}")
-                logger.info(f"  [API] Falling back to local commands file...")
-
-        # Fallback / Local Load
-        if not commands:
-            commands_file = os.path.join(
-                SCRIPT_DIR, config.get("commands_file", "commands.txt")
-            )
-            if os.path.exists(commands_file):
-                logger.info(f"  Loading local commands from {commands_file}")
-                commands = load_commands(commands_file)
-            else:
-                _ensure_commands_template(commands_file)
-                logger.error(
-                    "  No route commands found. A starter commands.txt file has been created."
+                with _ur.urlopen(req, timeout=10) as resp:
+                    content = resp.read().decode("utf-8")
+                with open(commands_file, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                commands = load_commands_from_text(content)
+                logger.info(
+                    f"  Downloaded {len(commands)} default commands â†' saved to {commands_file}"
                 )
+                logger.info(
+                    "  You can edit commands.txt to add or remove routes."
+                )
+            except Exception as exc:
+                logger.error(f"  Could not download default commands: {exc}")
                 logger.error(
-                    f"  Add your FD commands to {commands_file}, then run the tool again."
+                    f"  Create a commands.txt file in {SCRIPT_DIR} with your FD commands."
                 )
                 sys.exit(1)
 
