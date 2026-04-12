@@ -437,6 +437,17 @@ class TravelportGUI:
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
         root_logger.setLevel(logging.DEBUG)
+
+        # main.py logs to the "travelport" named logger and adds its own
+        # StreamHandler to it.  Without this, each message propagates to the
+        # root QueueHandler AND fires the StreamHandler → stdout → queue,
+        # producing duplicate lines.  Turning off propagation means the named
+        # logger's own handlers run; the root QueueHandler catches everything
+        # else (e.g. third-party library logs).
+        travelport_logger = logging.getLogger("travelport")
+        travelport_logger.propagate = False
+        travelport_logger.addHandler(handler)
+
         stream = _StdoutRedirect(self.log_queue)
         sys.stdout = stream
         sys.stderr = stream
@@ -608,6 +619,10 @@ class TravelportGUI:
             target=self._worker, args=(args,), daemon=True
         )
         self._run_thread.start()
+        # Minimize so Smartpoint has focus — pyautogui sends clicks to screen
+        # coordinates, so TravelportAuto must not be on top while running.
+        if args.auto:
+            self.root.after(800, self.root.iconify)
 
     def _stop(self):
         self.stop_event.set()
@@ -839,6 +854,8 @@ class TravelportGUI:
     # ── Completion ────────────────────────────────────────────────────────────
 
     def _on_done(self, result_path: str | None):
+        self.root.deiconify()  # Restore window now that Smartpoint interaction is done
+        self.root.lift()
         self.progress.stop()
         self.progress.configure(mode="determinate", value=100)
         self.start_btn.configure(state="normal")
