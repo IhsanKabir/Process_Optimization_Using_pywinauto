@@ -103,12 +103,28 @@ class SmartpointAutomation:
             except Exception:
                 pass  # title not found — try the next one
 
-        # None of the known titles matched
-        self.logger.info(
-            "  [ERROR] Smartpoint window not found. "
-            "Make sure Travelport Smartpoint is open and fully signed in, "
-            f"then try again. (Tried: {', '.join(titles_to_try)})"
-        )
+        # None of the known titles matched — log all visible window titles to
+        # help diagnose the exact title on this machine.
+        try:
+            visible_titles = sorted(
+                set(
+                    w.window_text()
+                    for w in desktop.windows()
+                    if w.window_text().strip()
+                )
+            )
+            self.logger.info(
+                "  [ERROR] Smartpoint window not found. "
+                "Make sure Travelport Smartpoint is open and fully signed in.\n"
+                "  Tip: if the tool is running without administrator rights and "
+                "Smartpoint is elevated, try running TravelportAuto as Administrator.\n"
+                f"  Windows visible on screen: {', '.join(visible_titles) or '(none)'}"
+            )
+        except Exception:
+            self.logger.info(
+                "  [ERROR] Smartpoint window not found. "
+                "Make sure Travelport Smartpoint is open and fully signed in."
+            )
         return False
 
     def focus(self, force: bool = False) -> bool:
