@@ -56,6 +56,28 @@ class _StdoutRedirect:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# Preferences file next to the exe (or script) for persisting GUI state
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PREFS_FILE = os.path.join(_SCRIPT_DIR, "preferences.json")
+
+
+def _load_prefs() -> dict:
+    """Load saved preferences from disk. Returns empty dict on any error."""
+    try:
+        with open(_PREFS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_prefs(data: dict):
+    """Persist preferences to disk. Silently ignores errors."""
+    try:
+        with open(_PREFS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
 
 def _parse_cmd(cmd_str: str):
     """'FDDACMCT/BG'  →  ('BG', 'DAC → MCT')"""
@@ -150,11 +172,57 @@ class TravelportGUI:
 
         self._apply_theme()
         self._build_ui()
+        self._load_preferences()
         self._setup_logging()
         self.root.bind_all("<Escape>", lambda *_: self._stop())
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll()
         # Check for updates silently in the background
         threading.Thread(target=self._bg_update_check, daemon=True).start()
+
+    def _load_preferences(self):
+        """Restore user settings from previous session."""
+        prefs = _load_prefs()
+        if not prefs:
+            return
+        for var_name, key in [
+            ("mode_var", "mode"),
+            ("speed_var", "speed"),
+            ("route_var", "route"),
+            ("airline_var", "airline"),
+            ("limit_var", "limit"),
+        ]:
+            val = prefs.get(key)
+            if val is not None:
+                getattr(self, var_name).set(val)
+        for var_name, key in [
+            ("checkpoint_var", "checkpoint"),
+            ("no_changes_var", "no_changes"),
+            ("only_fd_var", "only_fd"),
+            ("only_yq_var", "only_yq"),
+        ]:
+            val = prefs.get(key)
+            if val is not None:
+                getattr(self, var_name).set(val)
+
+    def _save_preferences(self):
+        """Persist current UI settings to disk."""
+        _save_prefs({
+            "mode": self.mode_var.get(),
+            "speed": self.speed_var.get(),
+            "route": self.route_var.get(),
+            "airline": self.airline_var.get(),
+            "limit": self.limit_var.get(),
+            "checkpoint": self.checkpoint_var.get(),
+            "no_changes": self.no_changes_var.get(),
+            "only_fd": self.only_fd_var.get(),
+            "only_yq": self.only_yq_var.get(),
+        })
+
+    def _on_close(self):
+        """Handle window close: save prefs, then destroy."""
+        self._save_preferences()
+        self.root.destroy()
 
     # ── Theme ─────────────────────────────────────────────────────────────────
 
@@ -659,8 +727,6 @@ class TravelportGUI:
     def _on_mode_change(self, *_):
         if self.mode_var.get() == "quickpaste":
             self.no_changes_var.set(True)
-        else:
-            self.no_changes_var.set(False)
 
     # ── Quick-paste wizard (GUI-native, step-by-step clipboard collection) ────
 
@@ -724,9 +790,9 @@ class TravelportGUI:
                 return None
 
             try:
-                import pyperclip
+                from clipboard_util import clipboard_paste
 
-                fd_text = pyperclip.paste()
+                fd_text = clipboard_paste()
             except Exception:
                 fd_text = ""
 
@@ -743,7 +809,7 @@ class TravelportGUI:
             fs_text = ""
             if proceed:
                 try:
-                    fs_text = pyperclip.paste()
+                    fs_text = clipboard_paste()
                 except Exception:
                     fs_text = ""
 
@@ -844,7 +910,7 @@ class TravelportGUI:
         ).start()
 
     def _download_and_replace(self, info, dlg, progress_var):
-        """Download new exe, write an updater batch, then restart."""
+        """Download new exe, verify SHA256 hash, write an updater batch, then restart."""
         try:
             # Work out paths
             if getattr(sys, "frozen", False):
@@ -864,6 +930,31 @@ class TravelportGUI:
                     progress_var.set(f"Downloading… {pct}%")
 
             urllib.request.urlretrieve(info["exe_url"], new_exe, _reporthook)
+
+            # IMP-10: Verify SHA256 hash if found in release notes
+            import hashlib, re as _re
+
+            notes = info.get("notes", "") or ""
+            hash_match = _re.search(
+                r'(?:sha256|SHA256)[:\s]+([0-9a-fA-F]{64})', notes
+            )
+            if hash_match:
+                expected_hash = hash_match.group(1).lower()
+                progress_var.set("Verifying integrity…")
+                sha256 = hashlib.sha256()
+                with open(new_exe, "rb") as f:
+                    for chunk in iter(lambda: f.read(65536), b""):
+                        sha256.update(chunk)
+                actual_hash = sha256.hexdigest()
+                if actual_hash != expected_hash:
+                    os.remove(new_exe)
+                    progress_var.set(
+                        f"Error: SHA256 mismatch!\n"
+                        f"Expected: {expected_hash[:16]}…\n"
+                        f"Got:      {actual_hash[:16]}…"
+                    )
+                    return
+
             progress_var.set("Installing…")
 
             # Write batch updater — runs after this process exits.
@@ -1277,8 +1368,16 @@ def launch():
         windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    TravelportGUI(root)
-    root.mainloop()
+    try:
+        TravelportGUI(root)
+        root.mainloop()
+    except Exception as e:
+        import traceback
+
+        messagebox.showerror(
+            "TravelportAuto — Startup Error",
+            f"An unexpected error occurred:\n\n{e}\n\n{traceback.format_exc()}",
+        )
 
 
 if __name__ == "__main__":

@@ -6,8 +6,11 @@ Supports .env files for local development.
 """
 
 import os
+import logging
 from typing import Optional, Tuple
 from exceptions import AuthenticationError, ConfigurationError
+
+logger = logging.getLogger("travelport.credentials")
 
 
 class CredentialManager:
@@ -41,6 +44,11 @@ class CredentialManager:
             return username, password, pcc
         elif username or password:
             # Partial credentials - warn user
+            missing = "SMARTPOINT_PASSWORD" if username else "SMARTPOINT_USERNAME"
+            logger.warning(
+                f"  [CRED] Partial credentials detected — {missing} is not set. "
+                "Both username and password are required."
+            )
             return None, None, None
         else:
             return None, None, None

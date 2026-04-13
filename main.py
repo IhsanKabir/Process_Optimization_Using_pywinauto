@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py - Travelport Fare Automation Orchestrator
 
 Phase 1 (MVP): Read raw GDS output from text files, parse, and generate Excel report.
@@ -59,7 +59,7 @@ from validators import (
 )
 from credential_manager import CredentialManager
 from checkpoint_manager import CheckpointManager
-from constants import MAX_RETRIES_COMMAND, MAX_FS_DATE_STEPS, FS_DATE_OFFSET_START
+from constants import MAX_RETRIES_COMMAND, MAX_FS_DATE_STEPS, FS_DATE_OFFSET_START, FS_DATE_STEP
 
 try:
     from database import DatabaseManager
@@ -730,13 +730,7 @@ def main(prebuilt_args=None, stop_event=None):
             raw_fs_texts = gui_qp["raw_fs_texts"]
         else:
             # CLI fallback — normal interactive flow
-            try:
-                import pyperclip
-            except ImportError:
-                logger.error(
-                    "  [!] Error: 'pyperclip' is not installed. Run 'pip install pyperclip'"
-                )
-                sys.exit(1)
+            from clipboard_util import clipboard_paste
 
             commands_input = input(
                 "\n  Enter Commands (e.g., FDDACDOH/QR, FDDOHDAC/QR, FDDACMCT/WY): "
@@ -774,7 +768,7 @@ def main(prebuilt_args=None, stop_event=None):
                 input(
                     f"  [1/2] Please highlight and COPY the FD terminal output for {route}, then press ENTER..."
                 )
-                fd_text = pyperclip.paste()
+                fd_text = clipboard_paste()
                 if not fd_text or len(fd_text.strip()) < 10:
                     print(
                         "  [!] Clipboard seems empty or too short. Continuing anyway..."
@@ -783,7 +777,7 @@ def main(prebuilt_args=None, stop_event=None):
                 input(
                     f"  [2/2] Now, highlight and COPY the FS (Tax) terminal output for {route}, then press ENTER..."
                 )
-                fs_text = pyperclip.paste()
+                fs_text = clipboard_paste()
 
                 file_key = f"{airline}_{route}"
                 raw_texts[file_key] = fd_text
@@ -801,6 +795,8 @@ def main(prebuilt_args=None, stop_event=None):
 
         if not all_route_data:
             print("  [!] Failed to parse data. Ensure your copied text is valid.")
+            if prebuilt_args is not None:
+                return None  # GUI mode: don't sys.exit() in worker thread
             sys.exit(1)
 
         # Use first route for filename
@@ -824,7 +820,11 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info("  Opening file automatically...")
         except Exception:
             pass
+        if prebuilt_args is not None:
+            return result_path  # GUI mode: return path instead of sys.exit()
         sys.exit(0)
+
+    log_file = setup_logging()
 
     # Apply speed profile if specified (must be done before any automation imports)
     if args.speed:
@@ -839,8 +839,6 @@ def main(prebuilt_args=None, stop_event=None):
         except ValidationError as e:
             logger.error(f"  {e}")
             sys.exit(1)
-
-    log_file = setup_logging()
 
     logger.info("=" * 60)
     mode_label = "PENALTY" if args.penalty else ("TAX" if args.tax else "FARE")
@@ -1422,7 +1420,7 @@ def main(prebuilt_args=None, stop_event=None):
                                 )
 
                             # Log raw results for diagnostics
-                            with open("fs_debug.log", "a", encoding="utf-8") as f:
+                            with open(os.path.join(LOG_DIR, "fs_debug.log"), "a", encoding="utf-8") as f:
                                 f.write(
                                     f"\n--- {date_str} {src}-{dst} /{airline} ---\n"
                                 )
@@ -1536,7 +1534,7 @@ def main(prebuilt_args=None, stop_event=None):
                                 rechecked_current_fs_page = False
 
                             if target_option_index is None:
-                                fs_date_offset += 1
+                                fs_date_offset += FS_DATE_STEP
                                 _time.sleep(0.5)
                                 continue
 

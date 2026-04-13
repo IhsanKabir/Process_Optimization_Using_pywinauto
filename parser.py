@@ -130,6 +130,9 @@ def parse_fare_display(raw_text: str) -> dict:
         re.IGNORECASE,
     )
 
+    # Pre-compiled: avoids re-compiling on every iteration
+    line_num_pattern = re.compile(r"^\s*O?\d+\s+")
+
     is_unsellable_section = False
 
     for line in lines:
@@ -147,7 +150,7 @@ def parse_fare_display(raw_text: str) -> dict:
         if upper_stripped in ("END", "MD"):
             continue
         # Match lines starting with a digit (and properly handle leading zeroes like '030')
-        if not re.match(r"^\s*O?\d+\s+", line):
+        if not line_num_pattern.match(line):
             continue
 
         match = fare_pattern.match(line)

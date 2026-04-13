@@ -8,13 +8,12 @@ and handles MD (More Data) pagination automatically.
 
 import time
 import logging
-import pyperclip
-from pywinauto import Desktop
-from pywinauto.application import Application as _PWApp
-
-import pyautogui
-
 import ctypes
+from pywinauto import Desktop
+from pywinauto import keyboard as _pw_kb
+from pywinauto import mouse as _pw_mouse
+from pywinauto.application import Application as _PWApp
+from clipboard_util import clipboard_paste, clipboard_clear
 
 import constants
 from constants import (
@@ -51,6 +50,85 @@ from constants import (
     FOCUS_CACHE_SECONDS,
 )
 
+# ── Drop-in replacements for pyautogui/pyperclip ─────────────────────────────
+# Uses pywinauto keyboard/mouse + Win32 clipboard instead.  Eliminates:
+#   - PIL/screenshot initialisation that causes exe startup hangs
+#   - Clipboard deadlocks from pyperclip's ctypes OpenClipboard calls
+#
+# The class instances below (pyautogui / pyperclip) shadow the removed
+# imports, so all existing call-sites work without modification.
+
+_SEND_KEYS_SPECIAL = {
+    '+': '{+}', '^': '{^}', '%': '{%}', '~': '{~}',
+    '{': '{{', '}': '}}', '(': '{(}', ')': '{)}',
+}
+
+
+def _escape_keys(text: str) -> str:
+    """Escape pywinauto send_keys() special characters in literal text."""
+    return ''.join(_SEND_KEYS_SPECIAL.get(c, c) for c in text)
+
+
+class _KeyboardMouse:
+    """Minimal drop-in replacement for pyautogui using pywinauto primitives."""
+
+    FAILSAFE = True  # no-op attribute kept so old code doesn't crash
+
+    _KEY_MAP = {
+        "enter": "{ENTER}", "tab": "{TAB}", "escape": "{ESC}",
+        "pagedown": "{PGDN}", "space": "{SPACE}", "backspace": "{BACKSPACE}",
+        "delete": "{DELETE}", "up": "{UP}", "down": "{DOWN}",
+        "left": "{LEFT}", "right": "{RIGHT}", "home": "{HOME}", "end": "{END}",
+    }
+
+    @staticmethod
+    def typewrite(text, interval=0.02):
+        _pw_kb.send_keys(_escape_keys(text), pause=interval, with_spaces=True)
+
+    @staticmethod
+    def press(key, presses=1, interval=0.02):
+        pk = _KeyboardMouse._KEY_MAP.get(key.lower(), key)
+        for i in range(presses):
+            if i > 0:
+                time.sleep(interval)
+            _pw_kb.send_keys(pk)
+
+    @staticmethod
+    def hotkey(*keys):
+        _mod = {"ctrl": "^", "alt": "%", "shift": "+"}
+        combo = ""
+        for k in keys:
+            combo += _mod.get(k.lower(), k)
+        _pw_kb.send_keys(combo)
+
+    @staticmethod
+    def click(x=None, y=None):
+        if x is not None and y is not None:
+            _pw_mouse.click(button='left', coords=(int(x), int(y)))
+
+    @staticmethod
+    def moveTo(x, y, duration=0.0):
+        _pw_mouse.move(coords=(int(x), int(y)))
+        if duration > 0:
+            time.sleep(duration)
+
+
+class _Clipboard:
+    """Minimal drop-in replacement for pyperclip using Win32 clipboard API."""
+
+    @staticmethod
+    def copy(text):
+        clipboard_clear()
+
+    @staticmethod
+    def paste():
+        return clipboard_paste()
+
+
+# Module-level names that shadow the removed imports
+pyautogui = _KeyboardMouse()
+pyperclip = _Clipboard()
+
 
 class SmartpointAutomation:
     def __init__(self, window_title=DEFAULT_WINDOW_TITLE):
@@ -64,10 +142,6 @@ class SmartpointAutomation:
         self._cached_terminal_rect = None  # Cache for SmartRichTextBox rect
         self._last_focus_time = 0.0  # Timestamp of last successful focus()
         self._last_terminal_text = ""  # Cache for deduplicating reads
-
-        # Ensure PyAutoGUI fail-safe is enabled.
-        # User can slam mouse to any corner of the screen to throw FailSafeException and abort.
-        pyautogui.FAILSAFE = True
 
     def connect(self) -> bool:
         """Connect to the running instance of Smartpoint.
@@ -155,14 +229,23 @@ class SmartpointAutomation:
         Uses focus caching: skips the expensive Win32 calls if focus was
         set recently (within FOCUS_CACHE_SECONDS). Pass force=True to
         bypass the cache.
+
+        The cache also verifies that Smartpoint is still the foreground
+        window (RACE-2 fix: detects user alt-tabbing away).
         """
         if not self.connected or not self.window:
             return False
 
-        # Skip if focus was set recently (saves ~150ms per call)
+        # Skip if focus was set recently AND Smartpoint is still foreground
         now = time.time()
         if not force and (now - self._last_focus_time) < FOCUS_CACHE_SECONDS:
-            return True
+            try:
+                hwnd = self.window.wrapper_object().handle
+                if ctypes.windll.user32.GetForegroundWindow() == hwnd:
+                    return True
+            except Exception:
+                pass
+            # Smartpoint lost focus — fall through to re-focus
 
         try:
             # Get the raw Windows handle manually
@@ -300,21 +383,21 @@ class SmartpointAutomation:
         """Helper to copy text from the terminal via clipboard using mouse automation."""
         pyperclip.copy("")
 
-        # Ensure focus hasn't been lost (cached " nearly free if recent)
+        # Ensure focus hasn't been lost (cached — nearly free if recent)
         self.focus()
 
         if not self.window:
             return ""
 
-        # Get window coordinates " click in a SAFE area (top-left)
+        # Get window coordinates — click in a SAFE area (top-left)
         try:
             rect = self.window.rectangle()
             safe_x = (
                 rect.left + SAFE_CLICK_X_OFFSET
-            )  # Far left " no interactive links here
+            )  # Far left — no interactive links here
             safe_y = (
                 rect.top + SAFE_CLICK_Y_OFFSET
-            )  # Near top " above any FS result content
+            )  # Near top — above any FS result content
         except Exception:
             safe_x = SAFE_CLICK_X_OFFSET
             safe_y = SAFE_CLICK_Y_OFFSET
@@ -323,13 +406,18 @@ class SmartpointAutomation:
         pyautogui.click(x=safe_x, y=safe_y)
         time.sleep(constants.CLICK_DELAY)
 
-        # Select all + copy
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(constants.CLICK_DELAY)
-        pyautogui.hotkey("ctrl", "c")
-        time.sleep(constants.COPY_DELAY)
+        # Select all + copy with retry for transient clipboard failures
+        text = ""
+        for _attempt in range(3):
+            pyautogui.hotkey("ctrl", "a")
+            time.sleep(constants.CLICK_DELAY)
+            pyautogui.hotkey("ctrl", "c")
+            time.sleep(constants.COPY_DELAY)
 
-        text = pyperclip.paste()
+            text = pyperclip.paste()
+            if text and text.strip():
+                break
+            time.sleep(0.1)  # Brief wait before retry
 
         # Click once to deselect
         pyautogui.press("escape")
@@ -1931,14 +2019,20 @@ class SmartpointAutomation:
         When clicking on the wrong spot, dropdowns like "/12M" or "M" can expand and show
         options like "MAXIMUM STAY", "MINIMUM STAY", etc. This method detects those.
 
+        BUG-3 fix: Only checks the last 10 lines (dropdown content is always at
+        the bottom) and requires at least 2 keyword matches to avoid false positives
+        from words like "PERMITTED" or "TICKETING" that appear in normal fare rules.
+
         Returns True if a dropdown is detected, False otherwise.
         """
         if not text:
             return False
 
-        upper_text = text.upper()
+        # Only check the last 10 lines — dropdown content appears at click point/bottom
+        lines = text.strip().splitlines()
+        check_region = "\n".join(lines[-10:]).upper()
 
-        # Common dropdown keywords that indicate an accidental menu activation
+        # Keywords that ONLY appear in dropdown menus, not in normal fare displays
         dropdown_keywords = [
             "MAXIMUM STAY",
             "MINIMUM STAY",
@@ -1946,15 +2040,9 @@ class SmartpointAutomation:
             "MIN STAY",
             "ADVANCE PURCHASE",
             "TRAVEL COMPLETE",
-            "PERMITTED",
-            "NOT PERMITTED",
-            "TICKETING",
             "BLACKOUT DATES",
         ]
 
-        # Check if any dropdown keywords appear (these typically shouldn't be in fare lists)
-        for keyword in dropdown_keywords:
-            if keyword in upper_text:
-                return True
-
-        return False
+        # Require at least 2 keyword matches to avoid false positives
+        matches = sum(1 for kw in dropdown_keywords if kw in check_region)
+        return matches >= 2

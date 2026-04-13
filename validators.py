@@ -12,6 +12,12 @@ from exceptions import ValidationError, ConfigurationError
 
 logger = logging.getLogger("travelport.validators")
 
+# Pre-compiled patterns for hot-path validation functions
+_RE_AIRPORT = re.compile(r"^[A-Z]{3}$")
+_RE_AIRLINE = re.compile(r"^[A-Z0-9]{2}$")
+_RE_COUNTRY = re.compile(r"^[A-Z]{2}$")
+_RE_CURRENCY = re.compile(r"^[A-Z]{3}$")
+
 
 def validate_airport_code(code: str, field_name: str = "airport code") -> str:
     """
@@ -32,7 +38,7 @@ def validate_airport_code(code: str, field_name: str = "airport code") -> str:
 
     code = code.strip().upper()
 
-    if not re.match(r"^[A-Z]{3}$", code):
+    if not _RE_AIRPORT.match(code):
         raise ValidationError(
             field_name, code, "must be exactly 3 letters (e.g., DAC, MLE, DOH)"
         )
@@ -58,7 +64,7 @@ def validate_airline_code(code: str) -> str:
 
     code = code.strip().upper()
 
-    if not re.match(r"^[A-Z0-9]{2}$", code):
+    if not _RE_AIRLINE.match(code):
         raise ValidationError(
             "airline code",
             code,
@@ -122,7 +128,7 @@ def validate_country_code(code: str) -> str:
 
     code = code.strip().upper()
 
-    if not re.match(r"^[A-Z]{2}$", code):
+    if not _RE_COUNTRY.match(code):
         raise ValidationError(
             "country code", code, "must be exactly 2 letters (e.g., SG, MV, CN)"
         )
@@ -433,7 +439,7 @@ def validate_currency_code(code: Optional[str], warn_only: bool = True) -> bool:
     code = code.strip().upper()
 
     # Check format (3 uppercase letters)
-    if not re.match(r"^[A-Z]{3}$", code):
+    if not _RE_CURRENCY.match(code):
         msg = f"Currency code '{code}' has invalid format (must be 3 letters)"
         if warn_only:
             logger.warning(f"  [VALIDATION] {msg}")

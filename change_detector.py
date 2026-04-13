@@ -78,7 +78,7 @@ def detect_changes(current_data: dict, previous_data: dict) -> dict:
     changes = {}
 
     # Check all routes in current data
-    all_routes = set(list(current_data.keys()) + list(previous_data.keys()))
+    all_routes = current_data.keys() | previous_data.keys()
 
     for route_key in all_routes:
         route_changes = {}
@@ -99,7 +99,7 @@ def detect_changes(current_data: dict, previous_data: dict) -> dict:
             else prev_entry
         )
 
-        all_rbds = set(list(curr_route.keys()) + list(prev_route.keys()))
+        all_rbds = curr_route.keys() | prev_route.keys()
 
         for rbd in all_rbds:
             curr = curr_route.get(rbd)
@@ -251,7 +251,7 @@ def load_snapshot_by_reference(
             snapshot_id = snapshot_name.removeprefix("snapshot_").removesuffix(".json")
             return snapshot_data, snapshot_id
 
-    return None
+    return None, None
 
 
 def format_change_summary(changes: dict) -> str:
@@ -311,7 +311,7 @@ def detect_tax_changes(current_data: dict, previous_data: dict) -> dict:
     changes = {}
 
     # Check all airports in current and previous data
-    all_airports = set(list(current_data.keys()) + list(previous_data.keys()))
+    all_airports = current_data.keys() | previous_data.keys()
 
     for airport_code in all_airports:
         curr_airport = current_data.get(airport_code, {})
@@ -324,7 +324,7 @@ def detect_tax_changes(current_data: dict, previous_data: dict) -> dict:
         curr_tax_dict = {t.get("code"): t for t in curr_taxes if t.get("code")}
         prev_tax_dict = {t.get("code"): t for t in prev_taxes if t.get("code")}
 
-        all_tax_codes = set(list(curr_tax_dict.keys()) + list(prev_tax_dict.keys()))
+        all_tax_codes = curr_tax_dict.keys() | prev_tax_dict.keys()
 
         airport_changes = {}
 
@@ -396,7 +396,7 @@ def detect_tax_changes(current_data: dict, previous_data: dict) -> dict:
                         key = get_rate_key(section, rate)
                         prev_rates[key] = (section, rate)
 
-                all_rate_keys = set(list(curr_rates.keys()) + list(prev_rates.keys()))
+                all_rate_keys = curr_rates.keys() | prev_rates.keys()
 
                 for rate_key in all_rate_keys:
                     section_label, condition = rate_key

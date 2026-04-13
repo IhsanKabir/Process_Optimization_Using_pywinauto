@@ -11,7 +11,7 @@ class TravelportAutomationError(Exception):
     pass
 
 
-class ConnectionError(TravelportAutomationError):
+class SmartpointConnectionError(TravelportAutomationError):
     """Raised when unable to connect to Smartpoint application."""
 
     pass

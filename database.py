@@ -27,10 +27,19 @@ class DatabaseManager:
             return True
         except psycopg2.Error as e:
             logger.error(f"  [DB] PostgreSQL connection error: {e}")
+            self.close()  # Clean up the partially-initialised connection
             return False
         except Exception as e:
             logger.error(f"  [DB] Unexpected database error: {e}")
+            self.close()
             return False
+
+    def __enter__(self):
+        """Support `with DatabaseManager(...) as db:` usage."""
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def _init_schema(self):
         """Create the necessary tables and indexes if they don't already exist."""
