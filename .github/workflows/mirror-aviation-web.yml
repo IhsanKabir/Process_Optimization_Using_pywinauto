@@ -1,0 +1,58 @@
+name: Mirror Aviation Web
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "aviation_web_integration/**"
+      - ".github/workflows/mirror-aviation-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-aviation-web
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_REPO: IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP
+      TARGET_BRANCH: main
+      PREFIX: aviation_web_integration
+    steps:
+      - name: Check mirror token configuration
+        env:
+          MIRROR_TOKEN: ${{ secrets.AVIATION_WEB_MIRROR_PAT }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "Missing required secret: AVIATION_WEB_MIRROR_PAT"
+            echo "Create a fine-grained PAT with Contents: Read and write access to $TARGET_REPO."
+            exit 1
+          fi
+
+      - name: Check out source repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Split subtree commit
+        id: split
+        run: |
+          split_sha="$(git subtree split --prefix="$PREFIX" HEAD)"
+          echo "split_sha=$split_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Push subtree to target repository
+        env:
+          MIRROR_TOKEN: ${{ secrets.AVIATION_WEB_MIRROR_PAT }}
+        run: |
+          git push --force \
+            "https://x-access-token:${MIRROR_TOKEN}@github.com/${TARGET_REPO}.git" \
+            "${{ steps.split.outputs.split_sha }}:refs/heads/${TARGET_BRANCH}"
