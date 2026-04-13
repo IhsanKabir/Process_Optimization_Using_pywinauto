@@ -14,6 +14,11 @@ from typing import Optional
 
 logger = logging.getLogger("travelport.parser")
 
+# Pre-compiled regex patterns
+_RE_COMMAND = re.compile(r"^FD([A-Z]{3})([A-Z]{3})/([A-Z0-9]{2})$", re.IGNORECASE)
+_RE_CURRENCY_BASIS = re.compile(r"\b([A-Z]{3})\s+BASIS\b")
+_RE_LINE_TOKEN = re.compile(r"^\s*(O?\d+)", re.IGNORECASE)
+
 
 def parse_command(command: str) -> Optional[dict]:
     """
@@ -22,8 +27,7 @@ def parse_command(command: str) -> Optional[dict]:
     Example: FDDACMLE/BG
     Returns: {origin: DAC, dest: MLE, airline: BG, route: DAC-MLE}
     """
-    pattern = r"^FD([A-Z]{3})([A-Z]{3})/([A-Z0-9]{2})$"
-    match = re.match(pattern, command.strip(), re.IGNORECASE)
+    match = _RE_COMMAND.match(command.strip())
 
     if not match:
         return None
@@ -87,7 +91,7 @@ def _extract_currency(raw_text: str):
     for line in lines:
         # Match the column header line that shows the currency code
         # e.g. "         USD    BASIS       MAX" or "    CNY    BASIS"
-        match = re.search(r"\b([A-Z]{3})\s+BASIS\b", line.upper())
+        match = _RE_CURRENCY_BASIS.search(line.upper())
         if match:
             return match.group(1)
     return None
@@ -160,13 +164,13 @@ def parse_fare_display(raw_text: str) -> dict:
             fare_amount = float(match.group(3))
             fare_basis = match.group(5).upper()
             rbd = match.group(6).upper()
-            line_token_match = re.match(r"^\s*(O?\d+)", line, re.IGNORECASE)
+            line_token_match = _RE_LINE_TOKEN.match(line)
             line_token = (
                 line_token_match.group(1).upper() if line_token_match else str(line_num)
             )
 
             # Check if this line was O-prefixed (unsellable indicator)
-            is_o_prefixed = bool(re.match(r"^\s*O\d+", line))
+            is_o_prefixed = line.lstrip().startswith("O") and line.lstrip()[1:2].isdigit()
 
             fares.append(
                 {
@@ -272,6 +276,12 @@ def select_report_fare_targets(
     selected_fares = []
     seen_keys = set()
 
+    # Pre-build lookup dict: (is_rt, fare_basis, fare, is_unsaleable) -> [fares]
+    fare_lookup = {}
+    for fare in fares:
+        key = (fare.get("is_rt"), fare.get("fare_basis"), fare.get("fare"), bool(fare.get("is_unsaleable")))
+        fare_lookup.setdefault(key, []).append(fare)
+
     for grouped_rbd, grouped_data in grouped_fares.items():
         is_unsaleable_group = "(Unsaleable)" in grouped_rbd
         target_specs = []
@@ -304,14 +314,8 @@ def select_report_fare_targets(
 
         for is_rt, fare_basis, fare_amount, is_unsaleable in target_specs:
             normalized_basis = fare_basis.replace(" (Unsaleable)", "")
-            matching_fares = [
-                fare
-                for fare in fares
-                if fare.get("is_rt") == is_rt
-                and fare.get("fare_basis") == normalized_basis
-                and fare.get("fare") == fare_amount
-                and bool(fare.get("is_unsaleable")) == is_unsaleable
-            ]
+            lookup_key = (is_rt, normalized_basis, fare_amount, is_unsaleable)
+            matching_fares = fare_lookup.get(lookup_key, [])
 
             if not matching_fares:
                 continue
@@ -343,39 +347,3 @@ def generate_file_key(command_info: dict) -> str:
     return f"{command_info['airline']}_{command_info['route']}"
 
 
-if __name__ == "__main__":
-    # Quick test with sample data
-    print("=== Command parsing ===")
-    test_cmds = ["FDDACMLE/BG", "FDMLEDAC/BG"]
-    for c in test_cmds:
-        parsed = parse_command(c)
-        print(f"  {c} -> {parsed}")
-
-    print("\n=== Fare display parsing ===")
-    sample = """FARES LAST UPDATED 14MAR 17:04 P
-BG        DAC CGP DEPART 14MAR
-**ADDITIONAL TAXES/FEES MAY APPLY**
-PUBLIC FARES
-BDT CURRENCY FARES EXIST
-    CX   FARE   FARE   C AP MIN/    SEASONS...... MR GI DT
-         USD    BASIS       MAX
-DACCGP
-  1 -BG  100.00   YOW      Y                            R  EH
-  2  BG  200.00R  JRT      J                            R  EH
-  3 -BG  150.00   COW      C                            R  EH
-  4  BG  80.00    NOW      N                            R  EH
-END"""
-
-    result = parse_fare_display(sample)
-    fares = result["fares"]
-    print(f"  Currency: {result['currency']}")
-    for f in fares:
-        rt_marker = "RT" if f["is_rt"] else "OW"
-        print(
-            f"  Line {f['line']}: {f['airline']} {f['rbd']} ${f['fare']:.2f} {rt_marker} ({f['fare_basis']})"
-        )
-
-    print("\n=== Group by RBD ===")
-    grouped = group_fares_by_rbd(fares)
-    for rbd, data in grouped.items():
-        print(f"  {rbd}: OW ${data['ow_fare']} RT ${data['rt_fare']}")

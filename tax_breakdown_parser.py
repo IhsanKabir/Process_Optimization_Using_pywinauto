@@ -1,5 +1,15 @@
 import re
 
+# Pre-compiled regex patterns for tax breakdown parsing
+_RE_BASE_FARE = re.compile(r"FARE\s+([A-Z]{3})\s*(\d+\.?\d*)")
+_RE_EQU_FARE = re.compile(r"EQU\s+([A-Z]{3})\s*(\d+\.?\d*)")
+_RE_YQ_CHARGE = re.compile(r"\bYQ\s*(\d+\.?\d*)\b")
+_RE_YR_CHARGE = re.compile(r"\bYR\s*(\d+\.?\d*)\b")
+_RE_Q_CHARGE = re.compile(r"\bQ\s*(\d+\.?\d*)\b")
+_RE_TAXES = re.compile(r"TAXES\s+([A-Z]{3})?\s*(\d+\.?\d*)")
+_RE_TOTAL = re.compile(r"TOT\s+([A-Z]{3})?\s*(\d+\.?\d*)")
+_RE_TAX_CODES = re.compile(r"\b([A-Z][A-Z0-9]?)(\d+\.?\d*)\b")
+
 FS_DETAIL_MARKERS = [
     "TOTAL JOURNEY TIME",
     "FS-1 ADT",
@@ -35,36 +45,36 @@ def parse_fs_tax_breakdown(text: str) -> dict:
     }
 
     # 1. Base Fare
-    base_match = re.search(r"FARE\s+([A-Z]{3})\s*(\d+\.?\d*)", text)
+    base_match = _RE_BASE_FARE.search(text)
     if base_match:
         result["base_currency"] = base_match.group(1)
         result["base_fare"] = float(base_match.group(2))
 
     # 2. Equivalent Fare
-    equ_match = re.search(r"EQU\s+([A-Z]{3})\s*(\d+\.?\d*)", text)
+    equ_match = _RE_EQU_FARE.search(text)
     if equ_match:
         result["equ_currency"] = equ_match.group(1)
         result["equ_fare"] = float(equ_match.group(2))
 
     # 3. YQ, YR, Q Charges
-    yq_match = re.search(r"\bYQ\s*(\d+\.?\d*)\b", text)
+    yq_match = _RE_YQ_CHARGE.search(text)
     if yq_match:
         result["yq_charge"] = float(yq_match.group(1))
 
-    yr_match = re.search(r"\bYR\s*(\d+\.?\d*)\b", text)
+    yr_match = _RE_YR_CHARGE.search(text)
     if yr_match:
         result["yr_charge"] = float(yr_match.group(1))
 
-    q_match = re.search(r"\bQ\s*(\d+\.?\d*)\b", text)
+    q_match = _RE_Q_CHARGE.search(text)
     if q_match:
         result["q_charge"] = float(q_match.group(1))
 
     # 4. Total Taxes & Total Amount
-    tax_match = re.search(r"TAXES\s+([A-Z]{3})?\s*(\d+\.?\d*)", text)
+    tax_match = _RE_TAXES.search(text)
     if tax_match:
         result["total_taxes"] = float(tax_match.group(2))
 
-    tot_match = re.search(r"TOT\s+([A-Z]{3})?\s*(\d+\.?\d*)", text)
+    tot_match = _RE_TOTAL.search(text)
     if tot_match:
         result["total_amount"] = float(tot_match.group(2))
 
@@ -72,7 +82,7 @@ def parse_fs_tax_breakdown(text: str) -> dict:
     # Look for 1 or 2 character IATA tax codes (Letter + Letter/Digit) followed immediately by numbers (e.g. BD500, P7614)
     # Exclude reserved tracking words that might look like taxes if they somehow got parsed
     exclude_codes = {"YQ", "YR", "TOT", "EQU", "NUC", "ROE", "USD", "BDT", "EUR", "GBP"}
-    tax_codes = re.findall(r"\b([A-Z][A-Z0-9]?)(\d+\.?\d*)\b", text)
+    tax_codes = _RE_TAX_CODES.findall(text)
 
     # Process multiple of the same code by adding them, but keep different codes separate
     for code, amt in tax_codes:

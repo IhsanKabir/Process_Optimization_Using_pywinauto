@@ -121,6 +121,7 @@ FS_OPTION_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 FS_LEG_PATTERN = re.compile(r"^\s*(\d+)\s+[#@-]?([A-Z0-9]{2})\s+", re.MULTILINE)
+_RE_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def setup_logging():
@@ -452,9 +453,108 @@ def show_usage():
     logger.info("  5. Run: python main.py")
 
 
+def _process_airport_taxes(
+    automation,
+    airports: dict,
+    failed_commands: list,
+    stop_event=None,
+    use_tqdm: bool = False,
+    write_backups: bool = False,
+    raw_data_dir: str = "",
+):
+    """Shared logic for extracting FTAX data for a set of airports.
+
+    Returns dict: {airport_code: {"taxes": [detail_data, ...]}}
+    """
+    from tax_parser import parse_ftax_list, parse_ftax_detail
+
+    result = {}
+    airport_items = airports.items()
+    if use_tqdm and tqdm:
+        airport_items = tqdm(
+            list(airport_items),
+            desc="Extracting tax data",
+            unit="airport",
+            file=_tqdm_stream(),
+        )
+    else:
+        airport_items = list(airport_items)
+
+    for index, (airport_code, airport_info) in enumerate(airport_items, 1):
+        if stop_event and stop_event.is_set():
+            logger.info("  [STOP] Stop requested - finishing after this point.")
+            break
+        country_code = airport_info["country"]
+
+        if not use_tqdm:
+            logger.info(
+                f"  [{index}/{len(airports)}] Airport: {airport_code} ({country_code})"
+            )
+
+        list_cmd = f"FTAX-{country_code}"
+        list_text = automation.run_command(list_cmd, max_pages=1)
+
+        if write_backups and raw_data_dir:
+            os.makedirs(raw_data_dir, exist_ok=True)
+            backup_path = os.path.join(raw_data_dir, f"{list_cmd}.txt")
+            with open(backup_path, "w", encoding="utf-8") as f:
+                f.write(list_text)
+
+        tax_types = parse_ftax_list(list_text)
+        logger.info(
+            f"    Found {len(tax_types)} tax types: {', '.join(t['code'] for t in tax_types)}"
+        )
+
+        if not tax_types and write_backups:
+            logger.warning(
+                f"    [DEBUG] Raw list text ({len(list_text)} chars): {list_text[:300]}"
+            )
+
+        airport_tax_details = []
+        for idx, t in enumerate(tax_types, 1):
+            detail_text = automation.run_ftax_command(
+                country_code, t["code"], tax_index=idx
+            )
+
+            if write_backups and raw_data_dir:
+                detail_backup = os.path.join(
+                    raw_data_dir, f"FTAX-{country_code}_{t['code']}.txt"
+                )
+                with open(detail_backup, "w", encoding="utf-8") as f:
+                    f.write(detail_text)
+
+            if not detail_text or len(detail_text.strip()) < 20:
+                failed_commands.append(f"{country_code}/{t['code']}")
+                logger.warning(f"    Failed to extract details for {t['code']}")
+                continue
+
+            if write_backups:
+                logger.debug(
+                    f"      [DEBUG] Raw detail text first 200 chars: {detail_text[:200]}"
+                )
+
+            detail_data = parse_ftax_detail(detail_text, t["code"], t["name"])
+            airport_tax_details.append(detail_data)
+            logger.info(
+                f"      {t['code']} -> {len(detail_data['sections'])} sections extracted."
+            )
+
+            if not detail_data["sections"] and write_backups:
+                logger.warning(
+                    f"      [DEBUG] 0 sections! Full text ({len(detail_text)} chars): {detail_text[:500]}"
+                )
+
+            if idx < len(tax_types):
+                automation.return_to_tax_list(country_code)
+
+        result[airport_code] = {"taxes": airport_tax_details}
+
+    return result
+
+
 def _safe_filename(value: str) -> str:
     """Convert arbitrary text into a filesystem-safe filename fragment."""
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or ""))
+    cleaned = _RE_SAFE_FILENAME.sub("_", str(value or ""))
     return cleaned.strip("_") or "unknown"
 
 

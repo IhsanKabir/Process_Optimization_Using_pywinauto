@@ -6,6 +6,7 @@ Connects to the application, sends commands via keyboard, captures output via cl
 and handles MD (More Data) pagination automatically.
 """
 
+import re
 import time
 import logging
 import ctypes
@@ -43,6 +44,7 @@ from constants import (
     # Window identification
     DEFAULT_WINDOW_TITLE,
     SMARTPOINT_WINDOW_TITLES,
+    SELF_WINDOW_KEYWORDS,
     TERMINAL_AUTOMATION_ID,
     # Data validation
     FS_EXPANSION_KEYWORDS,
@@ -129,6 +131,15 @@ class _Clipboard:
 pyautogui = _KeyboardMouse()
 pyperclip = _Clipboard()
 
+# Pre-compiled regex patterns for UI automation
+_RE_WHITESPACE = re.compile(r"\s+")
+_RE_PRICING_OPTION = re.compile(r"PRICING\s+OPTION\s+\d+", re.IGNORECASE)
+_RE_CURRENCY_FARES = re.compile(r"CURRENCY\s+FARES?\s+EXISTS?", re.IGNORECASE)
+_RE_CURRENCY_CODE_FARES = re.compile(r"([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?")
+_RE_FARE_LINE = re.compile(r"^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+")
+_RE_MORE_FARES = re.compile(r"More|More\s+Fares", re.IGNORECASE)
+_RE_MORE_PROMPT = re.compile(r"(MORE\s+(?:FARES|FLIGHTS|OPTIONS))", re.IGNORECASE)
+
 
 class SmartpointAutomation:
     def __init__(self, window_title=DEFAULT_WINDOW_TITLE):
@@ -143,19 +154,28 @@ class SmartpointAutomation:
         self._last_focus_time = 0.0  # Timestamp of last successful focus()
         self._last_terminal_text = ""  # Cache for deduplicating reads
 
+    def _is_self_window(self, window_text: str) -> bool:
+        """Return True if *window_text* belongs to this automation tool, not Smartpoint."""
+        upper = window_text.upper()
+        return any(kw.upper() in upper for kw in SELF_WINDOW_KEYWORDS)
+
     def connect(self) -> bool:
         """Connect to the running instance of Smartpoint.
 
-        Uses two complementary strategies so it works across all Smartpoint
+        Uses three complementary strategies so it works across all Smartpoint
         versions and Windows configurations:
 
-        1. Application.connect(title=...)  matches the actual Win32 window
-           title (GetWindowText), exactly what the taskbar shows.  This is
-           the most reliable method on machines where UIA accessibility names
-           differ from the visual title.
+        1. Application.connect(title_re=...)  substring / regex match against
+           the actual Win32 window title.  Handles composite titles like
+           "Travelport Smartpoint - Application Window 1".
 
-        2. Desktop.window(best_match=...)  UIA fuzzy-name matching.  Used as
-           a fallback for each known title variant.
+        2. Application.connect(title=...)  exact Win32 title match (legacy
+           fallback for older Smartpoint builds).
+
+        3. Desktop.window(best_match=...)  UIA fuzzy-name matching.
+
+        All strategies reject windows that belong to this automation tool
+        itself (e.g. "TravelportAuto v1.3.0").
         """
         # Build the list of titles to try: configured title first, then all
         # known variants (deduped, preserving order).
@@ -169,42 +189,80 @@ class SmartpointAutomation:
         desktop = Desktop(backend="uia")
 
         for title in titles_to_try:
-            #  Strategy 1: Win32 exact title match (most reliable)
+            # Strategy 1: Win32 substring/regex match (handles composite titles)
             try:
                 self.logger.info(
-                    f"  Attempting to connect to '{title}' (win32 title match)..."
+                    f"  Attempting to connect to '{title}' (win32 title_re match)..."
+                )
+                # Escape regex special chars so the title is matched literally as substring
+                title_pattern = re.escape(title)
+                app = _PWApp(backend="uia").connect(title_re=f".*{title_pattern}.*", timeout=0.5)
+                candidate = app.window(title_re=f".*{title_pattern}.*")
+                if candidate.exists():
+                    wtext = candidate.window_text()
+                    if self._is_self_window(wtext):
+                        self.logger.info(
+                            f"    Skipping self-match: '{wtext}'"
+                        )
+                    else:
+                        self.window = candidate
+                        self.window_title = title
+                        self.connected = True
+                        self.logger.info(
+                            f"  Successfully connected to Smartpoint ({wtext})."
+                        )
+                        return True
+            except Exception:
+                pass
+
+            # Strategy 2: Win32 exact title match (legacy fallback)
+            try:
+                self.logger.info(
+                    f"  Attempting to connect to '{title}' (win32 exact title)..."
                 )
                 app = _PWApp(backend="uia").connect(title=title, timeout=0.5)
                 candidate = app.window(title=title)
                 if candidate.exists():
-                    self.window = candidate
-                    self.window_title = title
-                    self.connected = True
-                    self.logger.info(
-                        f"  Successfully connected to Smartpoint ({self.window.window_text()})."
-                    )
-                    return True
+                    wtext = candidate.window_text()
+                    if self._is_self_window(wtext):
+                        self.logger.info(
+                            f"    Skipping self-match: '{wtext}'"
+                        )
+                    else:
+                        self.window = candidate
+                        self.window_title = title
+                        self.connected = True
+                        self.logger.info(
+                            f"  Successfully connected to Smartpoint ({wtext})."
+                        )
+                        return True
             except Exception:
                 pass
 
-            #  Strategy 2: UIA best_match (fuzzy accessibility name)
+            #  Strategy 3: UIA best_match (fuzzy accessibility name)
             try:
                 self.logger.info(
                     f"  Attempting to connect to '{title}' (UIA best_match)..."
                 )
                 candidate = desktop.window(best_match=title)
                 if candidate.exists():
-                    self.window = candidate
-                    self.window_title = title
-                    self.connected = True
-                    self.logger.info(
-                        f"  Successfully connected to Smartpoint ({self.window.window_text()})."
-                    )
-                    return True
+                    wtext = candidate.window_text()
+                    if self._is_self_window(wtext):
+                        self.logger.info(
+                            f"    Skipping self-match: '{wtext}'"
+                        )
+                    else:
+                        self.window = candidate
+                        self.window_title = title
+                        self.connected = True
+                        self.logger.info(
+                            f"  Successfully connected to Smartpoint ({wtext})."
+                        )
+                        return True
             except Exception:
                 pass
 
-        # Nothing worked  list every visible window title to aid diagnosis.
+        # Nothing worked — list every visible window title to aid diagnosis.
         try:
             visible_titles = sorted(
                 {w.window_text() for w in desktop.windows() if w.window_text().strip()}
@@ -714,7 +772,7 @@ class SmartpointAutomation:
         Returns:
             (popup_text, restored_page_text)
         """
-        import re
+
 
         if not self.focus():
             return "", page_text
@@ -734,8 +792,8 @@ class SmartpointAutomation:
                 continue
 
             if raw_line:
-                normalized_line = re.sub(r"\s+", " ", upper_line.strip())
-                normalized_raw_line = re.sub(r"\s+", " ", raw_line)
+                normalized_line = _RE_WHITESPACE.sub(" ",upper_line.strip())
+                normalized_raw_line = _RE_WHITESPACE.sub(" ",raw_line)
                 if normalized_line == normalized_raw_line:
                     amount_match = re.search(amount_pattern, line)
                     if amount_match:
@@ -1393,7 +1451,7 @@ class SmartpointAutomation:
             y_offsets: List of vertical pixel offsets to try (deprecated if use_2d_offsets=True)
             use_2d_offsets: If True, use 2D (x,y) offset tuples for better tolerance
         """
-        import re
+
 
         if not self.focus():
             return ""
@@ -1509,7 +1567,7 @@ class SmartpointAutomation:
         (which appears on the BOOK +TQ line of each Pricing Option), then
         calculates the exact pixel position from the character column.
         """
-        import re
+
         from tax_breakdown_parser import looks_like_fs_tax_breakdown
 
         if not self.focus():
@@ -1536,7 +1594,7 @@ class SmartpointAutomation:
             )
             option_headers = []
             for idx, line in enumerate(lines):
-                if re.search(r"PRICING\s+OPTION\s+\d+", line, re.IGNORECASE):
+                if _RE_PRICING_OPTION.search(line):
                     option_headers.append(idx)
 
             if option_index < len(option_headers):
@@ -1651,7 +1709,7 @@ class SmartpointAutomation:
         This approach: find the line, click at multiple LEFT-side x_ratios (0.05-0.35)
         to reliably hit the actual green hyperlink text.
         """
-        import re
+
 
         if not self.focus():
             return None
@@ -1668,7 +1726,7 @@ class SmartpointAutomation:
         lines = fd_text.split("\n")
         target_line_idx = None
         for idx, line in enumerate(lines):
-            if re.search(r"CURRENCY\s+FARES?\s+EXISTS?", line, re.IGNORECASE):
+            if _RE_CURRENCY_FARES.search(line):
                 target_line_idx = idx
                 break
 
@@ -1782,7 +1840,7 @@ class SmartpointAutomation:
         Dynamically finds and clicks 'More Flights' by anchoring to the screen bottom.
         Leaves top-down math isolated for other buttons.
         """
-        import re
+
 
         if not self.focus():
             return False
@@ -1797,9 +1855,7 @@ class SmartpointAutomation:
         # Search from bottom up
         for i in range(len(lines) - 1, -1, -1):
             line = lines[i]
-            match = re.search(
-                r"(MORE\s+(?:FARES|FLIGHTS|OPTIONS))", line, re.IGNORECASE
-            )
+            match = _RE_MORE_PROMPT.search(line)
 
             if match:
                 pyautogui.press(
@@ -1953,10 +2009,10 @@ class SmartpointAutomation:
         if not text:
             return None
 
-        import re
+
 
         # First check if the currency redirect message exists at all
-        match = re.search(r"([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?", text.upper())
+        match = _RE_CURRENCY_CODE_FARES.search(text.upper())
         if not match:
             return None
 
@@ -1968,12 +2024,10 @@ class SmartpointAutomation:
         # Now check if fare data is already present - if so, this is informational text, not a clickable link
         # Check for actual fare lines with pattern: optional spaces, optional 'O', digit(s), spaces,
         # optional minus, 2-char airline code, spaces, fare amount, etc.
-        fare_pattern = r"^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+"
-
         fare_lines_found = 0
         for line in text.split("\n"):
             # If we find an actual fare line, the currency message is informational, not a redirect
-            if re.match(fare_pattern, line):
+            if _RE_FARE_LINE.match(line):
                 fare_lines_found += 1
                 if fare_lines_found <= 2:  # Log first 2 fare lines found
                     self.logger.debug(
@@ -1987,7 +2041,7 @@ class SmartpointAutomation:
             return None
 
         # Also check for "More Fares" or "More" which indicates fares are present
-        if re.search(r"More|More\s+Fares", text, re.IGNORECASE):
+        if _RE_MORE_FARES.search(text):
             self.logger.debug(
                 f"      [CURRENCY] Found 'More Fares' link - NOT clicking (fares present)"
             )
