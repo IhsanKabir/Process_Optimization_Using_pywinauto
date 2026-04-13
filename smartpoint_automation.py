@@ -42,6 +42,7 @@ from constants import (
     UNSALEABLE_FARES_KEYWORD,
     # Window identification
     DEFAULT_WINDOW_TITLE,
+    SMARTPOINT_WINDOW_TITLES,
     TERMINAL_AUTOMATION_ID,
     # Data validation
     FS_EXPANSION_KEYWORDS,
@@ -68,31 +69,47 @@ class SmartpointAutomation:
         pyautogui.FAILSAFE = True
 
     def connect(self) -> bool:
-        """Connect to the running instance of Smartpoint."""
+        """Connect to the running instance of Smartpoint.
+
+        Tries the configured window title first, then falls back through all
+        known Smartpoint title variants so the tool works across different
+        Smartpoint versions and installation types.
+        """
+        desktop = Desktop(backend="uia")
+
+        # Build the list of titles to try: configured title first, then all
+        # known variants (deduped, preserving order).
+        seen: set = set()
+        titles_to_try: list[str] = []
+        for t in [self.window_title] + list(SMARTPOINT_WINDOW_TITLES):
+            if t not in seen:
+                seen.add(t)
+                titles_to_try.append(t)
+
+        for title in titles_to_try:
+            self.logger.info(
+                f"  Attempting to connect to '{title}' using UIA backend..."
+            )
+            try:
+                candidate = desktop.window(best_match=title)
+                if candidate.exists():
+                    self.window = candidate
+                    self.window_title = title  # remember what worked
+                    self.connected = True
+                    self.logger.info(
+                        f"  Successfully connected to Smartpoint ({self.window.window_text()})."
+                    )
+                    return True
+            except Exception:
+                pass  # title not found — try the next one
+
+        # None of the known titles matched
         self.logger.info(
-            f"  Attempting to connect to '{self.window_title}' using UIA backend..."
+            "  [ERROR] Smartpoint window not found. "
+            "Make sure Travelport Smartpoint is open and fully signed in, "
+            f"then try again. (Tried: {', '.join(titles_to_try)})"
         )
-        try:
-            # Connect via Desktop UIA backend - the actual terminal UI is visible here
-            desktop = Desktop(backend="uia")
-
-            # Use best_match just in case there are hidden whitespace characters
-            self.window = desktop.window(best_match=self.window_title)
-
-            # Verify the window exists and is visible
-            if self.window.exists():
-                self.connected = True
-                self.logger.info(
-                    f"  Successfully connected to Smartpoint ({self.window.window_text()})."
-                )
-                return True
-            else:
-                self.logger.info(f"  [ERROR] Window '{self.window_title}' not found.")
-                return False
-
-        except Exception as e:
-            self.logger.info(f"  [ERROR] Failed to connect to Smartpoint: {e}")
-            return False
+        return False
 
     def focus(self, force: bool = False) -> bool:
         """Bring the Smartpoint window to the foreground forcefully.

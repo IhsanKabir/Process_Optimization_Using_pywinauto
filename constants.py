@@ -285,6 +285,19 @@ FONT_COLOR_HEADER = "FFFFFF"  # White
 # Default window title for Smartpoint application
 DEFAULT_WINDOW_TITLE = "Application Window 1"
 
+# All known Smartpoint window title variants across versions/installs.
+# connect() tries these in order when the default title is not found.
+SMARTPOINT_WINDOW_TITLES = [
+    "Application Window 1",
+    "Travelport Smartpoint",
+    "Travelport SmartPoint",
+    "SmartPoint",
+    "Smartpoint",
+    "Travelport SmartPoint Desktop",
+    "Smartpoint Desktop",
+    "Travelport",
+]
+
 # UI Automation IDs
 TERMINAL_AUTOMATION_ID = "SmartRichTextBox"
 
