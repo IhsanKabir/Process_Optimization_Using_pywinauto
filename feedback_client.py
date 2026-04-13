@@ -12,7 +12,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
-from agent_config import AgentConfig, load_agent_config
+from agent_config import DEFAULT_AGENT_CONFIG_PATH, AgentConfig, load_agent_config
 
 
 class FeedbackSubmissionError(RuntimeError):
@@ -68,7 +68,9 @@ def submit_feedback(
     agent = config or load_agent_config()
     if not agent.api_base_url:
         raise FeedbackSubmissionError(
-            "Feedback delivery is not configured on this machine yet."
+            "Feedback delivery is not configured on this machine yet. "
+            f"Set TRAVELPORT_AGENT_API_BASE_URL or add api_base_url to "
+            f"{DEFAULT_AGENT_CONFIG_PATH}."
         )
 
     payload = build_feedback_payload(

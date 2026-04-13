@@ -2,6 +2,19 @@
 
 Now that the `.exe` is programmed to ask your website for instructions, you need to set up the backend API on your Next.js Vercel app to respond to those requests.
 
+## Optional: Auto-Mirror `aviation_web_integration/` to the website repo
+
+This repo now includes a GitHub Actions workflow at `.github/workflows/mirror-aviation-web.yml`.
+
+When you push changes to `main` that touch `aviation_web_integration/`, the workflow can automatically mirror that folder to:
+
+- `IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP`
+
+Required setup in this repo:
+
+- Add a GitHub Actions secret named `AVIATION_WEB_MIRROR_PAT`
+- Use a fine-grained personal access token with `Contents: Read and write` permission on the target repo
+
 ## 1. Update `config.json`
 On your local machine (and in the package you ZIP up for your clients), update your `config.json` to include the `commands_url`.
 

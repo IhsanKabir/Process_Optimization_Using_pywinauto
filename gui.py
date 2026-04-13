@@ -55,9 +55,19 @@ class _StdoutRedirect:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# Preferences file next to the exe (or script) for persisting GUI state
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+def _runtime_dir() -> str:
+    """Return the folder that should hold user-visible runtime files."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+# Preferences and updater state live next to the exe (or script in dev mode)
+_SCRIPT_DIR = _runtime_dir()
 _PREFS_FILE = os.path.join(_SCRIPT_DIR, "preferences.json")
+_UPDATE_STATE_FILE = os.path.join(_SCRIPT_DIR, "_tpa_update_state.txt")
+_UPDATE_LOG_FILE = os.path.join(_SCRIPT_DIR, "_tpa_update.log")
+_PENDING_UPDATE_EXE = os.path.join(_SCRIPT_DIR, "TravelportAuto_update.exe")
 
 
 def _load_prefs() -> dict:
@@ -76,6 +86,93 @@ def _save_prefs(data: dict):
             json.dump(data, f, indent=2)
     except Exception:
         pass
+
+
+def _read_update_state() -> dict | None:
+    """Read the updater status marker written by the batch updater."""
+    try:
+        with open(_UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+    except Exception:
+        return None
+
+    if not raw:
+        return None
+
+    parts = raw.split("|", 2)
+    while len(parts) < 3:
+        parts.append("")
+    return {
+        "status": parts[0].strip().lower(),
+        "version": parts[1].strip(),
+        "message": parts[2].strip(),
+    }
+
+
+def _write_update_state(status: str, version: str = "", message: str = ""):
+    """Persist updater status for the next app launch."""
+    try:
+        with open(_UPDATE_STATE_FILE, "w", encoding="utf-8") as f:
+            f.write(f"{status}|{version}|{message}".strip())
+    except Exception:
+        pass
+
+
+def _clear_update_state():
+    """Remove stale updater status markers once they are no longer needed."""
+    try:
+        os.remove(_UPDATE_STATE_FILE)
+    except OSError:
+        pass
+
+
+def _build_update_notice(
+    current_version: str, state: dict | None, pending_exe_path: str | None = None
+) -> dict | None:
+    """Build a startup notice when an update did not fully replace the exe."""
+    if not state:
+        return None
+
+    status = str(state.get("status") or "").lower()
+    target_version = str(state.get("version") or "").strip()
+    message = str(state.get("message") or "").strip()
+
+    if target_version and _parse_version(current_version) >= _parse_version(
+        target_version
+    ):
+        return None
+
+    if status not in {"pending", "failed", "installed"}:
+        return None
+
+    parts = []
+    if target_version:
+        parts.append(
+            f"TravelportAuto {target_version} was downloaded, but this app is still running {current_version}."
+        )
+    else:
+        parts.append(
+            f"An update was downloaded, but this app is still running {current_version}."
+        )
+
+    if message:
+        parts.append(message)
+
+    pending_exe = pending_exe_path or _PENDING_UPDATE_EXE
+    if os.path.exists(pending_exe):
+        parts.append(f"Downloaded file: {pending_exe}")
+
+    if os.path.exists(_UPDATE_LOG_FILE):
+        parts.append(f"Updater log: {_UPDATE_LOG_FILE}")
+
+    parts.append(
+        "Close TravelportAuto, replace TravelportAuto.exe manually with the downloaded file, then reopen the app."
+    )
+
+    return {
+        "title": "Update Needs Manual Replace",
+        "message": "\n\n".join(parts),
+    }
 
 
 def _parse_cmd(cmd_str: str):
@@ -103,6 +200,74 @@ def _parse_version(tag: str) -> tuple:
         return (0,)
 
 
+def _pick_release_exe_url(assets: list[dict]) -> str | None:
+    """Choose the primary desktop exe from a GitHub release asset list."""
+    preferred_names = {"travelportauto.exe"}
+    fallback_url = None
+
+    for asset in assets:
+        name = str(asset.get("name") or "").strip()
+        url = str(asset.get("browser_download_url") or "").strip()
+        lower_name = name.lower()
+        if not lower_name.endswith(".exe") or not url:
+            continue
+        if lower_name in preferred_names:
+            return url
+        if lower_name.endswith("_update.exe"):
+            continue
+        if fallback_url is None:
+            fallback_url = url
+
+    return fallback_url
+
+
+def _build_updater_script(
+    current_exe: str, new_exe: str, state_file: str, log_file: str, target_version: str
+) -> str:
+    """Generate the batch script that swaps in the downloaded exe."""
+    clean_version = (target_version or "").replace("|", "/").strip()
+    if not clean_version:
+        clean_version = "unknown"
+
+    return (
+        "@echo off\n"
+        "setlocal EnableExtensions EnableDelayedExpansion\n"
+        f'set "SRC={new_exe}"\n'
+        f'set "DST={current_exe}"\n'
+        f'set "STATE={state_file}"\n'
+        f'set "LOG={log_file}"\n'
+        f'set "TARGET_VERSION={clean_version}"\n'
+        '> "%LOG%" echo Starting TravelportAuto updater for %TARGET_VERSION%\n'
+        "timeout /t 5 /nobreak > nul\n"
+        "set RETRIES=8\n"
+        ":retry\n"
+        'if not exist "%SRC%" (\n'
+        '  > "%STATE%" echo failed^|%TARGET_VERSION%^|Downloaded update file is missing.\n'
+        "  goto launch\n"
+        ")\n"
+        'copy /y "%SRC%" "%DST%" >> "%LOG%" 2>&1\n'
+        "if errorlevel 1 (\n"
+        "  set /a RETRIES-=1\n"
+        '  >> "%LOG%" echo Copy failed. Retries left=!RETRIES!\n'
+        "  if !RETRIES! LEQ 0 (\n"
+        '    > "%STATE%" echo failed^|%TARGET_VERSION%^|Windows could not replace TravelportAuto.exe automatically. The downloaded update is still saved as TravelportAuto_update.exe.\n'
+        "    goto launch\n"
+        "  )\n"
+        "  timeout /t 2 /nobreak > nul\n"
+        "  goto retry\n"
+        ")\n"
+        'del /f /q "%SRC%" >> "%LOG%" 2>&1\n'
+        'for /d %%i in ("%~dp0_MEI*") do rd /s /q "%%i" 2>nul\n'
+        'for /d %%i in ("%TEMP%\\_MEI*") do rd /s /q "%%i" 2>nul\n'
+        '> "%STATE%" echo installed^|%TARGET_VERSION%^|Update installed successfully.\n'
+        ":launch\n"
+        'start "" "%DST%"\n'
+        'del "%~f0"\n'
+        "endlocal\n"
+        "exit /b\n"
+    )
+
+
 def _check_for_update(current_version: str) -> dict | None:
     """Return release dict if a newer version is available, else None."""
     try:
@@ -114,15 +279,7 @@ def _check_for_update(current_version: str) -> dict | None:
             data = json.loads(resp.read().decode("utf-8"))
         latest_tag = data.get("tag_name", "")
         if _parse_version(latest_tag) > _parse_version(current_version):
-            # Find the .exe asset
-            exe_url = next(
-                (
-                    a["browser_download_url"]
-                    for a in data.get("assets", [])
-                    if a["name"].endswith(".exe")
-                ),
-                None,
-            )
+            exe_url = _pick_release_exe_url(data.get("assets", []))
             return {
                 "version": latest_tag,
                 "notes": data.get("body", ""),
@@ -173,6 +330,7 @@ class TravelportGUI:
         self._build_ui()
         self._load_preferences()
         self._setup_logging()
+        self._show_post_update_notice()
         self.root.bind_all("<Escape>", lambda *_: self._stop())
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll()
@@ -599,6 +757,19 @@ class TravelportGUI:
         sys.stdout = stream
         sys.stderr = stream
 
+    def _show_post_update_notice(self):
+        notice = _build_update_notice(self.VERSION, _read_update_state())
+        if notice:
+            self.root.after(
+                250,
+                lambda: messagebox.showwarning(
+                    notice["title"],
+                    notice["message"],
+                ),
+            )
+        elif _read_update_state():
+            _clear_update_state()
+
     # ── Queue polling (main thread) ───────────────────────────────────────────
 
     def _poll(self):
@@ -897,7 +1068,8 @@ class TravelportGUI:
     def _start_update(self, info, dlg, progress_var, btn):
         if not info.get("exe_url"):
             messagebox.showerror(
-                "Update Error", "No download link found for this release."
+                "Update Error",
+                "No TravelportAuto.exe download link was found for this release.",
             )
             return
         btn.configure(state="disabled")
@@ -921,6 +1093,22 @@ class TravelportGUI:
 
             folder = os.path.dirname(current_exe)
             new_exe = os.path.join(folder, "TravelportAuto_update.exe")
+            download_exe = os.path.join(folder, "TravelportAuto_update.download")
+            target_version = str(info.get("version") or "").strip()
+
+            _write_update_state(
+                "pending",
+                target_version,
+                "The updater downloaded a new exe and is trying to replace the running application.",
+            )
+            try:
+                os.remove(_UPDATE_LOG_FILE)
+            except OSError:
+                pass
+            try:
+                os.remove(download_exe)
+            except OSError:
+                pass
 
             # Download with simple progress reporting
             def _reporthook(count, block_size, total):
@@ -928,7 +1116,8 @@ class TravelportGUI:
                     pct = min(int(count * block_size * 100 / total), 100)
                     progress_var.set(f"Downloading… {pct}%")
 
-            urllib.request.urlretrieve(info["exe_url"], new_exe, _reporthook)
+            urllib.request.urlretrieve(info["exe_url"], download_exe, _reporthook)
+            os.replace(download_exe, new_exe)
 
             # IMP-10: Verify SHA256 hash if found in release notes
             import hashlib, re as _re
@@ -947,6 +1136,11 @@ class TravelportGUI:
                 actual_hash = sha256.hexdigest()
                 if actual_hash != expected_hash:
                     os.remove(new_exe)
+                    _write_update_state(
+                        "failed",
+                        target_version,
+                        "Downloaded file failed SHA256 verification and was removed.",
+                    )
                     progress_var.set(
                         f"Error: SHA256 mismatch!\n"
                         f"Expected: {expected_hash[:16]}…\n"
@@ -962,17 +1156,15 @@ class TravelportGUI:
             # We also delete any leftover _MEI* dirs ourselves to avoid the
             # "Failed to load Python DLL" error on stale extractions.
             bat = os.path.join(folder, "_tpa_update.bat")
-            with open(bat, "w") as f:
+            with open(bat, "w", encoding="utf-8") as f:
                 f.write(
-                    "@echo off\n"
-                    "timeout /t 5 /nobreak > nul\n"
-                    # Clean _MEI* from the exe's own folder (runtime_tmpdir='.')
-                    # and from %TEMP% (fallback for older installs)
-                    f'for /d %%i in ("{folder}\\_MEI*") do rd /s /q "%%i" 2>nul\n'
-                    'for /d %%i in ("%TEMP%\\_MEI*") do rd /s /q "%%i" 2>nul\n'
-                    f'move /y "{new_exe}" "{current_exe}"\n'
-                    f'start "" "{current_exe}"\n'
-                    'del "%~f0"\n'
+                    _build_updater_script(
+                        current_exe=current_exe,
+                        new_exe=new_exe,
+                        state_file=_UPDATE_STATE_FILE,
+                        log_file=_UPDATE_LOG_FILE,
+                        target_version=target_version,
+                    )
                 )
 
             import subprocess
@@ -985,6 +1177,11 @@ class TravelportGUI:
             self.log_queue.put(("update_restart", None))
 
         except Exception as exc:
+            _write_update_state(
+                "failed",
+                str(info.get("version") or "").strip(),
+                f"Updater error: {exc}",
+            )
             progress_var.set(f"Error: {exc}")
 
     def _on_update_restart(self):

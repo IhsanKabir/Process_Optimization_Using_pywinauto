@@ -99,7 +99,7 @@ PLACEHOLDER_DATABASE_URLS = {
     "postgresql://user:password@localhost/travelport_db",
     "postgresql://user:password@localhost/GDS_Automation",
 }
-# Remote sources — admin updates these files on GitHub; all users get the
+# Remote sources - admin updates these files on GitHub; all users get the
 # latest config automatically on next run without needing a new exe.
 REMOTE_CONFIG_URL = (
     "https://raw.githubusercontent.com/IhsanKabir/"
@@ -134,9 +134,9 @@ def setup_logging():
     root = logging.getLogger("travelport")
     root.setLevel(logging.DEBUG)
 
-    # Console handler — skip when stdout has been replaced (e.g. by the GUI),
+    # Console handler - skip when stdout has been replaced (e.g. by the GUI),
     # otherwise messages would be delivered twice: once via this StreamHandler
-    # (writing to the redirected stdout → queue) and once via the QueueHandler
+    # (writing to the redirected stdout -> queue) and once via the QueueHandler
     # already attached to this logger by the GUI.
     if sys.stdout is sys.__stdout__:
         ch = logging.StreamHandler()
@@ -246,8 +246,8 @@ def _tqdm_stream():
 
 
 def load_config(config_path: str) -> dict:
-    """Load config — remote GitHub first (auto-updates), local/bundled fallback."""
-    # Try remote first — this keeps airline names, airport lists, etc. current
+    """Load config - remote GitHub first (auto-updates), local/bundled fallback."""
+    # Try remote first - this keeps airline names, airport lists, etc. current
     # without requiring users to update the exe or edit any files.
     remote = _fetch_remote_config()
     if remote is not None:
@@ -256,7 +256,7 @@ def load_config(config_path: str) -> dict:
             logger.debug("  Config loaded from remote (ok)")
             return config
         except ConfigurationError:
-            logger.warning("  Remote config failed validation — falling back to local.")
+            logger.warning("  Remote config failed validation - falling back to local.")
 
     # Fall back to bundled / local config.json
     if os.path.abspath(config_path) == os.path.abspath(DEFAULT_CONFIG):
@@ -400,10 +400,10 @@ def process_route_data(
                         1 for d in grouped.values() if d.get("rt_fare") is not None
                     )
                     logger.info(
-                        f"  {file_key} â†’ {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]"
+                        f"  {file_key} -> {len(grouped)} RBDs ({ow_count} OW, {rt_count} RT) [{currency or 'N/A'}]"
                     )
                 elif fs_taxes:
-                    logger.info(f"  {file_key} â†’ Tax data only (no fares)")
+                    logger.info(f"  {file_key} -> Tax data only (no fares)")
         else:
             if not progress_active:
                 logger.warning(f"  No data parsed from: {file_key}")
@@ -431,7 +431,7 @@ def record_to_database(all_route_data: dict, config: dict, mode: str = "auto") -
         else:
             run_id = db.record_run(all_route_data, run_mode=mode)
         if run_id > 0:
-            logger.info(f"  ✓ Database record created (Run ID: {run_id})")
+            logger.info(f"  [OK] Database record created (Run ID: {run_id})")
         db.close()
         return run_id
     else:
@@ -445,7 +445,7 @@ def show_usage():
     logger.info("  [!] No .txt files found in data/raw/")
     logger.info("")
     logger.info("  HOW TO USE:")
-    logger.info("  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
+    logger.info("  " + "-" * 44)
     logger.info("  1. Open Travelport Smartpoint")
     logger.info("  2. Run a fare display command (e.g., FDDACMLE/BG)")
     logger.info("  3. Select all output and copy (Ctrl+C)")
@@ -808,10 +808,10 @@ def main(prebuilt_args=None, stop_event=None):
     )
 
     if prebuilt_args is not None:
-        # Called from GUI with a ready-made Namespace — skip argparse entirely
+        # Called from GUI with a ready-made Namespace - skip argparse entirely
         args = prebuilt_args
     elif len(sys.argv) == 1 and getattr(sys, "frozen", False):
-        # Double-clicked exe with no flags — default to --auto
+        # Double-clicked exe with no flags - default to --auto
         args = arg_parser.parse_args(["--auto"])
     else:
         args = arg_parser.parse_args()
@@ -829,7 +829,7 @@ def main(prebuilt_args=None, stop_event=None):
             raw_texts = gui_qp["raw_texts"]
             raw_fs_texts = gui_qp["raw_fs_texts"]
         else:
-            # CLI fallback — normal interactive flow
+            # CLI fallback - normal interactive flow
             from clipboard_util import clipboard_paste
 
             commands_input = input(
@@ -914,7 +914,7 @@ def main(prebuilt_args=None, stop_event=None):
         # Record to Database
         record_to_database(all_route_data, config, mode="quick-paste")
 
-        logger.info(f"\n  âœ“ Successfully generated: {result_path}")
+        logger.info(f"\n  [OK] Successfully generated: {result_path}")
         try:
             os.startfile(result_path)
             logger.info("  Opening file automatically...")
@@ -959,7 +959,7 @@ def main(prebuilt_args=None, stop_event=None):
         # [1/4] Config
         logger.info("[1/4] Loading configuration...")
         config = load_config(args.config)
-        logger.info("  Config loaded âœ“")
+        logger.info("  [OK] Config loaded")
     except ConfigurationError as e:
         logger.error(f"  Configuration error: {e}")
         logger.error("  Please check your config.json file and try again.")
@@ -995,14 +995,14 @@ def main(prebuilt_args=None, stop_event=None):
         )
 
         if os.path.exists(commands_file):
-            # User's local commands.txt — may have been customised; always prefer it.
+            # User's local commands.txt - may have been customised; always prefer it.
             logger.info(f"  Loading local commands from {commands_file}")
             commands = load_commands(commands_file)
         else:
-            # First run — download the default command list from GitHub and save
+            # First run - download the default command list from GitHub and save
             # it next to the exe so the user can edit it later.
             remote_url = config.get("commands_url", REMOTE_COMMANDS_URL)
-            logger.info("  No commands.txt found — downloading defaults from remote...")
+            logger.info("  No commands.txt found - downloading defaults from remote...")
             try:
                 req = _ur.Request(
                     remote_url, headers={"User-Agent": "TravelportAuto/1.0"}
@@ -1013,7 +1013,7 @@ def main(prebuilt_args=None, stop_event=None):
                     fh.write(content)
                 commands = load_commands_from_text(content)
                 logger.info(
-                    f"  Downloaded {len(commands)} default commands â†' saved to {commands_file}"
+                    f"  Downloaded {len(commands)} default commands -> saved to {commands_file}"
                 )
                 logger.info("  You can edit commands.txt to add or remove routes.")
             except Exception as exc:
@@ -1147,7 +1147,7 @@ def main(prebuilt_args=None, stop_event=None):
 
         for i, cmd in enumerate(command_iter, 1):
             if _stop and _stop.is_set():
-                logger.info("  [STOP] Stop requested — finishing after this point.")
+                logger.info("  [STOP] Stop requested - finishing after this point.")
                 break
             cmd_str = cmd["command"]
             if not use_tqdm:
@@ -1207,7 +1207,7 @@ def main(prebuilt_args=None, stop_event=None):
         logger.info("")
         logger.info("=" * 60)
         logger.info("  RUN SUMMARY")
-        logger.info("Ã¢â€â‚¬" * 60)
+        logger.info("-" * 60)
         logger.info(f"  Report:   {result_path}")
         logger.info(f"  Items:    {len(penalty_records)} fare basis records parsed")
         if failed_commands:
@@ -1253,7 +1253,7 @@ def main(prebuilt_args=None, stop_event=None):
 
             for index, (airport_code, airport_info) in enumerate(airport_items, 1):
                 if _stop and _stop.is_set():
-                    logger.info("  [STOP] Stop requested — finishing after this point.")
+                    logger.info("  [STOP] Stop requested - finishing after this point.")
                     break
                 country_code = airport_info["country"]
 
@@ -1308,7 +1308,7 @@ def main(prebuilt_args=None, stop_event=None):
                     detail_data = parse_ftax_detail(detail_text, t["code"], t["name"])
                     airport_tax_details.append(detail_data)
                     logger.info(
-                        f"      {t['code']} â†’ {len(detail_data['sections'])} sections extracted."
+                        f"      {t['code']} -> {len(detail_data['sections'])} sections extracted."
                     )
 
                     if not detail_data["sections"]:
@@ -1409,7 +1409,7 @@ def main(prebuilt_args=None, stop_event=None):
             commands_attempted = 0
             for i, cmd in enumerate(command_iter, 1):
                 if _stop and _stop.is_set():
-                    logger.info("  [STOP] Stop requested — finishing after this point.")
+                    logger.info("  [STOP] Stop requested - finishing after this point.")
                     break
                 cmd_str = cmd["command"]
 
@@ -1426,7 +1426,7 @@ def main(prebuilt_args=None, stop_event=None):
                 terminal_text = ""
                 file_key = generate_file_key(cmd)
 
-                # â”€â”€ FD EXTRACTION â”€â”€
+                # -- FD EXTRACTION --
                 if not args.only_yq and not args.only_currency:
                     for attempt in range(1, MAX_RETRIES + 1):
                         try:
@@ -1448,7 +1448,7 @@ def main(prebuilt_args=None, stop_event=None):
                     if terminal_text and len(terminal_text.strip()) > 50:
                         raw_texts[file_key] = terminal_text
                         logger.info(
-                            f"    âœ“ Fare data captured ({len(terminal_text)} chars)"
+                            f"    [OK] Fare data captured ({len(terminal_text)} chars)"
                         )
 
                         backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
@@ -1462,7 +1462,7 @@ def main(prebuilt_args=None, stop_event=None):
                     else:
                         failed_commands.append(cmd["command"])
                         logger.error(
-                            f"    âœ— FAILED after {MAX_RETRIES} attempts: {cmd['command']}"
+                            f"    [FAILED] FAILED after {MAX_RETRIES} attempts: {cmd['command']}"
                         )
                         logger.error(
                             f"    Final data length: {len(terminal_text) if terminal_text else 0} chars"
@@ -1477,7 +1477,7 @@ def main(prebuilt_args=None, stop_event=None):
                         "    [SKIP] Skipping FD extraction (--only-yq/--only-currency)"
                     )
 
-                # â”€â”€ FS EXTRACTION â”€â”€
+                # -- FS EXTRACTION --
                 if _should_run_fs_extraction(args, terminal_text):
                     base_cmd = cmd["command"].strip()
                     if (
@@ -1552,7 +1552,7 @@ def main(prebuilt_args=None, stop_event=None):
 
                                 if target_option_index is not None:
                                     logger.info(
-                                        f"      [âœ“] Pure {airline} itinerary found in Option {target_option_number} on FS page {fs_page_number}."
+                                        f"      [OK] Pure {airline} itinerary found in Option {target_option_number} on FS page {fs_page_number}."
                                     )
                                     fs_result = current_fs_page
                                     break
@@ -1650,7 +1650,7 @@ def main(prebuilt_args=None, stop_event=None):
                             # specific detail screens that still parse into usable tax data.
                             if fs_expanded and looks_like_fs_tax_breakdown(fs_expanded):
                                 logger.info(
-                                    f"      [âœ“] Tax breakdown extracted via D-click"
+                                    f"      [OK] Tax breakdown extracted via D-click"
                                 )
                             else:
                                 logger.warning(
@@ -1688,7 +1688,7 @@ def main(prebuilt_args=None, stop_event=None):
                     f"  [CHECKPOINT] Final checkpoint saved: {len(checkpoint_mgr.completed_commands)} completed"
                 )
 
-            # â”€â”€ MERGED FTAX EXTRACTION â”€â”€
+            # -- MERGED FTAX EXTRACTION --
             ftax_data = None
             if getattr(args, "include_ftax", False):
                 logger.info(
@@ -1749,7 +1749,7 @@ def main(prebuilt_args=None, stop_event=None):
                             )
                             airport_tax_details.append(detail_data)
                             logger.info(
-                                f"      {t['code']} â†’ {len(detail_data['sections'])} sections extracted."
+                                f"      {t['code']} -> {len(detail_data['sections'])} sections extracted."
                             )
 
                             if idx < len(tax_types):
@@ -1763,24 +1763,24 @@ def main(prebuilt_args=None, stop_event=None):
             total_commands = len(commands)
             successful_commands = commands_attempted - len(failed_commands)
             skipped_commands = total_commands - commands_attempted
-            logger.info(“”)
-            logger.info(“=” * 60)
-            logger.info(“  EXECUTION SUMMARY”)
-            logger.info(“=” * 60)
-            logger.info(f”  Total commands: {total_commands}”)
-            logger.info(f”  Attempted: {commands_attempted}”)
-            logger.info(f”  Successful: {successful_commands}”)
-            logger.info(f”  Failed: {len(failed_commands)}”)
+            logger.info("")
+            logger.info("=" * 60)
+            logger.info("  EXECUTION SUMMARY")
+            logger.info("=" * 60)
+            logger.info(f"  Total commands: {total_commands}")
+            logger.info(f"  Attempted: {commands_attempted}")
+            logger.info(f"  Successful: {successful_commands}")
+            logger.info(f"  Failed: {len(failed_commands)}")
             if skipped_commands > 0:
-                logger.info(f”  Skipped (stopped early): {skipped_commands}”)
+                logger.info(f"  Skipped (stopped early): {skipped_commands}")
             if failed_commands:
-                logger.warning(“  Failed commands:”)
+                logger.warning("  Failed commands:")
                 for fc in failed_commands:
-                    logger.warning(f”    - {fc}”)
-                logger.warning(“  Note: Failed commands will not appear in the report”)
+                    logger.warning(f"    - {fc}")
+                logger.warning("  Note: Failed commands will not appear in the report")
             elif commands_attempted == total_commands:
-                logger.info(“  âœ” All commands completed successfully!”)
-            logger.info(“=” * 60)
+                logger.info("  [OK] All commands completed successfully!")
+            logger.info("=" * 60)
 
         else:
             logger.info("[2/4] MANUAL MODE: Loading raw GDS data from disk...")
@@ -1879,7 +1879,7 @@ def main(prebuilt_args=None, stop_event=None):
                 else:
                     logger.info("  No changes from previous data.")
         else:
-            logger.info("  No previous data found. First run — baseline saved.")
+            logger.info("  No previous data found. First run - baseline saved.")
 
         # Only write JSON snapshot when NOT using DB as primary source
         if not using_db_snapshot:
@@ -1941,7 +1941,7 @@ def main(prebuilt_args=None, stop_event=None):
                 _build_summary_sheet(ws_summary, ftax_data, config)
                 _build_details_sheet(ws_details, ftax_data, config)
                 wb.save(result_path)
-                logger.info(f"  âœ“ Attached FTAX to {result_path}")
+                logger.info(f"  [OK] Attached FTAX to {result_path}")
             except Exception as e:
                 logger.error(f"  Failed to append FTAX sheets: {e}")
 
@@ -1982,7 +1982,7 @@ def main(prebuilt_args=None, stop_event=None):
     logger.info("")
     logger.info("=" * 60)
     logger.info("  RUN SUMMARY")
-    logger.info("â”€" * 60)
+    logger.info("-" * 60)
     logger.info(f"  Report:   {result_path}")
     logger.info(
         f"  Items:    {len(all_route_data)} {'airports' if args.tax else 'routes'} parsed"

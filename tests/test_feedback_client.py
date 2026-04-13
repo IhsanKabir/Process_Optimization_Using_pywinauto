@@ -73,7 +73,7 @@ def test_submit_feedback_posts_json(monkeypatch):
 
 
 def test_submit_feedback_requires_api_base_url():
-    with pytest.raises(FeedbackSubmissionError):
+    with pytest.raises(FeedbackSubmissionError) as excinfo:
         submit_feedback(
             category="bug",
             subject="No backend",
@@ -81,3 +81,5 @@ def test_submit_feedback_requires_api_base_url():
             app_version="v1.3.0",
             config=AgentConfig(),
         )
+    assert "TRAVELPORT_AGENT_API_BASE_URL" in str(excinfo.value)
+    assert "agent_config.json" in str(excinfo.value)
