@@ -6,6 +6,7 @@ Handles loading, validation, and environment-specific configuration.
 
 import json
 import os
+import threading
 from typing import Dict, Any, Optional
 from exceptions import ConfigurationError
 from validators import validate_config
@@ -161,13 +162,14 @@ class ConfigManager:
 
 # Global configuration instance
 _config_manager: Optional[ConfigManager] = None
+_config_lock = threading.Lock()
 
 
 def get_config_manager(
     config_path: Optional[str] = None, environment: Optional[str] = None
 ) -> ConfigManager:
     """
-    Get the global configuration manager instance.
+    Get the global configuration manager instance (thread-safe).
 
     Args:
         config_path: Config file path (only used on first call)
@@ -179,7 +181,10 @@ def get_config_manager(
     global _config_manager
 
     if _config_manager is None:
-        env = environment or ConfigManager.get_environment()
-        _config_manager = ConfigManager(config_path, env)
+        with _config_lock:
+            # Double-check after acquiring lock
+            if _config_manager is None:
+                env = environment or ConfigManager.get_environment()
+                _config_manager = ConfigManager(config_path, env)
 
     return _config_manager

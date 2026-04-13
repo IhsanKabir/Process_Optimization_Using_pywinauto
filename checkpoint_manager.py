@@ -88,8 +88,10 @@ class CheckpointManager:
             data.update(additional_data)
 
         try:
-            with open(self.checkpoint_file, "w", encoding="utf-8") as f:
+            temp_file = self.checkpoint_file + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+            os.replace(temp_file, self.checkpoint_file)
             logger.debug(
                 f"  Checkpoint saved: {len(self.completed_commands)} completed"
             )

@@ -50,8 +50,4 @@ htmlcov/
 .coverage
 coverage.xml
 tmp*/
-
-BIGQUERY_PROJECT_ID=aeropulseintelligence
-BIGQUERY_DATASET=aviation_intel
-GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\748f8102991f65b4f75ac270728f5c47e22bdfd7.json
-
+preferences.json

@@ -93,18 +93,29 @@ def submit_feedback(
     if agent.device_token:
         request.add_header("Authorization", f"Bearer {agent.device_token}")
 
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            raw = response.read().decode("utf-8", errors="replace").strip()
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace").strip()
+    import time as _time
+
+    last_exc: Exception | None = None
+    for _attempt in range(2):  # 1 initial + 1 retry
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                raw = response.read().decode("utf-8", errors="replace").strip()
+            last_exc = None
+            break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+            raise FeedbackSubmissionError(
+                f"Server rejected the feedback ({exc.code}). {detail[:200]}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            last_exc = exc
+            if _attempt == 0:
+                _time.sleep(2)  # Brief pause before retry
+
+    if last_exc is not None:
         raise FeedbackSubmissionError(
-            f"Server rejected the feedback ({exc.code}). {detail[:200]}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise FeedbackSubmissionError(
-            f"Could not send feedback to admin: {exc.reason}"
-        ) from exc
+            f"Could not send feedback to admin: {last_exc.reason}"
+        ) from last_exc
 
     if not raw:
         return {"ok": True}

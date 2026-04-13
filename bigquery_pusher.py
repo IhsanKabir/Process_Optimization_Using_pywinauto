@@ -56,6 +56,25 @@ def _full_table(table: str) -> str:
     return f"{project}.{dataset}.{table}"
 
 
+_BQ_BATCH_SIZE = 500  # BigQuery streaming insert has a 10MB/request limit
+
+
+def _batch_insert(client, table: str, rows: list[dict]) -> int:
+    """Insert rows in batches to avoid exceeding BigQuery request size limits.
+
+    Returns total rows inserted, or -1 on first error.
+    """
+    total = 0
+    for i in range(0, len(rows), _BQ_BATCH_SIZE):
+        batch = rows[i : i + _BQ_BATCH_SIZE]
+        errors = client.insert_rows_json(table, batch)
+        if errors:
+            logger.error("  [BQ] Insert errors (batch %d): %s", i // _BQ_BATCH_SIZE, errors[:3])
+            return -1
+        total += len(batch)
+    return total
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Push fare snapshot
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,14 +153,13 @@ def push_fare_snapshot(
         return 0
 
     try:
-        errors = client.insert_rows_json(_full_table("fact_gds_fare_snapshot"), rows)
-        if errors:
-            logger.error("  [BQ] Insert errors: %s", errors[:3])
+        inserted = _batch_insert(client, _full_table("fact_gds_fare_snapshot"), rows)
+        if inserted < 0:
             return -1
         logger.info(
-            "  [BQ] Pushed %d fare rows to BigQuery (run %s)", len(rows), cycle_id
+            "  [BQ] Pushed %d fare rows to BigQuery (run %s)", inserted, cycle_id
         )
-        return len(rows)
+        return inserted
     except Exception as e:
         logger.error("  [BQ] Failed to push fare snapshot: %s", e)
         return -1
@@ -202,12 +220,11 @@ def push_change_events(changes: dict, run_time: datetime | None = None) -> int:
         return 0
 
     try:
-        errors = client.insert_rows_json(_full_table("fact_gds_change_event"), rows)
-        if errors:
-            logger.error("  [BQ] Change event insert errors: %s", errors[:3])
+        inserted = _batch_insert(client, _full_table("fact_gds_change_event"), rows)
+        if inserted < 0:
             return -1
-        logger.info("  [BQ] Pushed %d change events to BigQuery", len(rows))
-        return len(rows)
+        logger.info("  [BQ] Pushed %d change events to BigQuery", inserted)
+        return inserted
     except Exception as e:
         logger.error("  [BQ] Failed to push change events: %s", e)
         return -1
@@ -263,14 +280,13 @@ def push_tax_snapshot(
         return 0
 
     try:
-        errors = client.insert_rows_json(_full_table("fact_gds_tax_snapshot"), rows)
-        if errors:
-            logger.error("  [BQ] Tax insert errors: %s", errors[:3])
+        inserted = _batch_insert(client, _full_table("fact_gds_tax_snapshot"), rows)
+        if inserted < 0:
             return -1
         logger.info(
-            "  [BQ] Pushed %d tax rows to BigQuery (run %s)", len(rows), cycle_id
+            "  [BQ] Pushed %d tax rows to BigQuery (run %s)", inserted, cycle_id
         )
-        return len(rows)
+        return inserted
     except Exception as e:
         logger.error("  [BQ] Failed to push tax snapshot: %s", e)
         return -1
