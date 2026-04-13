@@ -235,6 +235,21 @@ MIN_PASSWORD_LENGTH = 4  # Minimum characters for password
 MAX_PCC_LENGTH = 10  # Maximum characters for PCC
 
 # ══════════════════════════════════════════════════════════════
+# RBD → CABIN MAPPING
+# ══════════════════════════════════════════════════════════════
+
+RBD_CABIN = {
+    "F": "First", "A": "First", "P": "First",
+    "J": "Business", "C": "Business", "D": "Business",
+    "I": "Business", "Z": "Business",
+    "W": "Premium Economy", "S": "Premium Economy", "E": "Premium Economy",
+    "Y": "Economy", "B": "Economy", "M": "Economy", "H": "Economy",
+    "K": "Economy", "Q": "Economy", "V": "Economy", "T": "Economy",
+    "L": "Economy", "G": "Economy", "N": "Economy", "O": "Economy",
+    "R": "Economy", "U": "Economy", "X": "Economy",
+}
+
+# ══════════════════════════════════════════════════════════════
 # TERMINAL PATTERNS & KEYWORDS
 # ══════════════════════════════════════════════════════════════
 
@@ -289,6 +304,7 @@ DEFAULT_WINDOW_TITLE = "Application Window 1"
 # connect() tries these in order when the default title is not found.
 SMARTPOINT_WINDOW_TITLES = [
     "Application Window 1",
+    "Travelport Smartpoint - Application Window 1",
     "Travelport Smartpoint",
     "Travelport SmartPoint",
     "SmartPoint",
@@ -297,6 +313,9 @@ SMARTPOINT_WINDOW_TITLES = [
     "Smartpoint Desktop",
     "Travelport",
 ]
+
+# Substrings that identify the automation tool's own window — never connect to these.
+SELF_WINDOW_KEYWORDS = ["TravelportAuto", "Travelport Fare Automation"]
 
 # UI Automation IDs
 TERMINAL_AUTOMATION_ID = "SmartRichTextBox"

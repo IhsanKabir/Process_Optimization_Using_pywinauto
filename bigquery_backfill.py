@@ -46,34 +46,7 @@ from google.cloud import bigquery as bq
 PROJECT = os.environ["BIGQUERY_PROJECT_ID"]
 DATASET = os.environ["BIGQUERY_DATASET"]
 
-RBD_CABIN = {
-    "F": "First",
-    "A": "First",
-    "P": "First",
-    "J": "Business",
-    "C": "Business",
-    "D": "Business",
-    "I": "Business",
-    "Z": "Business",
-    "W": "Premium Economy",
-    "S": "Premium Economy",
-    "Y": "Economy",
-    "B": "Economy",
-    "M": "Economy",
-    "H": "Economy",
-    "K": "Economy",
-    "L": "Economy",
-    "Q": "Economy",
-    "T": "Economy",
-    "E": "Economy",
-    "N": "Economy",
-    "R": "Economy",
-    "U": "Economy",
-    "V": "Economy",
-    "X": "Economy",
-    "O": "Economy",
-    "G": "Economy",
-}
+from constants import RBD_CABIN
 
 
 def _cabin(rbd: str) -> str:

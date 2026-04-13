@@ -15,7 +15,6 @@ import logging
 import os
 import queue
 import re
-import shutil
 import sys
 import threading
 import tkinter as tk
@@ -622,7 +621,7 @@ class TravelportGUI:
                     webbrowser.open(payload)
         except queue.Empty:
             pass
-        self.root.after(80, self._poll)
+        self.root.after(150, self._poll)
 
     # ── Log parsing → UI updates ──────────────────────────────────────────────
 

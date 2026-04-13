@@ -299,36 +299,8 @@ def push_tax_snapshot(
 
 def _rbd_to_cabin(rbd: str) -> str:
     """Map RBD code to cabin class name."""
-    rbd = rbd.upper().strip()
-    first_class = {"P", "F", "A"}
-    business = {"J", "C", "D", "I", "Z"}
-    premium_economy = {"W", "S", "E"}
-    economy = {
-        "Y",
-        "B",
-        "M",
-        "H",
-        "K",
-        "Q",
-        "V",
-        "T",
-        "L",
-        "G",
-        "N",
-        "O",
-        "R",
-        "U",
-        "X",
-    }
-    if rbd in first_class:
-        return "First"
-    if rbd in business:
-        return "Business"
-    if rbd in premium_economy:
-        return "Premium Economy"
-    if rbd in economy:
-        return "Economy"
-    return "Economy"
+    from constants import RBD_CABIN
+    return RBD_CABIN.get((rbd or "").upper().strip()[:1], "Economy")
 
 
 def is_configured() -> bool:

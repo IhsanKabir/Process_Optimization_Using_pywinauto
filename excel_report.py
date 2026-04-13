@@ -908,33 +908,10 @@ def _group_rbds_by_cabin_break(rbds, airlines, rbd_sort_order):
     return upper_rbds, economy_rbds
 
 
-def _is_unsaleable_rbd(entries, rbd):
-    if "(Unsaleable)" in str(rbd):
-        return True
-
-    for _airline, _domestic, _route_key, route_info in entries:
-        rbd_data = (
-            route_info.get("rbd_data", route_info)
-            if isinstance(route_info, dict)
-            else {}
-        )
-        if not isinstance(rbd_data, dict):
-            continue
-
-        rbd_info = rbd_data.get(rbd)
-        if not isinstance(rbd_info, dict):
-            continue
-
-        if "(Unsaleable)" in str(
-            rbd_info.get("ow_fare_basis", "")
-        ) or "(Unsaleable)" in str(rbd_info.get("rt_fare_basis", "")):
-            return True
-
-    return False
-
-
-def _best_rbd_fare(entries, rbd, changes):
-    fares = []
+def _precompute_rbd_lookups(entries, changes):
+    """Pre-compute unsaleable set and best-fare dict in a single pass over entries."""
+    unsaleable_set = set()
+    best_fare_map = {}  # rbd -> max fare value
 
     for _airline, _domestic, route_key, route_info in entries:
         rbd_data = (
@@ -942,32 +919,45 @@ def _best_rbd_fare(entries, rbd, changes):
             if isinstance(route_info, dict) and "rbd_data" in route_info
             else route_info
         )
-        rbd_info = rbd_data.get(rbd) if isinstance(rbd_data, dict) else None
+        if not isinstance(rbd_data, dict):
+            continue
 
-        if isinstance(rbd_info, dict):
+        for rbd, rbd_info in rbd_data.items():
+            if not isinstance(rbd_info, dict):
+                continue
+
+            # Check unsaleable
+            if "(Unsaleable)" in str(
+                rbd_info.get("ow_fare_basis", "")
+            ) or "(Unsaleable)" in str(rbd_info.get("rt_fare_basis", "")):
+                unsaleable_set.add(rbd)
+
+            # Collect fares
             for fare_key in ("ow_fare", "rt_fare"):
                 fare = rbd_info.get(fare_key)
                 if fare is not None:
-                    fares.append(fare)
+                    best_fare_map[rbd] = max(best_fare_map.get(rbd, float("-inf")), fare)
 
-        change_info = changes.get(route_key, {}).get(rbd) if changes else None
-        if change_info and change_info.get("type") == "sold_out":
-            for fare_key in ("old_ow_fare", "old_rt_fare"):
-                fare = change_info.get(fare_key)
-                if fare is not None:
-                    fares.append(fare)
+            # Check sold_out changes
+            change_info = changes.get(route_key, {}).get(rbd) if changes else None
+            if change_info and change_info.get("type") == "sold_out":
+                for fare_key in ("old_ow_fare", "old_rt_fare"):
+                    fare = change_info.get(fare_key)
+                    if fare is not None:
+                        best_fare_map[rbd] = max(best_fare_map.get(rbd, float("-inf")), fare)
 
-    if not fares:
-        return float("-inf")
-
-    return max(fares)
+    return unsaleable_set, best_fare_map
 
 
-def _sort_rbd_bucket_by_fare(rbds, entries, changes, rbd_sort_order):
+def _is_unsaleable_rbd(unsaleable_set, rbd):
+    return "(Unsaleable)" in str(rbd) or rbd in unsaleable_set
+
+
+def _sort_rbd_bucket_by_fare(rbds, best_fare_map, rbd_sort_order):
     return sorted(
         rbds,
         key=lambda rbd: (
-            -_best_rbd_fare(entries, rbd, changes),
+            -best_fare_map.get(rbd, float("-inf")),
             *_fallback_rbd_order(rbd, rbd_sort_order),
         ),
     )
@@ -978,26 +968,28 @@ def _partition_sorted_rbds(entries, rbds, airlines, rbd_sort_order, changes):
         rbds, airlines, rbd_sort_order
     )
 
+    unsaleable_set, best_fare_map = _precompute_rbd_lookups(entries, changes)
+
     upper_saleable = []
     economy_saleable = []
-    unsaleable_rbds = []
+    unsaleable_rbds_list = []
 
     for rbd in upper_rbds:
-        if _is_unsaleable_rbd(entries, rbd):
-            unsaleable_rbds.append(rbd)
+        if _is_unsaleable_rbd(unsaleable_set, rbd):
+            unsaleable_rbds_list.append(rbd)
         else:
             upper_saleable.append(rbd)
 
     for rbd in economy_rbds:
-        if _is_unsaleable_rbd(entries, rbd):
-            unsaleable_rbds.append(rbd)
+        if _is_unsaleable_rbd(unsaleable_set, rbd):
+            unsaleable_rbds_list.append(rbd)
         else:
             economy_saleable.append(rbd)
 
     return (
-        _sort_rbd_bucket_by_fare(upper_saleable, entries, changes, rbd_sort_order),
-        _sort_rbd_bucket_by_fare(economy_saleable, entries, changes, rbd_sort_order),
-        _sort_rbd_bucket_by_fare(unsaleable_rbds, entries, changes, rbd_sort_order),
+        _sort_rbd_bucket_by_fare(upper_saleable, best_fare_map, rbd_sort_order),
+        _sort_rbd_bucket_by_fare(economy_saleable, best_fare_map, rbd_sort_order),
+        _sort_rbd_bucket_by_fare(unsaleable_rbds_list, best_fare_map, rbd_sort_order),
     )
 
 
@@ -1234,12 +1226,13 @@ def _write_section(
     # Column headers
     _styled_cell(ws, row, 1, "RBD", HEADER_FONT, HEADER_FILL)
     col = 2
+    multi_domestic = len(set(e[1] for e in entries)) > 1
     for airline, domestic, _rk, _ri in entries:
         al_name = airline_names.get(airline, airline)
         dom_name = city_names.get(domestic, domestic)
         label = (
             f"{al_name} ({dom_name})"
-            if len(set(e[1] for e in entries)) > 1
+            if multi_domestic
             else al_name
         )
 
@@ -1482,14 +1475,16 @@ def _write_changes_summary(ws, changes, airline_names, city_names, cell_location
 
 
 def _auto_fit_columns(ws, min_width=10, max_width=30):
-    for ci in range(1, ws.max_column + 1):
-        ml = min_width
-        cl = get_column_letter(ci)
-        for ri in range(1, ws.max_row + 1):
-            v = ws.cell(row=ri, column=ci).value
-            if v:
-                ml = max(ml, min(len(str(v)) + 2, max_width))
-        ws.column_dimensions[cl].width = ml
+    col_widths = [min_width] * (ws.max_column or 0)
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=False):
+        for cell in row:
+            if cell.value:
+                idx = cell.column - 1
+                col_widths[idx] = max(
+                    col_widths[idx], min(len(str(cell.value)) + 2, max_width)
+                )
+    for ci, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = width
 
 
 # ── Currency Conversion Sheet ───────────────────────────

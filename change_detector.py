@@ -296,6 +296,19 @@ def format_change_summary(changes: dict) -> str:
     return "\n".join(lines)
 
 
+def _extract_rates(tax_data: dict) -> dict:
+    """Build a lookup dict from tax sections: (section_label, condition) -> (section, rate)."""
+    rates = {}
+    for section in tax_data.get("sections", []):
+        category = section.get("category", "")
+        subcategory = section.get("subcategory", "")
+        section_label = f"{category} {subcategory}".strip()
+        for rate in section.get("rates", []):
+            condition = rate.get("condition", "")
+            rates[(section_label, condition)] = (section, rate)
+    return rates
+
+
 def detect_tax_changes(current_data: dict, previous_data: dict) -> dict:
     """
     Compare current tax data with previous data and detect changes.
@@ -376,25 +389,8 @@ def detect_tax_changes(current_data: dict, previous_data: dict) -> dict:
 
             elif curr_tax and prev_tax:
                 # Compare sections and rates within this tax type
-                # Create lookup: (section_key, condition) -> rate
-                def get_rate_key(section, rate):
-                    category = section.get("category", "")
-                    subcategory = section.get("subcategory", "")
-                    section_label = f"{category} {subcategory}".strip()
-                    condition = rate.get("condition", "")
-                    return (section_label, condition)
-
-                curr_rates = {}
-                for section in curr_tax.get("sections", []):
-                    for rate in section.get("rates", []):
-                        key = get_rate_key(section, rate)
-                        curr_rates[key] = (section, rate)
-
-                prev_rates = {}
-                for section in prev_tax.get("sections", []):
-                    for rate in section.get("rates", []):
-                        key = get_rate_key(section, rate)
-                        prev_rates[key] = (section, rate)
+                curr_rates = _extract_rates(curr_tax)
+                prev_rates = _extract_rates(prev_tax)
 
                 all_rate_keys = curr_rates.keys() | prev_rates.keys()
 
@@ -516,24 +512,3 @@ def format_tax_change_summary(changes: dict) -> str:
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    # Quick test
-    previous = {
-        "BG_DAC-CGP": {
-            "Y": {"rbd": "Y", "ow_fare": 100, "rt_fare": 200},
-            "J": {"rbd": "J", "ow_fare": 200, "rt_fare": 400},
-            "C": {"rbd": "C", "ow_fare": 150, "rt_fare": 300},
-        }
-    }
-
-    current = {
-        "BG_DAC-CGP": {
-            "Y": {"rbd": "Y", "ow_fare": 110, "rt_fare": 200},  # OW increased
-            "J": {"rbd": "J", "ow_fare": 200, "rt_fare": 400},  # No change
-            "D": {"rbd": "D", "ow_fare": 180, "rt_fare": 360},  # New RBD
-            # C removed
-        }
-    }
-
-    changes = detect_changes(current, previous)
-    print(format_change_summary(changes))

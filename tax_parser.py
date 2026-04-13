@@ -17,6 +17,15 @@ from typing import Optional
 
 logger = logging.getLogger("travelport.tax_parser")
 
+# Pre-compiled regex patterns
+_RE_FTAX_LIST = re.compile(r"(.+?)>FTAX-[A-Z]{2}/([A-Z0-9]{2,3})")
+_RE_AMOUNT_CHECK = re.compile(r"(?:\s|^)[A-Z]{3}\s+\d+\.?\d*\s*$")
+_RE_AMOUNT = re.compile(r"(?:\s|^)([A-Z]{3})\s*(\d+(?:\.\d+)?)\s*$")
+_RE_LEADING_DASH = re.compile(r"^[-–]\s*")
+_RE_AIRPORT_CODE = re.compile(r"^[A-Z]{3}\s*[-–]\s+[A-Z]")
+_RE_HAS_AMOUNT = re.compile(r"(?:\s|^)[A-Z]{3}\s*\d+\.\d+\s*$")
+_RE_DATE = re.compile(r"(\d{2})([A-Z]{3})(\d{2,4})")
+
 
 def parse_ftax_list(raw_text: str) -> list[dict]:
     """
@@ -35,10 +44,8 @@ def parse_ftax_list(raw_text: str) -> list[dict]:
     # Pattern expects format like:
     # AIRPORT DEVELOPMENT LEVY              >FTAX-SG/L7·
     # Name...                              >FTAX-{CC}/{CODE}[junk]
-    pattern = re.compile(r"(.+?)>FTAX-[A-Z]{2}/([A-Z0-9]{2,3})")
-
     for line in lines:
-        match = pattern.search(line.strip())
+        match = _RE_FTAX_LIST.search(line.strip())
         if match:
             name = match.group(1).strip()
             code = match.group(2).strip()
@@ -104,7 +111,7 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
             continue
         # Deduplicate: skip lines we've already seen, unless they're rate lines
         # (rate lines with amounts can repeat legitimately for different categories)
-        amount_match_check = re.search(r"(?:\s|^)[A-Z]{3}\s+\d+\.?\d*\s*$", stripped)
+        amount_match_check = _RE_AMOUNT_CHECK.search(stripped)
         line_key = stripped.rstrip()
         if not amount_match_check and line_key in seen_lines:
             continue
@@ -119,7 +126,7 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
     pending_condition = ""  # For multi-line conditions
 
     # Amount pattern: e.g. "SGD 46.40", "CNY 172", "AED 75" (supports whole numbers and decimals)
-    amount_pattern = re.compile(r"(?:\s|^)([A-Z]{3})\s*(\d+(?:\.\d+)?)\s*$")
+    amount_pattern = _RE_AMOUNT
 
     for i, stripped in enumerate(all_lines):
         upper = stripped.upper()
@@ -215,7 +222,7 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
                 pending_condition = ""
 
             # Clean up condition: remove leading dash/hyphen
-            condition_text = re.sub(r"^[-–]\s*", "", condition_text).strip()
+            condition_text = _RE_LEADING_DASH.sub("",condition_text).strip()
 
             # Determine status based on dates in the condition
             status = _determine_status(condition_text)
@@ -231,7 +238,7 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
 
         elif upper.endswith("AND"):
             # Multi-line condition: "TVL ON/AFTER 01APR28 AND" → next line has the rest
-            text = re.sub(r"^[-–]\s*", "", stripped).strip()
+            text = _RE_LEADING_DASH.sub("",stripped).strip()
             pending_condition = text
 
         elif _is_category_line(stripped):
@@ -285,8 +292,7 @@ def _is_category_line(line: str) -> bool:
         return False
 
     # Airport code pattern: "SIN - CHANGI", "XSP", "SELETAR XSP"
-    airport_pattern = re.match(r"^[A-Z]{3}\s*[-–]\s+[A-Z]", upper)
-    if airport_pattern:
+    if _RE_AIRPORT_CODE.match(upper):
         return True
 
     # Category indicators (Global coverage)
@@ -317,7 +323,7 @@ def _is_category_line(line: str) -> bool:
 
     # Must contain a keyword and NOT contain an amount at the end
     has_keyword = any(kw in upper for kw in category_keywords)
-    has_amount = bool(re.search(r"(?:\s|^)[A-Z]{3}\s*\d+\.\d+\s*$", upper))
+    has_amount = bool(_RE_HAS_AMOUNT.search(upper))
 
     return has_keyword and not has_amount
 
@@ -326,7 +332,7 @@ def _is_main_category(line: str) -> bool:
     """Check if this is a top-level category (e.g., DEPARTURES FROM CHANGI SIN)."""
     upper = line.strip().upper()
     # Airport code pattern like "SIN - CHANGI" is a main location
-    if re.match(r"^[A-Z]{3}\s*[-–]\s+[A-Z]", upper):
+    if _RE_AIRPORT_CODE.match(upper):
         return True
     return (
         "DEPARTURES FROM" in upper
@@ -351,9 +357,8 @@ def _determine_status(condition: str, reference_date: datetime = None) -> str:
     today = reference_date if reference_date is not None else datetime.now()
 
     # Extract all dates from the condition
-    date_pattern = re.compile(r"(\d{2})([A-Z]{3})(\d{2,4})")
     dates = []
-    for match in date_pattern.finditer(condition.upper()):
+    for match in _RE_DATE.finditer(condition.upper()):
         day = int(match.group(1))
         month_str = match.group(2)
         year_str = match.group(3)

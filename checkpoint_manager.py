@@ -160,6 +160,19 @@ class CheckpointManager:
             "total_processed": len(self.completed_commands) + len(self.failed_commands),
         }
 
+    def _list_checkpoint_files_sorted(self) -> List[str]:
+        """List checkpoint files sorted by modification time (newest first)."""
+        files = [
+            f
+            for f in os.listdir(self.checkpoint_dir)
+            if f.startswith("checkpoint_") and f.endswith(".json")
+        ]
+        files.sort(
+            key=lambda f: os.path.getmtime(os.path.join(self.checkpoint_dir, f)),
+            reverse=True,
+        )
+        return files
+
     def cleanup_old_checkpoints(self, keep_recent: int = 5):
         """
         Clean up old checkpoint files, keeping only the most recent ones.
@@ -168,20 +181,10 @@ class CheckpointManager:
             keep_recent: Number of recent checkpoint files to keep
         """
         try:
-            checkpoint_files = [
-                f
-                for f in os.listdir(self.checkpoint_dir)
-                if f.startswith("checkpoint_") and f.endswith(".json")
-            ]
+            checkpoint_files = self._list_checkpoint_files_sorted()
 
             if len(checkpoint_files) <= keep_recent:
                 return
-
-            # Sort by modification time
-            checkpoint_files.sort(
-                key=lambda f: os.path.getmtime(os.path.join(self.checkpoint_dir, f)),
-                reverse=True,
-            )
 
             # Remove old checkpoints
             for old_file in checkpoint_files[keep_recent:]:
@@ -200,23 +203,12 @@ class CheckpointManager:
             Path to the latest checkpoint file, or None if not found
         """
         try:
-            checkpoint_files = [
-                f
-                for f in os.listdir(self.checkpoint_dir)
-                if f.startswith("checkpoint_") and f.endswith(".json")
-            ]
+            checkpoint_files = self._list_checkpoint_files_sorted()
 
             if not checkpoint_files:
                 return None
 
-            # Sort by modification time
-            checkpoint_files.sort(
-                key=lambda f: os.path.getmtime(os.path.join(self.checkpoint_dir, f)),
-                reverse=True,
-            )
-
-            latest = os.path.join(self.checkpoint_dir, checkpoint_files[0])
-            return latest
+            return os.path.join(self.checkpoint_dir, checkpoint_files[0])
         except Exception as e:
             logger.warning(f"  Failed to find latest checkpoint: {e}")
             return None
