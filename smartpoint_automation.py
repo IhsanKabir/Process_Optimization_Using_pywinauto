@@ -10,6 +10,7 @@ import time
 import logging
 import pyperclip
 from pywinauto import Desktop
+from pywinauto.application import Application as _PWApp
 
 import pyautogui
 
@@ -71,12 +72,17 @@ class SmartpointAutomation:
     def connect(self) -> bool:
         """Connect to the running instance of Smartpoint.
 
-        Tries the configured window title first, then falls back through all
-        known Smartpoint title variants so the tool works across different
-        Smartpoint versions and installation types.
-        """
-        desktop = Desktop(backend="uia")
+        Uses two complementary strategies so it works across all Smartpoint
+        versions and Windows configurations:
 
+        1. Application.connect(title=...) — matches the actual Win32 window
+           title (GetWindowText), exactly what the taskbar shows.  This is
+           the most reliable method on machines where UIA accessibility names
+           differ from the visual title.
+
+        2. Desktop.window(best_match=...) — UIA fuzzy-name matching.  Used as
+           a fallback for each known title variant.
+        """
         # Build the list of titles to try: configured title first, then all
         # known variants (deduped, preserving order).
         seen: set = set()
@@ -86,39 +92,55 @@ class SmartpointAutomation:
                 seen.add(t)
                 titles_to_try.append(t)
 
+        desktop = Desktop(backend="uia")
+
         for title in titles_to_try:
-            self.logger.info(
-                f"  Attempting to connect to '{title}' using UIA backend..."
-            )
+            # ── Strategy 1: Win32 exact title match (most reliable) ──────────
             try:
-                candidate = desktop.window(best_match=title)
+                self.logger.info(
+                    f"  Attempting to connect to '{title}' (win32 title match)..."
+                )
+                app = _PWApp(backend="uia").connect(title=title, timeout=2)
+                candidate = app.window(title=title)
                 if candidate.exists():
                     self.window = candidate
-                    self.window_title = title  # remember what worked
+                    self.window_title = title
                     self.connected = True
                     self.logger.info(
                         f"  Successfully connected to Smartpoint ({self.window.window_text()})."
                     )
                     return True
             except Exception:
-                pass  # title not found — try the next one
+                pass
 
-        # None of the known titles matched — log all visible window titles to
-        # help diagnose the exact title on this machine.
+            # ── Strategy 2: UIA best_match (fuzzy accessibility name) ────────
+            try:
+                self.logger.info(
+                    f"  Attempting to connect to '{title}' (UIA best_match)..."
+                )
+                candidate = desktop.window(best_match=title)
+                if candidate.exists():
+                    self.window = candidate
+                    self.window_title = title
+                    self.connected = True
+                    self.logger.info(
+                        f"  Successfully connected to Smartpoint ({self.window.window_text()})."
+                    )
+                    return True
+            except Exception:
+                pass
+
+        # Nothing worked — list every visible window title to aid diagnosis.
         try:
             visible_titles = sorted(
-                set(
-                    w.window_text()
-                    for w in desktop.windows()
-                    if w.window_text().strip()
-                )
+                {w.window_text() for w in desktop.windows() if w.window_text().strip()}
             )
             self.logger.info(
                 "  [ERROR] Smartpoint window not found. "
                 "Make sure Travelport Smartpoint is open and fully signed in.\n"
-                "  Tip: if the tool is running without administrator rights and "
-                "Smartpoint is elevated, try running TravelportAuto as Administrator.\n"
-                f"  Windows visible on screen: {', '.join(visible_titles) or '(none)'}"
+                f"  Windows currently visible: {', '.join(visible_titles) or '(none)'}\n"
+                "  If Smartpoint is open but not in the list above, please share "
+                "this log so the correct window title can be added."
             )
         except Exception:
             self.logger.info(
