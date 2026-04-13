@@ -1339,8 +1339,9 @@ def main(prebuilt_args=None, stop_event=None):
                             logger.warning(f"    Attempt {attempt} failed: {e}")
 
                         if attempt < MAX_RETRIES:
-                            logger.info(f"    Retrying in 1.5s...")
-                            _time.sleep(1.5)
+                            delay = constants.RETRY_DELAY
+                            logger.info(f"    Retrying in {delay}s...")
+                            _time.sleep(delay)
                             automation.refresh_terminal()
 
                     if terminal_text and len(terminal_text.strip()) > 50:
@@ -1406,13 +1407,19 @@ def main(prebuilt_args=None, stop_event=None):
                                 src, dst, date_str, airline
                             )
 
-                            # Freshness check: ensures terminal actually refreshed
+                            # Freshness check: poll until the terminal shows the
+                            # expected date, rather than sleeping a fixed 1.5s.
                             if date_str.upper() not in fs_result.upper():
                                 logger.warning(
-                                    f"      [!] Screen hasn't updated to {date_str} yet. Waiting 1.5s..."
+                                    f"      [!] Screen hasn't updated to {date_str} yet, polling..."
                                 )
-                                _time.sleep(1.5)
-                                fs_result = automation._copy_terminal_text()
+                                fs_result = automation._wait_for_response(
+                                    fs_result,
+                                    timeout=constants.RETRY_DELAY * 2,
+                                    min_wait=0.2,
+                                    poll_interval=0.15,
+                                    stability_checks=1,
+                                )
 
                             # Log raw results for diagnostics
                             with open("fs_debug.log", "a", encoding="utf-8") as f:
