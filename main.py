@@ -1406,6 +1406,7 @@ def main(prebuilt_args=None, stop_event=None):
                 command_iter = commands
                 logger.info(f"  Executing {len(commands)} commands...")
 
+            commands_attempted = 0
             for i, cmd in enumerate(command_iter, 1):
                 if _stop and _stop.is_set():
                     logger.info("  [STOP] Stop requested — finishing after this point.")
@@ -1415,6 +1416,8 @@ def main(prebuilt_args=None, stop_event=None):
                 # Skip if already completed (double-check in case of concurrent runs)
                 if checkpoint_mgr and checkpoint_mgr.is_completed(cmd_str):
                     continue
+
+                commands_attempted += 1
 
                 # Only log if not using tqdm
                 if not use_tqdm:
@@ -1758,22 +1761,26 @@ def main(prebuilt_args=None, stop_event=None):
 
             # Show execution summary
             total_commands = len(commands)
-            successful_commands = total_commands - len(failed_commands)
-            logger.info("")
-            logger.info("=" * 60)
-            logger.info("  EXECUTION SUMMARY")
-            logger.info("=" * 60)
-            logger.info(f"  Total commands: {total_commands}")
-            logger.info(f"  Successful: {successful_commands}")
-            logger.info(f"  Failed: {len(failed_commands)}")
+            successful_commands = commands_attempted - len(failed_commands)
+            skipped_commands = total_commands - commands_attempted
+            logger.info(“”)
+            logger.info(“=” * 60)
+            logger.info(“  EXECUTION SUMMARY”)
+            logger.info(“=” * 60)
+            logger.info(f”  Total commands: {total_commands}”)
+            logger.info(f”  Attempted: {commands_attempted}”)
+            logger.info(f”  Successful: {successful_commands}”)
+            logger.info(f”  Failed: {len(failed_commands)}”)
+            if skipped_commands > 0:
+                logger.info(f”  Skipped (stopped early): {skipped_commands}”)
             if failed_commands:
-                logger.warning("  Failed commands:")
+                logger.warning(“  Failed commands:”)
                 for fc in failed_commands:
-                    logger.warning(f"    - {fc}")
-                logger.warning("  Note: Failed commands will not appear in the report")
-            else:
-                logger.info("  âœ“ All commands completed successfully!")
-            logger.info("=" * 60)
+                    logger.warning(f”    - {fc}”)
+                logger.warning(“  Note: Failed commands will not appear in the report”)
+            elif commands_attempted == total_commands:
+                logger.info(“  âœ” All commands completed successfully!”)
+            logger.info(“=” * 60)
 
         else:
             logger.info("[2/4] MANUAL MODE: Loading raw GDS data from disk...")
