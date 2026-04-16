@@ -2048,17 +2048,20 @@ def _write_tax_breakdown_sheet(
                 ws,
                 row,
                 col_offset + 1,
-                "Amount (BDT)",
+                f"Amount ({base_cur or 'USD'})",
                 TAX_HEADER_FONT,
                 TAX_HEADER_FILL,
                 alignment=Alignment(horizontal="right"),
             )
             row += 1
 
+            # Convert amounts from equivalent to base currency
+            _to_base = (lambda v: round(v / exch_rate, 2)) if exch_rate else (lambda v: v)
+
             # Charges section (YQ, YR, Q)
-            yq = fs_taxes.get("yq_charge", 0)
-            yr = fs_taxes.get("yr_charge", 0)
-            q = fs_taxes.get("q_charge", 0)
+            yq = _to_base(fs_taxes.get("yq_charge", 0))
+            yr = _to_base(fs_taxes.get("yr_charge", 0))
+            q = _to_base(fs_taxes.get("q_charge", 0))
 
             for label, val in [
                 ("YQ", yq),
@@ -2104,7 +2107,7 @@ def _write_tax_breakdown_sheet(
                     c1 = ws.cell(row=row, column=col_offset, value=code)
                     c1.font = TAX_LABEL_FONT
                     c1.border = THIN_BORDER
-                    c2 = ws.cell(row=row, column=col_offset + 1, value=float(amt))
+                    c2 = ws.cell(row=row, column=col_offset + 1, value=_to_base(float(amt)))
                     c2.font = TAX_LABEL_FONT
                     c2.border = THIN_BORDER
                     c2.number_format = "#,##0.00"
@@ -2113,8 +2116,8 @@ def _write_tax_breakdown_sheet(
 
             # Totals
             row += 1  # Blank separator
-            total_taxes = fs_taxes.get("total_taxes", 0)
-            total_amount = fs_taxes.get("total_amount", 0)
+            total_taxes = _to_base(fs_taxes.get("total_taxes", 0))
+            total_amount = _to_base(fs_taxes.get("total_amount", 0))
 
             for label, val in [
                 ("Total Taxes", total_taxes),
@@ -2280,16 +2283,19 @@ def _write_yq_charges_sheet(
                 ws,
                 row,
                 col_offset + 1,
-                "Amount (BDT)",
+                f"Amount ({base_cur or 'USD'})",
                 YQ_HEADER_FONT,
                 YQ_HEADER_FILL,
                 alignment=Alignment(horizontal="right"),
             )
             row += 1
 
-            yq = fs_taxes.get("yq_charge", 0) or 0
-            yr = fs_taxes.get("yr_charge", 0) or 0
-            q = fs_taxes.get("q_charge", 0) or 0
+            # Convert from equivalent to base currency
+            _to_base = (lambda v: round(v / exch_rate, 2)) if exch_rate else (lambda v: v)
+
+            yq = _to_base(fs_taxes.get("yq_charge", 0) or 0)
+            yr = _to_base(fs_taxes.get("yr_charge", 0) or 0)
+            q = _to_base(fs_taxes.get("q_charge", 0) or 0)
 
             for label, val, fill in [
                 ("YQ", yq, YQ_YQ_FILL),
@@ -2326,3 +2332,58 @@ def _write_yq_charges_sheet(
             col_offset += TABLE_WIDTH + GAP
 
         current_row = table_start_row + max_rows_in_group + 2
+
+
+# ── FZS Exchange Rates Sheet ────────────────────────────────
+def _write_fzs_sheet(ws, fzs_data: dict):
+    """
+    Write a dedicated Exchange Rates sheet from FZS command results.
+
+    fzs_data: dict keyed by "USD-BDT" etc, values are parse_fzs_output() results.
+    """
+    row = 1
+    ws.cell(row=row, column=1, value="Exchange Rates (FZS)").font = Font(
+        name="Calibri", bold=True, size=16
+    )
+    row += 1
+    ws.cell(
+        row=row, column=1,
+        value=f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}",
+    ).font = Font(name="Calibri", size=10, italic=True)
+    row += 2
+
+    # Headers
+    header_font = Font(name="Calibri", bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill(
+        start_color="1F4E79", end_color="1F4E79", fill_type="solid"
+    )
+    for col, label in enumerate(["From", "To", "Rate (1 unit)", "Source"], 1):
+        c = ws.cell(row=row, column=col, value=label)
+        c.font = header_font
+        c.fill = header_fill
+        c.border = THIN_BORDER
+        c.alignment = Alignment(horizontal="center")
+    row += 1
+
+    # Data rows
+    data_font = Font(name="Calibri", size=11)
+    for pair_key in sorted(fzs_data.keys()):
+        entry = fzs_data[pair_key]
+        ws.cell(row=row, column=1, value=entry["from_currency"]).font = data_font
+        ws.cell(row=row, column=2, value=entry["to_currency"]).font = data_font
+        rate_cell = ws.cell(row=row, column=3, value=entry["rate"])
+        rate_cell.font = Font(name="Calibri", size=11, bold=True)
+        rate_cell.number_format = "#,##0.0000"
+        rate_cell.alignment = Alignment(horizontal="right")
+        ws.cell(row=row, column=4, value="FZS Command").font = Font(
+            name="Calibri", size=10, italic=True, color="666666"
+        )
+        for col in range(1, 5):
+            ws.cell(row=row, column=col).border = THIN_BORDER
+        row += 1
+
+    # Column widths
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 18
+    ws.column_dimensions["D"].width = 16

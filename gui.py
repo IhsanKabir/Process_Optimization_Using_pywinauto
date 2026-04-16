@@ -340,6 +340,7 @@ class TravelportGUI:
         self._run_thread: threading.Thread | None = None
         self._last_report: str | None = None
         self._stop_overlay: tk.Toplevel | None = None
+        self._global_esc_active = False
         self._update_info: dict | None = None
         self._feedback_dialog: tk.Toplevel | None = None
         self._feedback_thread: threading.Thread | None = None
@@ -589,10 +590,17 @@ class TravelportGUI:
             parent, text="Compare against:", bg="#f2f2f2", font=("Segoe UI", 9)
         ).pack(anchor="w", pady=(6, 0))
         self.compare_var = tk.StringVar()
-        ttk.Entry(parent, textvariable=self.compare_var).pack(fill="x")
+        compare_row = tk.Frame(parent, bg="#f2f2f2")
+        compare_row.pack(fill="x")
+        ttk.Entry(compare_row, textvariable=self.compare_var).pack(
+            side="left", fill="x", expand=True
+        )
+        ttk.Button(
+            compare_row, text="Browse", width=7, command=self._browse_compare_file
+        ).pack(side="left", padx=(4, 0))
         tk.Label(
             parent,
-            text="blank = previous run  |  e.g. 2026-04-08 or 2026-04-08_1805",
+            text="blank = previous run  |  date or browse for snapshot file",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
@@ -1343,6 +1351,18 @@ class TravelportGUI:
         self.status_label.configure(text="Stopping…", fg="#b73632")
         self.stop_btn.configure(state="disabled")
 
+    def _browse_compare_file(self):
+        archive_dir = os.path.join("data", "archive")
+        if not os.path.isdir(archive_dir):
+            archive_dir = "."
+        path = filedialog.askopenfilename(
+            title="Select snapshot file to compare against",
+            initialdir=archive_dir,
+            filetypes=[("JSON snapshots", "*.json"), ("All files", "*.*")],
+        )
+        if path:
+            self.compare_var.set(path)
+
     def _open_report(self):
         if self._last_report and os.path.exists(self._last_report):
             os.startfile(self._last_report)
@@ -1616,7 +1636,31 @@ class TravelportGUI:
         self._stop_overlay = ov
         self.root.iconify()
 
+        # Start global ESC key listener (works even when app doesn't have focus)
+        self._start_global_esc_listener()
+
+    def _start_global_esc_listener(self):
+        """Poll for ESC key globally using Win32 GetAsyncKeyState."""
+        self._global_esc_active = True
+
+        def _poll_esc():
+            import ctypes
+            VK_ESCAPE = 0x1B
+            get_key = ctypes.windll.user32.GetAsyncKeyState
+            while self._global_esc_active:
+                if get_key(VK_ESCAPE) & 0x8000:
+                    self.root.after(0, self._stop)
+                    break
+                time.sleep(0.1)
+
+        self._esc_thread = threading.Thread(target=_poll_esc, daemon=True)
+        self._esc_thread.start()
+
+    def _stop_global_esc_listener(self):
+        self._global_esc_active = False
+
     def _hide_stop_overlay(self):
+        self._stop_global_esc_listener()
         if self._stop_overlay and self._stop_overlay.winfo_exists():
             self._stop_overlay.destroy()
         self._stop_overlay = None

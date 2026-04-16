@@ -229,6 +229,12 @@ def load_snapshot_by_reference(
     Returns:
         Tuple of (parsed snapshot data, snapshot id without prefix/suffix).
     """
+    # If reference is a direct file path, load it directly
+    if os.path.isfile(reference):
+        snapshot_data = _load_snapshot_file(reference, os.path.basename(reference))
+        snapshot_id = os.path.basename(reference).removeprefix("snapshot_").removesuffix(".json")
+        return snapshot_data, snapshot_id
+
     snapshots = _list_snapshot_names(archive_dir)
     if not snapshots:
         return None, None

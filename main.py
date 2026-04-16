@@ -990,6 +990,33 @@ def main(prebuilt_args=None, stop_event=None):
         if not tax_airports:
             logger.error("  No 'tax_airports' defined in config.")
             sys.exit(1)
+
+        # Filter tax_airports to only those appearing in configured routes
+        commands_file = os.path.join(
+            SCRIPT_DIR, config.get("commands_file", "commands.txt")
+        )
+        if os.path.exists(commands_file):
+            route_airports = set()
+            with open(commands_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("FD") and "/" in line and len(line) >= 8:
+                        route_airports.add(line[2:5].upper())
+                        route_airports.add(line[5:8].upper())
+            if route_airports:
+                filtered = {
+                    k: v for k, v in tax_airports.items()
+                    if k.upper() in route_airports
+                }
+                if filtered:
+                    skipped = len(tax_airports) - len(filtered)
+                    tax_airports = filtered
+                    if skipped > 0:
+                        logger.info(
+                            f"  Filtered to {len(tax_airports)} airports matching configured routes "
+                            f"(skipped {skipped} unrelated)"
+                        )
+
         if args.limit > 0:
             tax_airports = {
                 k: v for i, (k, v) in enumerate(tax_airports.items()) if i < args.limit
@@ -1110,13 +1137,38 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info(f"  [CHECKPOINT] Checkpoint mode enabled")
             logger.info(f"  [CHECKPOINT] Session: {checkpoint_mgr.session_name}")
 
-    def _stop_run(message: str):
+    def _stop_run(message: str, partial_data: dict | None = None):
         logger.info(message)
         if checkpoint_mgr:
             checkpoint_mgr.save_checkpoint()
             logger.info(
                 f"  [CHECKPOINT] Final checkpoint saved: {len(checkpoint_mgr.completed_commands)} completed"
             )
+
+        # Generate partial report with whatever data was collected
+        if partial_data:
+            try:
+                timestamp_full = datetime.now().strftime("%Y-%m-%d_%H%M")
+                if getattr(args, "tax", False):
+                    partial_path = os.path.join(
+                        REPORTS_DIR, f"tax_report_{timestamp_full}_partial.xlsx"
+                    )
+                    from tax_report import generate_tax_report
+
+                    result = generate_tax_report(partial_data, partial_path, None, config)
+                else:
+                    partial_path = os.path.join(
+                        REPORTS_DIR, f"fare_report_{timestamp_full}_partial.xlsx"
+                    )
+                    result = generate_report(
+                        partial_data, partial_path, None, config,
+                        only_currency=getattr(args, "only_currency", False),
+                    )
+                logger.info(f"  [PARTIAL] Partial report saved: {result}")
+                return result
+            except Exception as exc:
+                logger.warning(f"  [PARTIAL] Could not generate partial report: {exc}")
+
         return None
 
     # [2/4] Extraction
@@ -1359,14 +1411,14 @@ def main(prebuilt_args=None, stop_event=None):
 
                 automation.show_completion_signal()
             except StopRequested:
-                return _stop_run("  [STOP] Stop requested - tax extraction stopped.")
+                return _stop_run("  [STOP] Stop requested - tax extraction stopped.", partial_data=tax_data if tax_data else None)
         else:
             logger.error("  Manual loading of taxes not implemented. Use --auto.")
             sys.exit(1)
 
         all_route_data = tax_data  # Alias for reporting
         if _stop and _stop.is_set():
-            return _stop_run("  [STOP] Stop requested - skipping tax report generation.")
+            return _stop_run("  [STOP] Stop requested - skipping tax report generation.", partial_data=all_route_data)
         logger.info("")
 
     # FARE MODE EXTRACTION
@@ -1857,7 +1909,7 @@ def main(prebuilt_args=None, stop_event=None):
             stop_event=_stop,
         )
         if _stop and _stop.is_set():
-            return _stop_run("  [STOP] Stop requested - parsing stopped.")
+            return _stop_run("  [STOP] Stop requested - parsing stopped.", partial_data=all_route_data)
         if not all_route_data:
             logger.error("  No fare data could be parsed.")
             sys.exit(1)
@@ -1866,7 +1918,7 @@ def main(prebuilt_args=None, stop_event=None):
     # [3.5] Change detection (for both modes)
     changes = None
     if _stop and _stop.is_set():
-        return _stop_run("  [STOP] Stop requested - skipping change detection.")
+        return _stop_run("  [STOP] Stop requested - skipping change detection.", partial_data=all_route_data)
     if not args.no_changes:
         logger.info("[3.5] Detecting changes...")
         archive_subdir = "tax" if args.tax else "fare"
@@ -1950,9 +2002,40 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info("  DB is primary snapshot source; skipping JSON archive write.")
         logger.info("")
 
+    # -- FZS EXTRACTION (Exchange Rates) --
+    fzs_data = {}
+    if args.auto and not args.tax and not (_stop and _stop.is_set()):
+        # Collect unique currency pairs from parsed data
+        currency_pairs = set()
+        local_currency = config.get("local_currency", "BDT")
+        for route_key, route_info in all_route_data.items():
+            if isinstance(route_info, dict):
+                fs_taxes = route_info.get("fs_taxes", {})
+                base_cur = fs_taxes.get("base_currency")
+                if base_cur and base_cur != local_currency:
+                    currency_pairs.add((base_cur, local_currency))
+
+        if currency_pairs:
+            logger.info(f"  [FZS] Extracting exchange rates for {len(currency_pairs)} currency pair(s)...")
+            from fzs_parser import parse_fzs_output
+
+            try:
+                for from_cur, to_cur in sorted(currency_pairs):
+                    if _stop and _stop.is_set():
+                        break
+                    fzs_text = automation.run_fzs_command(from_cur, to_cur)
+                    parsed = parse_fzs_output(fzs_text, from_cur, to_cur)
+                    fzs_data[f"{from_cur}-{to_cur}"] = parsed
+                    if parsed["rate"] > 0:
+                        logger.info(f"    [OK] {from_cur} -> {to_cur}: {parsed['rate']}")
+                    else:
+                        logger.warning(f"    [!] Could not parse rate for {from_cur} -> {to_cur}")
+            except Exception as exc:
+                logger.warning(f"  [FZS] FZS extraction failed: {exc}")
+
     # [4/4] Generate Report
     if _stop and _stop.is_set():
-        return _stop_run("  [STOP] Stop requested - skipping report generation.")
+        return _stop_run("  [STOP] Stop requested - skipping report generation.", partial_data=all_route_data)
     logger.info("[4/4] Generating Excel report...")
 
     if args.output:
@@ -2004,6 +2087,21 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(f"  [OK] Attached FTAX to {result_path}")
             except Exception as e:
                 logger.error(f"  Failed to append FTAX sheets: {e}")
+
+        # Append FZS Exchange Rates sheet
+        if fzs_data:
+            logger.info("  Appending FZS Exchange Rates sheet...")
+            import openpyxl
+            from excel_report import _write_fzs_sheet
+
+            try:
+                wb = openpyxl.load_workbook(result_path)
+                ws_fzs = wb.create_sheet("Exchange Rates (FZS)")
+                _write_fzs_sheet(ws_fzs, fzs_data)
+                wb.save(result_path)
+                logger.info(f"  [OK] Attached FZS rates to {result_path}")
+            except Exception as e:
+                logger.error(f"  Failed to append FZS sheet: {e}")
 
     # [DB] Optional persistence - keep current file/report flow unchanged
     _run_mode = "auto" if not args.tax else "tax-mode"

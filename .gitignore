@@ -51,3 +51,5 @@ htmlcov/
 coverage.xml
 tmp*/
 preferences.json
+# Added by code-review-graph
+.code-review-graph/
