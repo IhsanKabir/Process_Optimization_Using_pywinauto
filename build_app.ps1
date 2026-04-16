@@ -12,6 +12,9 @@ if (Test-Path $venvActivate) {
 Write-Host "Installing PyInstaller if needed..."
 pip install pyinstaller
 
+Write-Host "Installing application requirements..."
+pip install -r requirements.txt
+
 Write-Host "Building TravelportAuto.exe from TravelportAuto.spec..."
 pyinstaller --clean TravelportAuto.spec
 

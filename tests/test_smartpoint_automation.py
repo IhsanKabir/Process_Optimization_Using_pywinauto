@@ -1,9 +1,68 @@
+import threading
+
 import smartpoint_automation as spa
 from smartpoint_automation import SmartpointAutomation
 from tax_breakdown_parser import (
     looks_like_fs_tax_breakdown,
     parse_fs_tax_breakdown,
 )
+
+
+def test_connect_falls_back_to_visible_galileo_desktop_alias(monkeypatch):
+    connect_calls = []
+
+    class FakeCandidate:
+        def __init__(self, title):
+            self._title = title
+
+        def exists(self):
+            return bool(self._title)
+
+        def window_text(self):
+            return self._title
+
+    class FakeVisibleWindow(FakeCandidate):
+        def __init__(self, title, handle):
+            super().__init__(title)
+            self.element_info = type("ElementInfo", (), {"handle": handle})()
+
+    class FakeApp:
+        def __init__(self, backend=None):
+            self.backend = backend
+
+        def connect(self, **kwargs):
+            connect_calls.append(kwargs)
+            if "handle" in kwargs:
+                return self
+            raise RuntimeError("not found")
+
+        def window(self, **kwargs):
+            if "handle" in kwargs:
+                return FakeCandidate("Galileo Desktop - Window 1")
+            return FakeCandidate("")
+
+    class FakeDesktop:
+        def __init__(self, backend=None):
+            self.backend = backend
+
+        def window(self, **kwargs):
+            return FakeCandidate("")
+
+        def windows(self):
+            return [
+                FakeVisibleWindow("TravelportAuto  v1.4.0", 10),
+                FakeVisibleWindow("Galileo Desktop - Window 1", 42),
+            ]
+
+    monkeypatch.setattr(spa, "_PWApp", FakeApp)
+    monkeypatch.setattr(spa, "Desktop", FakeDesktop)
+
+    automation = SmartpointAutomation()
+
+    assert automation.connect() is True
+    assert automation.connected is True
+    assert automation.window_title == "Galileo Desktop - Window 1"
+    assert any(call.get("handle") == 42 for call in connect_calls)
 
 
 def test_has_more_prompt_ignores_end_signal():
@@ -43,6 +102,37 @@ def test_run_command_waits_for_settled_end_before_sending_md(monkeypatch):
     result = automation.run_command("FDDACMCT/BG", max_pages=3)
 
     assert "END" in result
+    assert "MD" not in sent_commands
+
+
+def test_run_command_skips_extra_settle_when_initial_text_already_has_end(monkeypatch):
+    automation = SmartpointAutomation()
+    sent_commands = []
+    settle_calls = []
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "BEFORE")
+    monkeypatch.setattr(automation, "_wait_for_response", lambda *args, **kwargs: "PAGE 1\nEND")
+    monkeypatch.setattr(
+        automation,
+        "_wait_for_stable_screen",
+        lambda *args, **kwargs: settle_calls.append((args, kwargs)) or "SHOULD NOT RUN",
+    )
+    monkeypatch.setattr(automation, "_has_invalid", lambda text: False)
+    monkeypatch.setattr(automation, "_has_currency_redirect", lambda text: None)
+    monkeypatch.setattr(automation, "click_more_prompt_link", lambda text: False)
+
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "typewrite",
+        lambda text, interval=None: sent_commands.append(text),
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+
+    result = automation.run_command("FDDACMCT/BG", max_pages=3)
+
+    assert result == "PAGE 1\nEND"
+    assert settle_calls == []
     assert "MD" not in sent_commands
 
 
@@ -190,3 +280,304 @@ def test_click_fare_amount_for_penalty_prefers_exact_unsaleable_line(monkeypatch
     assert popup_text.startswith("16. PENALTIES")
     assert restored_text == page_text
     assert target_calls[0][0] == 1
+
+
+def test_clipboard_adapter_prefers_native_win32_reader(monkeypatch):
+    class FailingPyperclip:
+        @staticmethod
+        def paste():
+            raise AssertionError("pyperclip fallback should not be used")
+
+    monkeypatch.setattr(spa, "clipboard_paste", lambda: "CAPTURED TEXT")
+    monkeypatch.setattr(spa, "_real_pyperclip", FailingPyperclip)
+
+    assert spa.pyperclip.paste() == "CAPTURED TEXT"
+
+
+def test_clipboard_adapter_falls_back_when_native_reader_is_empty(monkeypatch):
+    class FakePyperclip:
+        @staticmethod
+        def paste():
+            return "PYperclip fallback"
+
+    monkeypatch.setattr(spa, "clipboard_paste", lambda: "")
+    monkeypatch.setattr(spa, "_real_pyperclip", FakePyperclip)
+
+    assert spa.pyperclip.paste() == "PYperclip fallback"
+
+
+def test_copy_terminal_text_skips_hotkeys_when_window_not_foreground(monkeypatch):
+    automation = SmartpointAutomation()
+
+    class _Rect:
+        left = 100
+        top = 50
+
+    class _Window:
+        @staticmethod
+        def rectangle():
+            return _Rect()
+
+    hotkey_calls = []
+
+    automation.window = _Window()
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_is_window_foreground", lambda: False)
+    monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
+    monkeypatch.setattr(spa.pyperclip, "paste", lambda: "")
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        automation,
+        "_send_clipboard_shortcuts",
+        lambda: hotkey_calls.append(("copy",)),
+    )
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    assert automation._copy_terminal_text() == ""
+    assert hotkey_calls == []
+
+
+def test_is_window_foreground_accepts_related_foreground_handle(monkeypatch):
+    automation = SmartpointAutomation()
+
+    class _Wrapper:
+        handle = 100
+
+    class _Window:
+        @staticmethod
+        def wrapper_object():
+            return _Wrapper()
+
+    class _User32:
+        @staticmethod
+        def GetForegroundWindow():
+            return 200
+
+        @staticmethod
+        def GetAncestor(hwnd, flag):
+            return {100: 100, 200: 100}.get(hwnd, hwnd)
+
+        @staticmethod
+        def IsChild(parent, child):
+            return 0
+
+        @staticmethod
+        def GetWindowThreadProcessId(hwnd, pid_ref):
+            pid_ref._obj.value = 1234
+            return 1
+
+    automation.window = _Window()
+    monkeypatch.setattr(spa.ctypes, "windll", type("Windll", (), {"user32": _User32()})())
+
+    assert automation._is_window_foreground() is True
+
+
+def test_copy_terminal_text_uses_terminal_focus_point(monkeypatch):
+    automation = SmartpointAutomation()
+    clicks = []
+
+    class _Window:
+        pass
+
+    automation.window = _Window()
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (444, 222))
+    monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
+    monkeypatch.setattr(spa.pyperclip, "paste", lambda: "CAPTURED")
+    monkeypatch.setattr(
+        automation,
+        "_send_clipboard_shortcuts",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "click",
+        lambda *args, **kwargs: clicks.append((kwargs.get("x"), kwargs.get("y"))),
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    assert automation._copy_terminal_text() == "CAPTURED"
+    assert clicks[0] == (444, 222)
+
+
+def test_wait_for_stable_screen_reuses_initial_text(monkeypatch):
+    automation = SmartpointAutomation()
+    reads = []
+
+    monkeypatch.setattr(
+        automation,
+        "_copy_terminal_text",
+        lambda: reads.append("copy") or "UNCHANGED",
+    )
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    assert (
+        automation._wait_for_stable_screen(
+            initial_text="UNCHANGED", max_polls=2, interval=0.1
+        )
+        == "UNCHANGED"
+    )
+    assert reads == ["copy"]
+
+
+def test_wait_for_response_raises_stop_requested(monkeypatch):
+    stop_event = threading.Event()
+    stop_event.set()
+    automation = SmartpointAutomation(stop_event=stop_event)
+
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    try:
+        automation._wait_for_response("BEFORE", timeout=0.5, poll_interval=0.1)
+        assert False, "Expected StopRequested"
+    except spa.StopRequested:
+        pass
+
+
+def test_clear_screen_raises_stop_requested(monkeypatch):
+    stop_event = threading.Event()
+    stop_event.set()
+    automation = SmartpointAutomation(stop_event=stop_event)
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+
+    try:
+        automation.clear_screen()
+        assert False, "Expected StopRequested"
+    except spa.StopRequested:
+        pass
+
+
+def test_copy_terminal_text_stops_after_one_slower_retry(monkeypatch):
+    automation = SmartpointAutomation()
+    sent_shortcuts = []
+
+    class _Window:
+        pass
+
+    pasted = iter(["", "CAPTURED"])
+    automation.window = _Window()
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (444, 222))
+    monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
+    monkeypatch.setattr(spa.pyperclip, "paste", lambda: next(pasted))
+    monkeypatch.setattr(
+        automation,
+        "_send_clipboard_shortcuts",
+        lambda: sent_shortcuts.append("copy"),
+    )
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    assert automation._copy_terminal_text() == "CAPTURED"
+    assert sent_shortcuts == ["copy", "copy"]
+
+
+def test_copy_terminal_text_uses_heavy_fallback_after_two_empty_attempts(monkeypatch):
+    automation = SmartpointAutomation()
+    focus_calls = []
+    sent_shortcuts = []
+    clicks = []
+
+    class _Window:
+        pass
+
+    pasted = iter(["", "", "CAPTURED"])
+    automation.window = _Window()
+    monkeypatch.setattr(
+        automation, "focus", lambda force=False: focus_calls.append(force) or True
+    )
+    monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (444, 222))
+    monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
+    monkeypatch.setattr(spa.pyperclip, "paste", lambda: next(pasted))
+    monkeypatch.setattr(
+        automation,
+        "_send_clipboard_shortcuts",
+        lambda: sent_shortcuts.append("copy"),
+    )
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "click",
+        lambda *args, **kwargs: clicks.append((kwargs.get("x"), kwargs.get("y"))),
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    assert automation._copy_terminal_text() == "CAPTURED"
+    assert sent_shortcuts == ["copy", "copy", "copy"]
+    assert len(focus_calls) == 2
+    assert len(clicks) == 2
+
+
+def test_copy_terminal_text_converts_keyboard_interrupt_to_runtime_error(monkeypatch):
+    automation = SmartpointAutomation()
+
+    class _Rect:
+        left = 100
+        top = 50
+
+    class _Window:
+        @staticmethod
+        def rectangle():
+            return _Rect()
+
+    automation.window = _Window()
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
+    monkeypatch.setattr(spa.pyperclip, "paste", lambda: "")
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        automation,
+        "_send_clipboard_shortcuts",
+        lambda: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    try:
+        automation._copy_terminal_text()
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "Ctrl+C likely reached the console" in str(exc)
+
+
+def test_send_clipboard_shortcuts_uses_pywinauto_send_keys(monkeypatch):
+    automation = SmartpointAutomation()
+    sent = []
+
+    monkeypatch.setattr(spa._pw_kb, "send_keys", lambda keys: sent.append(keys))
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    automation._send_clipboard_shortcuts()
+
+    assert sent == ["^a", "^c"]
+
+
+def test_login_types_sign_on_username_and_password(monkeypatch):
+    automation = SmartpointAutomation()
+    sent_keys = []
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "clear_screen", lambda: None)
+    monkeypatch.setattr(
+        automation,
+        "_copy_terminal_text",
+        lambda: "WELCOME TO SMARTPOINT",
+    )
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "typewrite",
+        lambda text, interval=None: sent_keys.append(text),
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    result = automation.login("user/name", "secret123", "3L5Q")
+
+    assert result is True
+    assert sent_keys == ["SON/Z3L5Q", "user/name", "secret123"]

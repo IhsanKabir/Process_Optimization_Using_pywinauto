@@ -1,16 +1,18 @@
 """
-clipboard_util.py - Win32 Clipboard Access (No External Dependencies)
+clipboard_util.py - Windows clipboard helpers with retry-safe reads/writes.
 
-Replaces pyperclip with direct Win32 API calls to avoid:
-  - Clipboard deadlocks when another app holds the clipboard lock
-  - ctypes DLL initialization conflicts in PyInstaller builds
-
-All functions retry on transient lock failures (up to 5 attempts).
+Uses pywin32's clipboard API first because it is more robust than raw ctypes
+for normal desktop use, while keeping a low-level fallback for environments
+where pywin32 is unavailable.
 """
 
 import ctypes
-import ctypes.wintypes as wintypes
 import time
+
+try:
+    import win32clipboard
+except Exception:
+    win32clipboard = None
 
 _user32 = ctypes.windll.user32
 _kernel32 = ctypes.windll.kernel32
@@ -22,10 +24,31 @@ GMEM_MOVEABLE = 0x0002
 def _open_clipboard(retries: int = 5, delay: float = 0.05) -> bool:
     """Try to open the Windows clipboard with retries."""
     for _ in range(retries):
+        if win32clipboard is not None:
+            try:
+                win32clipboard.OpenClipboard()
+                return True
+            except Exception:
+                time.sleep(delay)
+                continue
         if _user32.OpenClipboard(0):
             return True
         time.sleep(delay)
     return False
+
+
+def _close_clipboard():
+    """Close the clipboard, ignoring secondary close errors."""
+    try:
+        if win32clipboard is not None:
+            win32clipboard.CloseClipboard()
+            return
+    except Exception:
+        pass
+    try:
+        _user32.CloseClipboard()
+    except Exception:
+        pass
 
 
 def clipboard_paste() -> str:
@@ -36,6 +59,13 @@ def clipboard_paste() -> str:
     if not _open_clipboard():
         return ""
     try:
+        if win32clipboard is not None:
+            try:
+                data = win32clipboard.GetClipboardData(CF_UNICODETEXT)
+                return str(data) if data else ""
+            except Exception:
+                return ""
+
         handle = _user32.GetClipboardData(CF_UNICODETEXT)
         if not handle:
             return ""
@@ -45,7 +75,7 @@ def clipboard_paste() -> str:
         _kernel32.GlobalUnlock(handle)
         return result
     finally:
-        _user32.CloseClipboard()
+        _close_clipboard()
 
 
 def clipboard_clear():
@@ -53,9 +83,15 @@ def clipboard_clear():
     if not _open_clipboard():
         return
     try:
+        if win32clipboard is not None:
+            try:
+                win32clipboard.EmptyClipboard()
+                return
+            except Exception:
+                pass
         _user32.EmptyClipboard()
     finally:
-        _user32.CloseClipboard()
+        _close_clipboard()
 
 
 def clipboard_copy(text: str):
@@ -70,6 +106,14 @@ def clipboard_copy(text: str):
     if not _open_clipboard():
         return
     try:
+        if win32clipboard is not None:
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(str(text), CF_UNICODETEXT)
+                return
+            except Exception:
+                pass
+
         _user32.EmptyClipboard()
         # Allocate global memory for the text (including null terminator)
         byte_count = (len(text) + 1) * ctypes.sizeof(ctypes.c_wchar)
@@ -85,4 +129,4 @@ def clipboard_copy(text: str):
         else:
             _kernel32.GlobalFree(h_mem)
     finally:
-        _user32.CloseClipboard()
+        _close_clipboard()

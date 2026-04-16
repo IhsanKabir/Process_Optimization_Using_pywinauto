@@ -309,6 +309,7 @@ SMARTPOINT_WINDOW_TITLES = [
     "Travelport SmartPoint",
     "SmartPoint",
     "Smartpoint",
+    "Galileo Desktop",
     "Travelport SmartPoint Desktop",
     "Smartpoint Desktop",
     "Travelport",

@@ -245,6 +245,11 @@ def _tqdm_stream():
     return None
 
 
+def _env_truthy(name: str) -> bool:
+    """Return True when an environment variable is set to a truthy value."""
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def load_config(config_path: str) -> dict:
     """Load config - remote GitHub first (auto-updates), local/bundled fallback."""
     # Try remote first - this keeps airline names, airport lists, etc. current
@@ -319,6 +324,7 @@ def process_route_data(
     config: dict,
     enable_validation: bool = True,
     show_progress: bool = True,
+    stop_event=None,
 ) -> dict:
     """Process raw text files into route data with optional validation."""
     rbd_sort_order = config.get("rbd_sort_order", [])
@@ -334,6 +340,9 @@ def process_route_data(
         items = tqdm(items, desc="Processing routes", unit="route", file=_tqdm_stream())
 
     for file_key in items:
+        if stop_event and stop_event.is_set():
+            logger.info("  [STOP] Stop requested during parsing. Stopping early.")
+            break
         raw_text = raw_texts.get(file_key, "")
 
         # Parse fare data if available
@@ -891,6 +900,7 @@ def main(prebuilt_args=None, stop_event=None):
             config,
             enable_validation=False,
             show_progress=use_tqdm,
+            stop_event=stop_event,
         )
 
         if not all_route_data:
@@ -1100,6 +1110,15 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info(f"  [CHECKPOINT] Checkpoint mode enabled")
             logger.info(f"  [CHECKPOINT] Session: {checkpoint_mgr.session_name}")
 
+    def _stop_run(message: str):
+        logger.info(message)
+        if checkpoint_mgr:
+            checkpoint_mgr.save_checkpoint()
+            logger.info(
+                f"  [CHECKPOINT] Final checkpoint saved: {len(checkpoint_mgr.completed_commands)} completed"
+            )
+        return None
+
     # [2/4] Extraction
     failed_commands = []
 
@@ -1116,80 +1135,95 @@ def main(prebuilt_args=None, stop_event=None):
             logger.error("  No commands found to auto-run.")
             sys.exit(1)
 
-        from smartpoint_automation import SmartpointAutomation
+        from smartpoint_automation import SmartpointAutomation, StopRequested
 
-        automation = SmartpointAutomation()
-        if not automation.connect():
-            logger.error("  Please ensure Smartpoint is open and the title matches.")
-            sys.exit(1)
-
-        username, password, pcc = CredentialManager.get_credentials()
-        if username and password:
-            logger.info("  Credentials loaded from environment")
-            try:
-                automation.login(username, password, pcc)
-            except Exception as e:
-                logger.error(f"  Login failed: {e}")
+        automation = SmartpointAutomation(stop_event=_stop)
+        try:
+            if not automation.connect():
+                logger.error("  Please ensure Smartpoint is open and the title matches.")
                 sys.exit(1)
-        else:
-            logger.info("  No credentials found - continuing without login")
 
-        automation.refresh_terminal()
-        os.makedirs(RAW_PENALTY_DIR, exist_ok=True)
+            username, password, pcc = CredentialManager.get_credentials()
+            if username and password:
+                logger.info("  Credentials loaded from environment")
+                if _env_truthy("SMARTPOINT_SKIP_AUTO_LOGIN"):
+                    logger.info(
+                        "  Automatic login skipped because SMARTPOINT_SKIP_AUTO_LOGIN is enabled."
+                    )
+                else:
+                    try:
+                        if not automation.login(username, password, pcc):
+                            logger.error(
+                                "  Automatic login did not complete. Please sign in manually and try again."
+                            )
+                            sys.exit(1)
+                    except Exception as e:
+                        logger.error(f"  Login failed: {e}")
+                        sys.exit(1)
+            else:
+                logger.info("  No credentials found - continuing without login")
 
-        if use_tqdm:
-            command_iter = tqdm(
-                commands, desc="Extracting penalties", unit="cmd", file=_tqdm_stream()
-            )
-        else:
-            command_iter = commands
-            logger.info(f"  Executing {len(commands)} commands...")
+            automation.refresh_terminal()
+            os.makedirs(RAW_PENALTY_DIR, exist_ok=True)
 
-        for i, cmd in enumerate(command_iter, 1):
-            if _stop and _stop.is_set():
-                logger.info("  [STOP] Stop requested - finishing after this point.")
-                break
-            cmd_str = cmd["command"]
-            if not use_tqdm:
-                logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
-
-            command_penalties = automation.run_penalty_command(cmd_str)
-            if not command_penalties:
-                failed_commands.append(cmd_str)
-                logger.warning(f"    [!] No penalty popups captured for {cmd_str}")
-                continue
-
-            file_key = generate_file_key(cmd)
-            for penalty_capture in command_penalties:
-                fare_basis = penalty_capture.get("fare_basis")
-                journey_type = "RT" if penalty_capture.get("is_rt") else "OW"
-                parsed_penalty = parse_penalty_text(
-                    penalty_capture.get("raw_penalty_text", ""),
-                    airline=penalty_capture.get("airline", cmd.get("airline")),
-                    route=cmd.get("route"),
-                    fare_basis=fare_basis,
-                    rbd=penalty_capture.get("rbd"),
-                    fare_amount=penalty_capture.get("fare"),
-                    journey_type=journey_type,
+            if use_tqdm:
+                command_iter = tqdm(
+                    commands, desc="Extracting penalties", unit="cmd", file=_tqdm_stream()
                 )
+            else:
+                command_iter = commands
+                logger.info(f"  Executing {len(commands)} commands...")
 
-                if not parsed_penalty.get("rules"):
-                    logger.warning(
-                        f"    [!] No structured penalty rules parsed for {fare_basis}"
+            for i, cmd in enumerate(command_iter, 1):
+                if _stop and _stop.is_set():
+                    logger.info("  [STOP] Stop requested - finishing after this point.")
+                    break
+                cmd_str = cmd["command"]
+                if not use_tqdm:
+                    logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
+
+                command_penalties = automation.run_penalty_command(cmd_str)
+                if not command_penalties:
+                    failed_commands.append(cmd_str)
+                    logger.warning(f"    [!] No penalty popups captured for {cmd_str}")
+                    continue
+
+                file_key = generate_file_key(cmd)
+                for penalty_capture in command_penalties:
+                    fare_basis = penalty_capture.get("fare_basis")
+                    journey_type = "RT" if penalty_capture.get("is_rt") else "OW"
+                    parsed_penalty = parse_penalty_text(
+                        penalty_capture.get("raw_penalty_text", ""),
+                        airline=penalty_capture.get("airline", cmd.get("airline")),
+                        route=cmd.get("route"),
+                        fare_basis=fare_basis,
+                        rbd=penalty_capture.get("rbd"),
+                        fare_amount=penalty_capture.get("fare"),
+                        journey_type=journey_type,
                     )
 
-                penalty_records.append(parsed_penalty)
+                    if not parsed_penalty.get("rules"):
+                        logger.warning(
+                            f"    [!] No structured penalty rules parsed for {fare_basis}"
+                        )
 
-                backup_name = f"{file_key}_{journey_type}_{_safe_filename(fare_basis)}_penalty.txt"
-                backup_path = os.path.join(RAW_PENALTY_DIR, backup_name)
-                try:
-                    with open(backup_path, "w", encoding="utf-8") as f:
-                        f.write(parsed_penalty.get("raw_penalty_text", ""))
-                except Exception as e:
-                    logger.warning(f"    Could not save penalty backup: {e}")
+                    penalty_records.append(parsed_penalty)
 
-        automation.show_completion_signal()
-        logger.info("")
+                    backup_name = f"{file_key}_{journey_type}_{_safe_filename(fare_basis)}_penalty.txt"
+                    backup_path = os.path.join(RAW_PENALTY_DIR, backup_name)
+                    try:
+                        with open(backup_path, "w", encoding="utf-8") as f:
+                            f.write(parsed_penalty.get("raw_penalty_text", ""))
+                    except Exception as e:
+                        logger.warning(f"    Could not save penalty backup: {e}")
+
+            automation.show_completion_signal()
+            logger.info("")
+        except StopRequested:
+            return _stop_run("  [STOP] Stop requested - penalty extraction stopped.")
+
+        if _stop and _stop.is_set():
+            return _stop_run("  [STOP] Stop requested - skipping penalty report generation.")
 
         logger.info("[3/3] Generating penalty report...")
         timestamp_full = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -1229,105 +1263,110 @@ def main(prebuilt_args=None, stop_event=None):
 
         if args.auto:
             logger.info("[2/4] AUTO MODE: Connecting to Smartpoint UI for FTAX...")
-            from smartpoint_automation import SmartpointAutomation
+            from smartpoint_automation import SmartpointAutomation, StopRequested
 
-            automation = SmartpointAutomation()
-            if not automation.connect():
-                logger.error("  Please ensure Smartpoint is open.")
-                sys.exit(1)
+            automation = SmartpointAutomation(stop_event=_stop)
+            try:
+                if not automation.connect():
+                    logger.error("  Please ensure Smartpoint is open.")
+                    sys.exit(1)
 
-            automation.refresh_terminal()
-            from tax_parser import parse_ftax_list, parse_ftax_detail
+                automation.refresh_terminal()
+                from tax_parser import parse_ftax_list, parse_ftax_detail
 
-            # Use tqdm for progress if available
-            airport_items = tax_airports.items()
-            if use_tqdm:
-                airport_items = tqdm(
-                    list(airport_items),
-                    desc="Extracting tax data",
-                    unit="airport",
-                    file=_tqdm_stream(),
-                )
-            else:
-                airport_items = list(airport_items)
-
-            for index, (airport_code, airport_info) in enumerate(airport_items, 1):
-                if _stop and _stop.is_set():
-                    logger.info("  [STOP] Stop requested - finishing after this point.")
-                    break
-                country_code = airport_info["country"]
-
-                # Only log if not using tqdm
-                if not use_tqdm:
-                    logger.info(
-                        f"  [{index}/{len(tax_airports)}] Airport: {airport_code} ({country_code})"
+                # Use tqdm for progress if available
+                airport_items = tax_airports.items()
+                if use_tqdm:
+                    airport_items = tqdm(
+                        list(airport_items),
+                        desc="Extracting tax data",
+                        unit="airport",
+                        file=_tqdm_stream(),
                     )
+                else:
+                    airport_items = list(airport_items)
 
-                # Get tax types
-                list_cmd = f"FTAX-{country_code}"
-                list_text = automation.run_command(list_cmd, max_pages=1)
+                for index, (airport_code, airport_info) in enumerate(airport_items, 1):
+                    if _stop and _stop.is_set():
+                        logger.info("  [STOP] Stop requested - finishing after this point.")
+                        break
+                    country_code = airport_info["country"]
 
-                # Debug backup
-                os.makedirs(RAW_DATA_DIR, exist_ok=True)
-                backup_path = os.path.join(RAW_DATA_DIR, f"{list_cmd}.txt")
-                with open(backup_path, "w", encoding="utf-8") as f:
-                    f.write(list_text)
-
-                tax_types = parse_ftax_list(list_text)
-                logger.info(
-                    f"    Found {len(tax_types)} tax types: {', '.join(t['code'] for t in tax_types)}"
-                )
-
-                if not tax_types:
-                    logger.warning(
-                        f"    [DEBUG] Raw list text ({len(list_text)} chars): {list_text[:300]}"
-                    )
-
-                airport_tax_details = []
-                for idx, t in enumerate(tax_types, 1):
-                    detail_text = automation.run_ftax_command(
-                        country_code, t["code"], tax_index=idx
-                    )
-
-                    # Save raw detail text for debugging
-                    detail_backup = os.path.join(
-                        RAW_DATA_DIR, f"FTAX-{country_code}_{t['code']}.txt"
-                    )
-                    with open(detail_backup, "w", encoding="utf-8") as f:
-                        f.write(detail_text)
-
-                    if not detail_text or len(detail_text.strip()) < 20:
-                        failed_commands.append(f"{country_code}/{t['code']}")
-                        logger.warning(f"    Failed to extract details for {t['code']}")
-                        continue
-
-                    logger.debug(
-                        f"      [DEBUG] Raw detail text first 200 chars: {detail_text[:200]}"
-                    )
-
-                    detail_data = parse_ftax_detail(detail_text, t["code"], t["name"])
-                    airport_tax_details.append(detail_data)
-                    logger.info(
-                        f"      {t['code']} -> {len(detail_data['sections'])} sections extracted."
-                    )
-
-                    if not detail_data["sections"]:
-                        logger.warning(
-                            f"      [DEBUG] 0 sections! Full text ({len(detail_text)} chars): {detail_text[:500]}"
+                    # Only log if not using tqdm
+                    if not use_tqdm:
+                        logger.info(
+                            f"  [{index}/{len(tax_airports)}] Airport: {airport_code} ({country_code})"
                         )
 
-                    # Return to tax list for next tax type
-                    if idx < len(tax_types):
-                        automation.return_to_tax_list(country_code)
+                    # Get tax types
+                    list_cmd = f"FTAX-{country_code}"
+                    list_text = automation.run_command(list_cmd, max_pages=1)
 
-                tax_data[airport_code] = {"taxes": airport_tax_details}
+                    # Debug backup
+                    os.makedirs(RAW_DATA_DIR, exist_ok=True)
+                    backup_path = os.path.join(RAW_DATA_DIR, f"{list_cmd}.txt")
+                    with open(backup_path, "w", encoding="utf-8") as f:
+                        f.write(list_text)
 
-            automation.show_completion_signal()
+                    tax_types = parse_ftax_list(list_text)
+                    logger.info(
+                        f"    Found {len(tax_types)} tax types: {', '.join(t['code'] for t in tax_types)}"
+                    )
+
+                    if not tax_types:
+                        logger.warning(
+                            f"    [DEBUG] Raw list text ({len(list_text)} chars): {list_text[:300]}"
+                        )
+
+                    airport_tax_details = []
+                    for idx, t in enumerate(tax_types, 1):
+                        detail_text = automation.run_ftax_command(
+                            country_code, t["code"], tax_index=idx
+                        )
+
+                        # Save raw detail text for debugging
+                        detail_backup = os.path.join(
+                            RAW_DATA_DIR, f"FTAX-{country_code}_{t['code']}.txt"
+                        )
+                        with open(detail_backup, "w", encoding="utf-8") as f:
+                            f.write(detail_text)
+
+                        if not detail_text or len(detail_text.strip()) < 20:
+                            failed_commands.append(f"{country_code}/{t['code']}")
+                            logger.warning(f"    Failed to extract details for {t['code']}")
+                            continue
+
+                        logger.debug(
+                            f"      [DEBUG] Raw detail text first 200 chars: {detail_text[:200]}"
+                        )
+
+                        detail_data = parse_ftax_detail(detail_text, t["code"], t["name"])
+                        airport_tax_details.append(detail_data)
+                        logger.info(
+                            f"      {t['code']} -> {len(detail_data['sections'])} sections extracted."
+                        )
+
+                        if not detail_data["sections"]:
+                            logger.warning(
+                                f"      [DEBUG] 0 sections! Full text ({len(detail_text)} chars): {detail_text[:500]}"
+                            )
+
+                        # Return to tax list for next tax type
+                        if idx < len(tax_types):
+                            automation.return_to_tax_list(country_code)
+
+                    tax_data[airport_code] = {"taxes": airport_tax_details}
+
+                automation.show_completion_signal()
+            except StopRequested:
+                return _stop_run("  [STOP] Stop requested - tax extraction stopped.")
         else:
             logger.error("  Manual loading of taxes not implemented. Use --auto.")
             sys.exit(1)
 
         all_route_data = tax_data  # Alias for reporting
+        if _stop and _stop.is_set():
+            return _stop_run("  [STOP] Stop requested - skipping tax report generation.")
         logger.info("")
 
     # FARE MODE EXTRACTION
@@ -1342,7 +1381,7 @@ def main(prebuilt_args=None, stop_event=None):
 
             from smartpoint_automation import SmartpointAutomation
 
-            automation = SmartpointAutomation()
+            automation = SmartpointAutomation(stop_event=_stop)
 
             if not automation.connect():
                 logger.error(
@@ -1354,11 +1393,20 @@ def main(prebuilt_args=None, stop_event=None):
             username, password, pcc = CredentialManager.get_credentials()
             if username and password:
                 logger.info("  Credentials loaded from environment")
-                try:
-                    automation.login(username, password, pcc)
-                except Exception as e:
-                    logger.error(f"  Login failed: {e}")
-                    sys.exit(1)
+                if _env_truthy("SMARTPOINT_SKIP_AUTO_LOGIN"):
+                    logger.info(
+                        "  Automatic login skipped because SMARTPOINT_SKIP_AUTO_LOGIN is enabled."
+                    )
+                else:
+                    try:
+                        if not automation.login(username, password, pcc):
+                            logger.error(
+                                "  Automatic login did not complete. Please sign in manually and try again."
+                            )
+                            sys.exit(1)
+                    except Exception as e:
+                        logger.error(f"  Login failed: {e}")
+                        sys.exit(1)
             else:
                 logger.info("  No credentials found - continuing without login")
                 logger.info("  To enable automatic login, set environment variables:")
@@ -1782,6 +1830,11 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info("  [OK] All commands completed successfully!")
             logger.info("=" * 60)
 
+            if _stop and _stop.is_set():
+                return _stop_run(
+                    "  [STOP] Stop requested - skipping parsing and report generation."
+                )
+
         else:
             logger.info("[2/4] MANUAL MODE: Loading raw GDS data from disk...")
             raw_texts, raw_fs_texts = load_raw_data(RAW_DATA_DIR)
@@ -1801,7 +1854,10 @@ def main(prebuilt_args=None, stop_event=None):
             config,
             enable_validation,
             show_progress=use_tqdm,
+            stop_event=_stop,
         )
+        if _stop and _stop.is_set():
+            return _stop_run("  [STOP] Stop requested - parsing stopped.")
         if not all_route_data:
             logger.error("  No fare data could be parsed.")
             sys.exit(1)
@@ -1809,6 +1865,8 @@ def main(prebuilt_args=None, stop_event=None):
 
     # [3.5] Change detection (for both modes)
     changes = None
+    if _stop and _stop.is_set():
+        return _stop_run("  [STOP] Stop requested - skipping change detection.")
     if not args.no_changes:
         logger.info("[3.5] Detecting changes...")
         archive_subdir = "tax" if args.tax else "fare"
@@ -1893,6 +1951,8 @@ def main(prebuilt_args=None, stop_event=None):
         logger.info("")
 
     # [4/4] Generate Report
+    if _stop and _stop.is_set():
+        return _stop_run("  [STOP] Stop requested - skipping report generation.")
     logger.info("[4/4] Generating Excel report...")
 
     if args.output:
@@ -2006,10 +2066,20 @@ def main(prebuilt_args=None, stop_event=None):
 if __name__ == "__main__":
     try:
         main()
+    except KeyboardInterrupt:
+        import traceback
+
+        logger.error(
+            "Run interrupted by KeyboardInterrupt. Smartpoint may not have had focus and Ctrl+C may have reached the console."
+        )
+        traceback.print_exc()
+        sys.exit(130)
     except Exception as e:
         import traceback
 
-        logging.error(f"Fatal error occurred:\n{traceback.format_exc()}")
+        logger.error(f"Fatal error occurred:\n{traceback.format_exc()}")
+        traceback.print_exc()
+        sys.exit(1)
     finally:
         if getattr(sys, "frozen", False):
             input("\nPress Enter to exit...")

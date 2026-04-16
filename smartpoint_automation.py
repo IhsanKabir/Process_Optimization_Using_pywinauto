@@ -14,7 +14,14 @@ from pywinauto import Desktop
 from pywinauto import keyboard as _pw_kb
 from pywinauto import mouse as _pw_mouse
 from pywinauto.application import Application as _PWApp
-from clipboard_util import clipboard_paste, clipboard_clear
+from clipboard_util import clipboard_paste, clipboard_clear, clipboard_copy
+
+try:
+    import pyautogui as _real_pyautogui
+    import pyperclip as _real_pyperclip
+except Exception:
+    _real_pyautogui = None
+    _real_pyperclip = None
 
 import constants
 from constants import (
@@ -116,20 +123,50 @@ class _KeyboardMouse:
 
 
 class _Clipboard:
-    """Minimal drop-in replacement for pyperclip using Win32 clipboard API."""
+    """Resilient clipboard adapter for Smartpoint terminal capture."""
 
     @staticmethod
     def copy(text):
-        clipboard_clear()
+        try:
+            clipboard_copy(text)
+            return
+        except Exception:
+            pass
+        if _real_pyperclip is not None:
+            try:
+                _real_pyperclip.copy(text)
+            except Exception:
+                pass
 
     @staticmethod
     def paste():
-        return clipboard_paste()
+        try:
+            text = clipboard_paste()
+            if text:
+                return text
+        except Exception:
+            text = ""
+        if _real_pyperclip is not None:
+            try:
+                fallback = _real_pyperclip.paste()
+                if fallback:
+                    return fallback
+            except Exception:
+                pass
+        return text
 
 
-# Module-level names that shadow the removed imports
-pyautogui = _KeyboardMouse()
+# Prefer the original pyautogui stack when available because it has matched
+# Smartpoint's typing/clicking behavior more reliably in packaged builds.
+if _real_pyautogui is not None:
+    pyautogui = _real_pyautogui
+    pyautogui.FAILSAFE = True
+    _INPUT_BACKEND = "pyautogui"
+else:
+    pyautogui = _KeyboardMouse()
+    _INPUT_BACKEND = "pywinauto-fallback"
 pyperclip = _Clipboard()
+_CLIPBOARD_BACKEND = "clipboard-util-hybrid"
 
 # Pre-compiled regex patterns for UI automation
 _RE_WHITESPACE = re.compile(r"\s+")
@@ -139,30 +176,73 @@ _RE_CURRENCY_CODE_FARES = re.compile(r"([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?"
 _RE_FARE_LINE = re.compile(r"^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+")
 _RE_MORE_FARES = re.compile(r"More|More\s+Fares", re.IGNORECASE)
 _RE_MORE_PROMPT = re.compile(r"(MORE\s+(?:FARES|FLIGHTS|OPTIONS))", re.IGNORECASE)
+_SMARTPOINT_WINDOW_HINTS = (
+    "travelport smartpoint",
+    "travelport smartpoint desktop",
+    "smartpoint desktop",
+    "smartpoint",
+    "galileo desktop",
+)
+
+
+class StopRequested(SystemExit):
+    """Raised when the GUI requests that automation should stop immediately."""
 
 
 class SmartpointAutomation:
-    def __init__(self, window_title=DEFAULT_WINDOW_TITLE):
+    def __init__(self, window_title=DEFAULT_WINDOW_TITLE, stop_event=None):
         """Initialize the Smartpoint automation class."""
         self.window_title = window_title
         self.app = None
         self.window = None
         self.connected = False
         self.logged_in = False
+        self.stop_event = stop_event
         self.logger = logging.getLogger("travelport.automation")
         self._cached_terminal_rect = None  # Cache for SmartRichTextBox rect
         self._last_focus_time = 0.0  # Timestamp of last successful focus()
         self._last_terminal_text = ""  # Cache for deduplicating reads
+        self.logger.debug("Using Smartpoint input backend: %s", _INPUT_BACKEND)
+        self.logger.debug("Using Smartpoint clipboard backend: %s", _CLIPBOARD_BACKEND)
+
+    def _raise_if_stopped(self) -> None:
+        """Abort long-running automation steps promptly after a Stop request."""
+        if self.stop_event and self.stop_event.is_set():
+            raise StopRequested("Stop requested by user.")
+
+    def _sleep(self, seconds: float, quantum: float = 0.05) -> None:
+        """Sleep in short slices so Stop requests are honored quickly."""
+        remaining = max(0.0, float(seconds))
+        while remaining > 0:
+            self._raise_if_stopped()
+            chunk = min(quantum, remaining)
+            time.sleep(chunk)
+            remaining -= chunk
 
     def _is_self_window(self, window_text: str) -> bool:
         """Return True if *window_text* belongs to this automation tool, not Smartpoint."""
         upper = window_text.upper()
         return any(kw.upper() in upper for kw in SELF_WINDOW_KEYWORDS)
 
+    def _looks_like_smartpoint_window(self, window_text: str) -> bool:
+        """Return True when *window_text* looks like a Smartpoint top-level window."""
+        normalized = _RE_WHITESPACE.sub(" ", (window_text or "")).strip().lower()
+        if not normalized or self._is_self_window(normalized):
+            return False
+
+        known_titles = {
+            _RE_WHITESPACE.sub(" ", title).strip().lower()
+            for title in [self.window_title] + list(SMARTPOINT_WINDOW_TITLES)
+        }
+        if normalized in known_titles:
+            return True
+
+        return any(hint in normalized for hint in _SMARTPOINT_WINDOW_HINTS)
+
     def connect(self) -> bool:
         """Connect to the running instance of Smartpoint.
 
-        Uses three complementary strategies so it works across all Smartpoint
+        Uses four complementary strategies so it works across all Smartpoint
         versions and Windows configurations:
 
         1. Application.connect(title_re=...)  substring / regex match against
@@ -173,6 +253,10 @@ class SmartpointAutomation:
            fallback for older Smartpoint builds).
 
         3. Desktop.window(best_match=...)  UIA fuzzy-name matching.
+
+        4. Enumerate visible top-level windows and attach by handle when the
+           automation-reported title is a known Smartpoint alias, such as
+           "Galileo Desktop - Window 1".
 
         All strategies reject windows that belong to this automation tool
         itself (e.g. "TravelportAuto v1.3.0").
@@ -263,6 +347,49 @@ class SmartpointAutomation:
                 pass
 
         # Nothing worked — list every visible window title to aid diagnosis.
+        # Strategy 4: Visible-window scan + handle attach for alias titles.
+        try:
+            for visible_window in desktop.windows():
+                try:
+                    wtext = (visible_window.window_text() or "").strip()
+                except Exception:
+                    continue
+
+                if not self._looks_like_smartpoint_window(wtext):
+                    continue
+
+                handle = getattr(
+                    getattr(visible_window, "element_info", None), "handle", None
+                )
+                if not handle:
+                    try:
+                        handle = visible_window.wrapper_object().handle
+                    except Exception:
+                        handle = None
+                if not handle:
+                    continue
+
+                self.logger.info(
+                    f"  Attempting to connect to visible Smartpoint alias '{wtext}' (handle attach)..."
+                )
+                app = _PWApp(backend="uia").connect(handle=handle, timeout=0.5)
+                candidate = app.window(handle=handle)
+                if candidate.exists():
+                    resolved_title = (candidate.window_text() or wtext).strip()
+                    if self._is_self_window(resolved_title):
+                        self.logger.info(f"    Skipping self-match: '{resolved_title}'")
+                        continue
+
+                    self.window = candidate
+                    self.window_title = resolved_title or wtext
+                    self.connected = True
+                    self.logger.info(
+                        f"  Successfully connected to Smartpoint ({resolved_title or wtext})."
+                    )
+                    return True
+        except Exception:
+            pass
+
         try:
             visible_titles = sorted(
                 {w.window_text() for w in desktop.windows() if w.window_text().strip()}
@@ -294,15 +421,13 @@ class SmartpointAutomation:
         if not self.connected or not self.window:
             return False
 
+        self._raise_if_stopped()
+
         # Skip if focus was set recently AND Smartpoint is still foreground
         now = time.time()
         if not force and (now - self._last_focus_time) < FOCUS_CACHE_SECONDS:
-            try:
-                hwnd = self.window.wrapper_object().handle
-                if ctypes.windll.user32.GetForegroundWindow() == hwnd:
-                    return True
-            except Exception:
-                pass
+            if self._is_window_foreground():
+                return True
             # Smartpoint lost focus — fall through to re-focus
 
         try:
@@ -314,14 +439,91 @@ class SmartpointAutomation:
                 user32.ShowWindow(hwnd, 9)
                 # Force foreground
                 user32.SetForegroundWindow(hwnd)
-
-            self.window.set_focus()
-            time.sleep(constants.FOCUS_DELAY)  # Brief wait for window to come forward
-            self._last_focus_time = time.time()
-            return True
+            self._sleep(constants.FOCUS_DELAY)  # Brief wait for window to come forward
+            if not self._is_window_foreground():
+                focus_x, focus_y = self._get_terminal_focus_point()
+                pyautogui.click(x=focus_x, y=focus_y)
+                self._sleep(constants.CLICK_DELAY)
+            if self._is_window_foreground():
+                self._last_focus_time = time.time()
+                return True
+            self.logger.warning(
+                "      [FOCUS] Window foreground not confirmed after Win32 focus attempt."
+            )
+            return False
         except Exception as e:
             self.logger.info(f"  [ERROR] Could not focus Smartpoint window: {e}")
             return False
+
+    def _is_window_foreground(self) -> bool:
+        """Return True when Smartpoint is the active foreground window."""
+        if not self.window:
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = self.window.wrapper_object().handle
+            fg_hwnd = user32.GetForegroundWindow()
+            if not hwnd or not fg_hwnd:
+                return False
+            if fg_hwnd == hwnd:
+                return True
+
+            ga_root = 2
+            hwnd_root = user32.GetAncestor(hwnd, ga_root) or hwnd
+            fg_root = user32.GetAncestor(fg_hwnd, ga_root) or fg_hwnd
+            if fg_root in {hwnd, hwnd_root} or hwnd_root == fg_hwnd:
+                return True
+            if user32.IsChild(hwnd, fg_hwnd):
+                return True
+
+            hwnd_pid = ctypes.c_ulong()
+            fg_pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(hwnd_pid))
+            user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(fg_pid))
+            return bool(hwnd_pid.value) and hwnd_pid.value == fg_pid.value
+        except Exception:
+            return False
+
+    def _get_terminal_focus_point(self) -> tuple[int, int]:
+        """Return a safe click point inside the terminal pane when possible."""
+        rect = None
+        try:
+            rect = self._get_terminal_rect()
+        except Exception:
+            rect = None
+
+        if rect is None and self.window:
+            try:
+                rect = self.window.rectangle()
+            except Exception:
+                rect = None
+
+        if rect is None:
+            return SAFE_CLICK_X_OFFSET, SAFE_CLICK_Y_OFFSET
+
+        try:
+            width = rect.width()
+            height = rect.height()
+        except Exception:
+            left = getattr(rect, "left", 0)
+            top = getattr(rect, "top", 0)
+            right = getattr(rect, "right", left + SAFE_CLICK_X_OFFSET + 10)
+            bottom = getattr(rect, "bottom", top + SAFE_CLICK_Y_OFFSET + 10)
+            width = max(0, right - left)
+            height = max(0, bottom - top)
+
+        x_offset = max(10, min(SAFE_CLICK_X_OFFSET, max(10, width - 10)))
+        y_offset = max(10, min(SAFE_CLICK_Y_OFFSET, max(10, height - 10)))
+        return rect.left + x_offset, rect.top + y_offset
+
+    def _send_clipboard_shortcuts(self) -> None:
+        """Send Ctrl+A / Ctrl+C using pywinauto, not pyautogui."""
+        self._raise_if_stopped()
+        _pw_kb.send_keys("^a")
+        self._sleep(constants.CLICK_DELAY)
+        self._raise_if_stopped()
+        _pw_kb.send_keys("^c")
+        self._sleep(constants.COPY_DELAY)
 
     def _get_terminal_rect(self):
         """
@@ -379,27 +581,30 @@ class SmartpointAutomation:
         self.clear_screen()
 
         try:
+            self._raise_if_stopped()
             # 1. Initiate Sign-On
             sign_on_cmd = f"SON/Z{pcc}" if pcc else "SON/Z"
             self.logger.info(f"Sending sign-on command: {sign_on_cmd}")
             pyautogui.typewrite(sign_on_cmd, interval=constants.KEYBOARD_INTERVAL)
             pyautogui.press("enter")
-            time.sleep(constants.COMMAND_WAIT_FS)  # Wait for username prompt
+            self._sleep(constants.COMMAND_WAIT_FS)  # Wait for username prompt
 
             # 2. Enter Username
+            self._raise_if_stopped()
             self.logger.info("Entering username...")
             pyautogui.typewrite(username, interval=constants.KEYBOARD_INTERVAL)
             pyautogui.press("enter")
-            time.sleep(constants.COMMAND_WAIT_LONG)  # Wait for password prompt
+            self._sleep(constants.COMMAND_WAIT_LONG)  # Wait for password prompt
 
             # 3. Enter Password
+            self._raise_if_stopped()
             self.logger.info("Entering password...")
             pyautogui.typewrite(password, interval=constants.KEYBOARD_INTERVAL)
             pyautogui.press("enter")
 
             # Wait for login to complete
             self.logger.info("Waiting for login to complete...")
-            time.sleep(constants.LOGIN_COMPLETION_WAIT)
+            self._sleep(constants.LOGIN_COMPLETION_WAIT)
 
             # Check for success by reading terminal text
             terminal_text = self._copy_terminal_text()
@@ -418,6 +623,8 @@ class SmartpointAutomation:
                 self.logger.debug(f"Terminal output: {terminal_text[:100]}...")
                 return False
 
+        except StopRequested:
+            raise
         except Exception as e:
             self.logger.error(f"Login automation failed: {e}")
             return False
@@ -425,13 +632,14 @@ class SmartpointAutomation:
     def clear_screen(self):
         """Clear the terminal screen or input buffer by sending 'I'"""
         # Ensure focus first
+        self._raise_if_stopped()
         self.focus(force=True)
 
         # Sending 'I' completely refreshes the Travelport Smartpoint terminal
         print("  [DEBUG] Refreshing terminal with 'I' command...")
         pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press("enter")
-        time.sleep(constants.COMMAND_WAIT_LONG)  # Wait for refresh to complete
+        self._sleep(constants.COMMAND_WAIT_LONG)  # Wait for refresh to complete
 
     def refresh_terminal(self):
         """Alias for clear_screen for compatibility."""
@@ -439,10 +647,11 @@ class SmartpointAutomation:
 
     def _copy_terminal_text(self) -> str:
         """Helper to copy text from the terminal via clipboard using mouse automation."""
+        self._raise_if_stopped()
         pyperclip.copy("")
 
         # Ensure focus hasn't been lost (cached — nearly free if recent)
-        self.focus()
+        self.focus(force=True)
 
         if not self.window:
             return ""
@@ -460,22 +669,62 @@ class SmartpointAutomation:
             safe_x = SAFE_CLICK_X_OFFSET
             safe_y = SAFE_CLICK_Y_OFFSET
 
+        safe_x, safe_y = self._get_terminal_focus_point()
+
         # Click to focus the terminal area (safe position)
         pyautogui.click(x=safe_x, y=safe_y)
-        time.sleep(constants.CLICK_DELAY)
+        self._sleep(constants.CLICK_DELAY)
 
-        # Select all + copy with retry for transient clipboard failures
-        text = ""
-        for _attempt in range(3):
-            pyautogui.hotkey("ctrl", "a")
-            time.sleep(constants.CLICK_DELAY)
-            pyautogui.hotkey("ctrl", "c")
-            time.sleep(constants.COPY_DELAY)
+        if not self._is_window_foreground():
+            self.logger.warning(
+                "      [FOCUS] Smartpoint is not foreground before clipboard hotkeys; retrying focus."
+            )
+            self.focus(force=True)
+            pyautogui.click(x=safe_x, y=safe_y)
+            self._sleep(constants.CLICK_DELAY)
 
-            text = pyperclip.paste()
-            if text and text.strip():
-                break
-            time.sleep(0.1)  # Brief wait before retry
+        if not self._is_window_foreground():
+            self.logger.warning(
+                "      [FOCUS] Skipping clipboard copy because Smartpoint is still not foreground."
+            )
+            return ""
+
+        def _copy_once(wait_after_copy: float = 0.0) -> str:
+            try:
+                self._send_clipboard_shortcuts()
+            except KeyboardInterrupt as exc:
+                raise RuntimeError(
+                    "Clipboard hotkeys were interrupted. Smartpoint may not have had focus and Ctrl+C likely reached the console."
+                ) from exc
+            if wait_after_copy > 0:
+                self._sleep(wait_after_copy)
+            return pyperclip.paste() or ""
+
+        # 1. Normal copy attempt
+        text = _copy_once()
+
+        # 2. One slower retry if the clipboard was still empty
+        if not text.strip():
+            self._sleep(max(0.15, constants.COPY_DELAY * 2))
+            text = _copy_once()
+
+        # 3. Heavier fallback: refocus, reclick terminal pane, then try once more
+        if not text.strip():
+            self.logger.debug(
+                "      [COPY] Clipboard empty after two attempts; using heavy fallback."
+            )
+            pyperclip.copy("")
+            self.focus(force=True)
+            safe_x, safe_y = self._get_terminal_focus_point()
+            pyautogui.click(x=safe_x, y=safe_y)
+            self._sleep(max(constants.CLICK_DELAY, 0.1))
+
+            if self._is_window_foreground():
+                text = _copy_once(wait_after_copy=max(0.15, constants.COPY_DELAY * 2))
+            else:
+                self.logger.warning(
+                    "      [FOCUS] Heavy clipboard fallback could not confirm foreground."
+                )
 
         # Click once to deselect
         pyautogui.press("escape")
@@ -512,33 +761,40 @@ class SmartpointAutomation:
         """
         # Always wait at least min_wait to avoid race conditions
         if min_wait > 0:
-            time.sleep(min_wait)
+            self._sleep(min_wait)
 
         deadline = time.time() + timeout
         current = None
         stable_count = 0
 
         while time.time() < deadline:
-            time.sleep(poll_interval)
+            self._raise_if_stopped()
+            self._sleep(poll_interval)
             new_text = self._copy_terminal_text()
 
             # First check: has screen changed from original?
             if new_text.strip() != text_before.strip():
                 # Screen has changed - now verify it's stable
-                if current is not None and new_text.strip() == current.strip():
-                    stable_count += 1
-                    if stable_count >= stability_checks:
-                        # Screen has changed and is now stable
-                        return new_text
-                else:
+                if current is None or new_text.strip() != current.strip():
                     # Screen is still changing
-                    stable_count = 0
                     current = new_text
+                    stable_count = 1
+                else:
+                    stable_count += 1
+
+                if stable_count >= stability_checks:
+                    # Screen has changed and is now stable
+                    return new_text
 
         # Final read after timeout
         return self._copy_terminal_text()
 
-    def _wait_for_stable_screen(self, max_polls: int = 3, interval: float = 0.3) -> str:
+    def _wait_for_stable_screen(
+        self,
+        initial_text: str | None = None,
+        max_polls: int = 3,
+        interval: float = 0.3,
+    ) -> str:
         """
         Wait until the terminal screen content stabilizes (stops changing).
 
@@ -546,11 +802,19 @@ class SmartpointAutomation:
         reads produce identical content. Prevents clicking while data is
         still rendering.
 
+        Args:
+            initial_text: Optional already-captured terminal text to treat as
+                the first read, avoiding one redundant clipboard pass.
+            max_polls: Maximum number of follow-up polls.
+            interval: Delay between polls.
+
         Returns the stable terminal text.
         """
-        prev = self._copy_terminal_text()
+        self._raise_if_stopped()
+        prev = initial_text if initial_text is not None else self._copy_terminal_text()
         for _ in range(max_polls):
-            time.sleep(interval)
+            self._raise_if_stopped()
+            self._sleep(interval)
             curr = self._copy_terminal_text()
             if curr.strip() == prev.strip():
                 return curr
@@ -586,12 +850,13 @@ class SmartpointAutomation:
             self.logger.debug("  [ERROR] Cannot run command, window not focused.")
             return ""
 
+        self._raise_if_stopped()
         self.logger.debug(f"    Running: {command}")
 
         # Send 'I' first to clear any previous terminal state cleanly
         pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press("enter")
-        time.sleep(constants.COMMAND_WAIT_LONG)
+        self._sleep(constants.COMMAND_WAIT_LONG)
 
         # Capture state BEFORE sending command (for adaptive polling)
         text_before_cmd = self._copy_terminal_text()
@@ -649,11 +914,7 @@ class SmartpointAutomation:
         screen_text = initial_text
 
         while current_page < max_pages:
-            settled_text = self._wait_for_stable_screen(max_polls=2, interval=0.2)
-            if settled_text.strip() != screen_text.strip():
-                screen_text = settled_text
-
-            # Check if END is present anywhere in the captured text
+            self._raise_if_stopped()
             if self._has_end_signal(screen_text):
                 self.logger.debug(
                     "      [DEBUG] 'END' signal detected. Pagination complete."
@@ -661,6 +922,20 @@ class SmartpointAutomation:
                 if screen_text.strip() != all_pages[-1].strip():
                     all_pages.append(screen_text)
                 break
+
+            settled_text = self._wait_for_stable_screen(
+                initial_text=screen_text, max_polls=2, interval=0.2
+            )
+            if settled_text.strip() != screen_text.strip():
+                screen_text = settled_text
+
+                if self._has_end_signal(screen_text):
+                    self.logger.debug(
+                        "      [DEBUG] 'END' signal detected after settling. Pagination complete."
+                    )
+                    if screen_text.strip() != all_pages[-1].strip():
+                        all_pages.append(screen_text)
+                    break
 
             # Attempt to click "More Flights / Fares"
             if self.click_more_prompt_link(screen_text):
@@ -671,7 +946,9 @@ class SmartpointAutomation:
                     min_wait=0.0,
                     stability_checks=1,
                 )
-                md_response = self._wait_for_stable_screen(max_polls=3, interval=0.2)
+                md_response = self._wait_for_stable_screen(
+                    initial_text=md_response, max_polls=3, interval=0.2
+                )
             else:
                 # Fallback to standard MD " use adaptive polling
                 self.logger.debug(
@@ -738,6 +1015,7 @@ class SmartpointAutomation:
             fu_pages = [fu_first]
             fu_page = 1
             while fu_page < MAX_PAGES_UNSALEABLE:
+                self._raise_if_stopped()
                 if self._has_end_signal(fu_pages[-1]):
                     break
                 fu_before = fu_pages[-1]
@@ -944,11 +1222,12 @@ class SmartpointAutomation:
             )
             return []
 
+        self._raise_if_stopped()
         self.logger.debug(f"    Running penalty extraction: {command}")
 
         pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
         pyautogui.press("enter")
-        time.sleep(constants.COMMAND_WAIT_LONG)
+        self._sleep(constants.COMMAND_WAIT_LONG)
 
         text_before_cmd = self._copy_terminal_text()
         pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
@@ -978,9 +1257,13 @@ class SmartpointAutomation:
         penalty_records = []
 
         while current_page <= max_pages:
-            settled_text = self._wait_for_stable_screen(max_polls=2, interval=0.2)
-            if settled_text.strip() != screen_text.strip():
-                screen_text = settled_text
+            self._raise_if_stopped()
+            if not self._has_end_signal(screen_text):
+                settled_text = self._wait_for_stable_screen(
+                    initial_text=screen_text, max_polls=2, interval=0.2
+                )
+                if settled_text.strip() != screen_text.strip():
+                    screen_text = settled_text
 
             from parser import parse_fare_display, select_report_fare_targets
 
@@ -989,7 +1272,7 @@ class SmartpointAutomation:
 
             if not visible_targets:
                 refreshed_text = self._wait_for_stable_screen(
-                    max_polls=3, interval=0.25
+                    initial_text=screen_text, max_polls=3, interval=0.25
                 )
                 if refreshed_text.strip() != screen_text.strip():
                     screen_text = refreshed_text
@@ -1023,7 +1306,9 @@ class SmartpointAutomation:
                     min_wait=0.0,
                     stability_checks=1,
                 )
-                md_response = self._wait_for_stable_screen(max_polls=3, interval=0.2)
+                md_response = self._wait_for_stable_screen(
+                    initial_text=md_response, max_polls=3, interval=0.2
+                )
             else:
                 text_before_md = screen_text
                 pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
@@ -1072,6 +1357,7 @@ class SmartpointAutomation:
             self.logger.error("  [ERROR] Cannot run command, window not focused.")
             return ""
 
+        self._raise_if_stopped()
         self.logger.info(f"    Extracting tax detail: FTAX-{country_code}/{tax_code}")
 
         # --- Navigate to the tax detail ---
@@ -1141,6 +1427,7 @@ class SmartpointAutomation:
         seen_tax_rate = False
 
         while current_page <= max_pages:
+            self._raise_if_stopped()
             # Check if current screen already has END
             if self._has_end_signal(previous_text):
                 self.logger.debug("      'END' detected. Pagination complete.")
@@ -1239,6 +1526,7 @@ class SmartpointAutomation:
         if not self.focus():
             return ""
 
+        self._raise_if_stopped()
         command = f"FS{src}{date}{dst}/{airline}"
         self.logger.info(f"    Extracting FS pricing: {command}")
 
@@ -1659,7 +1947,9 @@ class SmartpointAutomation:
                 min_wait=constants.COMMAND_WAIT_SHORT,
                 stability_checks=1,
             )
-            result = self._wait_for_stable_screen(max_polls=4, interval=0.25)
+            result = self._wait_for_stable_screen(
+                initial_text=result, max_polls=4, interval=0.25
+            )
 
             if result.strip() != text_before.strip():
                 upper = result.upper()
@@ -1684,7 +1974,7 @@ class SmartpointAutomation:
                         stability_checks=1,
                     )
                     text_before = self._wait_for_stable_screen(
-                        max_polls=3, interval=0.25
+                        initial_text=text_before, max_polls=3, interval=0.25
                     )
                     if "PRICING OPTION" not in text_before.upper():
                         self.logger.warning(
@@ -1746,7 +2036,7 @@ class SmartpointAutomation:
         )
 
         # Wait for terminal to finish rendering before clicking
-        stable_text = self._wait_for_stable_screen()
+        stable_text = self._wait_for_stable_screen(initial_text=fd_text)
 
         # Click at multiple X positions on the LEFT side of the terminal
         # The text "BDT  CURRENCY  FARES  EXISTS" occupies roughly 5%-40% of terminal width
