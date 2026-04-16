@@ -1,4 +1,9 @@
-from gui import _build_update_notice, _pick_release_exe_url
+from gui import (
+    _build_update_notice,
+    _estimate_remaining_seconds,
+    _format_eta_seconds,
+    _pick_release_exe_url,
+)
 
 
 def test_pick_release_exe_url_prefers_primary_travelport_exe():
@@ -54,3 +59,15 @@ def test_build_update_notice_is_none_after_new_version_is_running(monkeypatch):
     )
 
     assert notice is None
+
+
+def test_estimate_remaining_seconds_uses_completed_average():
+    assert _estimate_remaining_seconds(120, completed=2, total=5) == 180
+
+
+def test_estimate_remaining_seconds_returns_none_without_progress():
+    assert _estimate_remaining_seconds(120, completed=0, total=5) is None
+
+
+def test_format_eta_seconds_formats_minutes_and_seconds():
+    assert _format_eta_seconds(125) == "2m 05s"

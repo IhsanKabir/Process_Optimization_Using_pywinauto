@@ -17,6 +17,7 @@ import queue
 import re
 import sys
 import threading
+import time
 import tkinter as tk
 import urllib.request
 from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -184,6 +185,35 @@ def _parse_cmd(cmd_str: str):
     return cmd_str, ""
 
 
+def _format_eta_seconds(seconds: float) -> str:
+    """Return a compact human-friendly ETA string."""
+    total_seconds = max(0, int(round(seconds)))
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
+def _estimate_remaining_seconds(
+    elapsed_seconds: float, completed: int, total: int
+) -> int | None:
+    """Estimate remaining runtime from average completed-command duration."""
+    if total <= 0:
+        return None
+    if completed >= total:
+        return 0
+    if completed <= 0 or elapsed_seconds <= 0:
+        return None
+
+    average_seconds = elapsed_seconds / completed
+    remaining = average_seconds * max(0, total - completed)
+    return max(1, int(round(remaining)))
+
+
 # ── Update checker ───────────────────────────────────────────────────────────
 
 GITHUB_RELEASES_API = (
@@ -318,6 +348,10 @@ class TravelportGUI:
         self._feedback_category_var = tk.StringVar(value="bug")
         self._feedback_subject_var = tk.StringVar()
         self._feedback_message_text = None
+        self._overlay_eta_var = tk.StringVar(value="")
+        self._row_states: dict[str, str] = {}
+        self._completed_routes = 0
+        self._run_started_at: float | None = None
 
         # Route checklist state
         self._current_row: str | None = None  # treeview iid of the running row
@@ -792,6 +826,7 @@ class TravelportGUI:
                     webbrowser.open(payload)
         except queue.Empty:
             pass
+        self._refresh_eta()
         self.root.after(150, self._poll)
 
     # ── Log parsing → UI updates ──────────────────────────────────────────────
@@ -860,6 +895,7 @@ class TravelportGUI:
             self.tree.insert(
                 "", "end", iid=iid, values=("⟳", airline, route), tags=("running",)
             )
+        self._row_states[iid] = "running"
         self.tree.see(iid)
         self._current_row = iid
 
@@ -867,16 +903,56 @@ class TravelportGUI:
         if not self._current_row or not self.tree.exists(self._current_row):
             return
         icon = "✓" if state == "done" else "✗"
+        previous_state = self._row_states.get(self._current_row)
         vals = self.tree.item(self._current_row, "values")
         self.tree.item(
             self._current_row, values=(icon, vals[1], vals[2]), tags=(state,)
         )
+        self._row_states[self._current_row] = state
+        if previous_state not in {"done", "failed"} and state in {"done", "failed"}:
+            self._completed_routes += 1
+            self._refresh_eta()
 
     def _update_counter(self):
         if self._total:
             pct = int(self._done / self._total * 100)
             self.counter_label.configure(text=f"{self._done} / {self._total}")
             self.progress.configure(mode="determinate", value=pct)
+
+    def _refresh_eta(self):
+        if self.stop_event.is_set():
+            self._overlay_eta_var.set("ETA: stopping...")
+            return
+
+        if (
+            not self._run_started_at
+            or not self._run_thread
+            or not self._run_thread.is_alive()
+        ):
+            self._overlay_eta_var.set("")
+            return
+
+        if self._total <= 0:
+            self._overlay_eta_var.set("ETA: waiting for route count...")
+            return
+
+        if self._completed_routes <= 0:
+            self._overlay_eta_var.set("ETA: calculating after first route...")
+            return
+
+        remaining_seconds = _estimate_remaining_seconds(
+            time.monotonic() - self._run_started_at,
+            self._completed_routes,
+            self._total,
+        )
+        if remaining_seconds is None:
+            self._overlay_eta_var.set("ETA: calculating...")
+        elif remaining_seconds <= 0:
+            self._overlay_eta_var.set("ETA: finishing current step...")
+        else:
+            self._overlay_eta_var.set(
+                f"ETA: about {_format_eta_seconds(remaining_seconds)} left"
+            )
 
     def _append_raw(self, text: str):
         self.log_text.configure(state="normal")
@@ -1203,6 +1279,10 @@ class TravelportGUI:
             return
         self.stop_event.clear()
         self._last_report = None
+        self._run_started_at = time.monotonic()
+        self._overlay_eta_var.set("ETA: calculating after first route...")
+        self._row_states.clear()
+        self._completed_routes = 0
         self._done = 0
         self._total = 0
         self._current_row = None
@@ -1235,6 +1315,8 @@ class TravelportGUI:
             qp_data = self._run_quickpaste_wizard()
             if qp_data is None:
                 # User cancelled — restore buttons and bail out
+                self._run_started_at = None
+                self._overlay_eta_var.set("")
                 self.start_btn.configure(state="normal")
                 self.stop_btn.configure(state="disabled")
                 self.progress.stop()
@@ -1256,6 +1338,7 @@ class TravelportGUI:
         if not self._run_thread or not self._run_thread.is_alive():
             return
         self.stop_event.set()
+        self._overlay_eta_var.set("ETA: stopping...")
         self._hide_stop_overlay()
         self.status_label.configure(text="Stopping…", fg="#b73632")
         self.stop_btn.configure(state="disabled")
@@ -1500,7 +1583,7 @@ class TravelportGUI:
         ov.update_idletasks()
         sw = ov.winfo_screenwidth()
         sh = ov.winfo_screenheight()
-        ov.geometry(f"220x64+{sw - 240}+{sh - 120}")
+        ov.geometry(f"240x88+{sw - 260}+{sh - 144}")
 
         tk.Label(
             ov,
@@ -1509,6 +1592,13 @@ class TravelportGUI:
             fg="#78b4d4",
             font=("Segoe UI", 8),
         ).pack(pady=(8, 2))
+        tk.Label(
+            ov,
+            textvariable=self._overlay_eta_var,
+            bg="#1e2a35",
+            fg="#dbe9f4",
+            font=("Segoe UI", 8, "bold"),
+        ).pack(pady=(0, 6))
         tk.Button(
             ov,
             text="■  Stop  (ESC)",
@@ -1534,6 +1624,8 @@ class TravelportGUI:
         self.root.lift()
 
     def _on_done(self, result_path: str | None):
+        self._run_started_at = None
+        self._overlay_eta_var.set("")
         self._hide_stop_overlay()
         self.progress.stop()
         self.progress.configure(mode="determinate", value=100)
