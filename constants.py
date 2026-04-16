@@ -33,12 +33,12 @@ _SPEED_PROFILES = {
         "COMMAND_WAIT_SHORT": 0.3,
         "COMMAND_WAIT_MEDIUM": 0.4,
         "COMMAND_WAIT_LONG": 0.5,
-        "COMMAND_WAIT_FS": 0.8,
-        "COMMAND_WAIT_FTAX": 1.2,
-        "SCREEN_REFRESH_WAIT": 0.6,
+        "COMMAND_WAIT_FS": 0.5,
+        "COMMAND_WAIT_FTAX": 0.6,
+        "SCREEN_REFRESH_WAIT": 0.3,
         # Retry delays
-        "RETRY_DELAY": 1.0,
-        "STUCK_SCREEN_RETRY_DELAY": 0.5,
+        "RETRY_DELAY": 0.6,
+        "STUCK_SCREEN_RETRY_DELAY": 0.3,
         # Login sequence delays
         "LOGIN_COMMAND_WAIT": 1.0,
         "LOGIN_USERNAME_WAIT": 0.7,
@@ -325,7 +325,7 @@ TERMINAL_AUTOMATION_ID = "SmartRichTextBox"
 # FOCUS TRACKING
 # ══════════════════════════════════════════════════════════════
 # Skip redundant focus() calls if focus was set recently
-FOCUS_CACHE_SECONDS = 5.0  # Seconds to trust a previous focus() call
+FOCUS_CACHE_SECONDS = 10.0  # Seconds to trust a previous focus() call
 
 # ══════════════════════════════════════════════════════════════
 # CALIBRATION NOTES

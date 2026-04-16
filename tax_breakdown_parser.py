@@ -80,9 +80,12 @@ def parse_fs_tax_breakdown(text: str) -> dict:
 
     # 5. Extract specific tax breakdown array
     # Look for 1 or 2 character IATA tax codes (Letter + Letter/Digit) followed immediately by numbers (e.g. BD500, P7614)
-    # Exclude reserved tracking words that might look like taxes if they somehow got parsed
+    # Only search from the "FARE" keyword onwards to avoid false positives from
+    # flight segment lines (e.g. aircraft type "DH8" parsed as tax code "DH").
     exclude_codes = {"YQ", "YR", "TOT", "EQU", "NUC", "ROE", "USD", "BDT", "EUR", "GBP"}
-    tax_codes = _RE_TAX_CODES.findall(text)
+    fare_pos = text.find("FARE")
+    tax_search_text = text[fare_pos:] if fare_pos >= 0 else text
+    tax_codes = _RE_TAX_CODES.findall(tax_search_text)
 
     # Process multiple of the same code by adding them, but keep different codes separate
     for code, amt in tax_codes:

@@ -1547,6 +1547,34 @@ class SmartpointAutomation:
 
         return result
 
+    def run_fzs_command(self, from_currency: str, to_currency: str, amount: int = 1) -> str:
+        """
+        Run an FZS (Currency Conversion) command.
+        Example: FZSUSD1BDT/
+
+        Returns the raw terminal output with exchange rate info.
+        """
+        if not self.focus():
+            return ""
+
+        self._raise_if_stopped()
+        command = f"FZS{from_currency}{amount}{to_currency}/"
+        self.logger.info(f"    Extracting FZS rate: {command}")
+
+        text_before = self._copy_terminal_text()
+
+        pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
+        pyautogui.press("enter")
+
+        result = self._wait_for_response(
+            text_before,
+            timeout=constants.COMMAND_WAIT_MEDIUM + 1.0,
+            min_wait=constants.COMMAND_WAIT_MEDIUM * 0.8,
+            stability_checks=1,
+        )
+
+        return result
+
     def run_fq_command(self, option_number: int) -> str:
         """
         Run FQ*{N} to get the full fare quote / tax breakdown for a Pricing Option.
