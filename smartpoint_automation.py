@@ -1550,7 +1550,7 @@ class SmartpointAutomation:
     def run_fzs_command(self, from_currency: str, to_currency: str, amount: int = 1) -> str:
         """
         Run an FZS (Currency Conversion) command.
-        Example: FZSUSD1BDT/
+        Example: FZSUSD1BDT
 
         Returns the raw terminal output with exchange rate info.
         """
@@ -1558,7 +1558,7 @@ class SmartpointAutomation:
             return ""
 
         self._raise_if_stopped()
-        command = f"FZS{from_currency}{amount}{to_currency}/"
+        command = f"FZS{from_currency}{amount}{to_currency}"
         self.logger.info(f"    Extracting FZS rate: {command}")
 
         text_before = self._copy_terminal_text()

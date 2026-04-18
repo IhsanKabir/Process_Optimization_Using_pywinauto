@@ -131,56 +131,65 @@ def _write_sheet(
     previous_date: Optional[date],
     usd_tracker: UsdTracker,
 ) -> None:
-    # Column map:
-    #   A: Currency (current) | B: Exchange Rate (current)
-    #   C: Currency (previous) | D: Exchange Rate (previous)
-    #   E: (blank spacer)      | F: Zenith Value
+    # Column map (single Currency column, no duplicate labels, no blank spacer):
+    #   A: Currency       B: Current Rate       C: Previous Rate       D: Zenith Value
     currencies = sorted(
         current_rates.keys(), key=lambda c: current_rates[c], reverse=True
     )
 
-    # Row 1 — block titles
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=2)
-    c = ws.cell(row=1, column=1, value="Current Date")
-    c.font = HEADER_FONT
-    c.alignment = CENTER
-    c.border = THIN_BORDER
-    ws.cell(row=1, column=2).border = THIN_BORDER
+    # Row 1 — group headers. Currency and Zenith span the date sub-row.
+    ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
+    a1 = ws.cell(row=1, column=1, value="Currency")
+    a1.font = HEADER_FONT
+    a1.alignment = CENTER
+    a1.border = THIN_BORDER
+    ws.cell(row=2, column=1).border = THIN_BORDER
 
-    ws.merge_cells(start_row=1, start_column=3, end_row=1, end_column=4)
-    c = ws.cell(row=1, column=3, value="Previous Date")
-    c.font = HEADER_FONT
-    c.alignment = CENTER
-    c.border = THIN_BORDER
-    ws.cell(row=1, column=4).border = THIN_BORDER
+    b1 = ws.cell(row=1, column=2, value="Current Date")
+    b1.font = HEADER_FONT
+    b1.alignment = CENTER
+    b1.border = THIN_BORDER
 
-    # Row 2 — date strings
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=2)
-    c = ws.cell(row=2, column=1, value=run_date.strftime("%d-%b-%y"))
-    c.font = DATE_FONT
-    c.alignment = CENTER
-    c.border = THIN_BORDER
-    ws.cell(row=2, column=2).border = THIN_BORDER
+    c1 = ws.cell(row=1, column=3, value="Previous Date")
+    c1.font = HEADER_FONT
+    c1.alignment = CENTER
+    c1.border = THIN_BORDER
 
-    ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=4)
-    prev_label = previous_date.strftime("%d-%b-%y") if previous_date else "—"
-    c = ws.cell(row=2, column=3, value=prev_label)
-    c.font = DATE_FONT
-    c.alignment = CENTER
-    c.border = THIN_BORDER
+    ws.merge_cells(start_row=1, start_column=4, end_row=2, end_column=4)
+    d1 = ws.cell(row=1, column=4, value="Zenith Value")
+    d1.font = ZENITH_HEADER_FONT
+    d1.alignment = CENTER
+    d1.border = THIN_BORDER
     ws.cell(row=2, column=4).border = THIN_BORDER
 
-    # Row 3 — column headers
-    for col, label in [(1, "Currency"), (2, "Exchange Rate To BDT"),
-                       (3, "Currency"), (4, "Exchange Rate To BDT")]:
-        cell = ws.cell(row=3, column=col, value=label)
-        cell.font = TABLE_HEADER_FONT
-        cell.alignment = CENTER
-        cell.border = THIN_BORDER
+    # Row 2 — date strings under the Current / Previous group headers.
+    b2 = ws.cell(row=2, column=2, value=run_date.strftime("%d-%b-%y"))
+    b2.font = DATE_FONT
+    b2.alignment = CENTER
+    b2.border = THIN_BORDER
 
-    zenith_header = ws.cell(row=3, column=6, value="Zenith Value")
-    zenith_header.font = ZENITH_HEADER_FONT
-    zenith_header.alignment = CENTER
+    prev_label = previous_date.strftime("%d-%b-%y") if previous_date else "—"
+    c2 = ws.cell(row=2, column=3, value=prev_label)
+    c2.font = DATE_FONT
+    c2.alignment = CENTER
+    c2.border = THIN_BORDER
+
+    # Row 3 — rate sub-header ("Exchange Rate To BDT") under B and C only.
+    sub_a = ws.cell(row=3, column=1, value="")
+    sub_a.border = THIN_BORDER
+
+    sub_b = ws.cell(row=3, column=2, value="Exchange Rate To BDT")
+    sub_b.font = TABLE_HEADER_FONT
+    sub_b.alignment = CENTER
+    sub_b.border = THIN_BORDER
+
+    sub_c = ws.cell(row=3, column=3, value="Exchange Rate To BDT")
+    sub_c.font = TABLE_HEADER_FONT
+    sub_c.alignment = CENTER
+    sub_c.border = THIN_BORDER
+
+    sub_d = ws.cell(row=3, column=4, value="")
+    sub_d.border = THIN_BORDER
 
     # Data rows
     row = 4
@@ -188,12 +197,13 @@ def _write_sheet(
         cur_rate = current_rates[cur]
         prev_rate = previous_rates.get(cur)
 
-        # Current block
+        # Currency label (single column)
         lbl = ws.cell(row=row, column=1, value=f"1 {cur}")
         lbl.font = BODY_FONT
         lbl.alignment = CENTER
         lbl.border = THIN_BORDER
 
+        # Current rate
         value_cell = ws.cell(row=row, column=2)
         value_cell.border = THIN_BORDER
         value_cell.alignment = CENTER
@@ -210,13 +220,8 @@ def _write_sheet(
             value_cell.font = BODY_FONT
             value_cell.number_format = "0.000000"
 
-        # Previous block
-        prev_lbl = ws.cell(row=row, column=3, value=f"1 {cur}")
-        prev_lbl.font = BODY_FONT
-        prev_lbl.alignment = CENTER
-        prev_lbl.border = THIN_BORDER
-
-        prev_value_cell = ws.cell(row=row, column=4)
+        # Previous rate
+        prev_value_cell = ws.cell(row=row, column=3)
         prev_value_cell.border = THIN_BORDER
         prev_value_cell.alignment = CENTER
         prev_value_cell.font = BODY_FONT
@@ -227,15 +232,16 @@ def _write_sheet(
             prev_value_cell.value = "—"
 
         # Zenith
-        zenith_cell = ws.cell(row=row, column=6, value=1.0 / cur_rate if cur_rate else 0)
+        zenith_cell = ws.cell(row=row, column=4, value=1.0 / cur_rate if cur_rate else 0)
         zenith_cell.font = BODY_FONT
         zenith_cell.alignment = RIGHT
+        zenith_cell.border = THIN_BORDER
         zenith_cell.number_format = "0.000000"
 
         row += 1
 
-    # Column widths
-    widths = {"A": 12, "B": 26, "C": 12, "D": 26, "E": 2, "F": 16}
+    # Column widths — Currency | Current | Previous | Zenith
+    widths = {"A": 14, "B": 26, "C": 22, "D": 16}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
 
