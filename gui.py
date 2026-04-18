@@ -879,6 +879,17 @@ class TravelportGUI:
 
         # ── Route command line:  [45/85] FDDACMCT/BG ──
         m_cmd = re.search(r"\[(\d+)/(\d+)\]\s+(FD[A-Z0-9]+/[A-Z0-9]+)", text)
+        # ── Currency progress:  [3/17] OMR -> BDT: 320.64   (success)
+        # ── Currency failure:   [3/17] Could not parse rate for OMR
+        m_fzs = re.search(
+            r"\[(\d+)/(\d+)\]\s+(?:[A-Z]{3}\s*->\s*[A-Z]{3}|Could not parse)",
+            text,
+        )
+        # ── FZS pre-scan banner sets the total up-front so ETA has a denominator
+        # even before the first currency completes.
+        m_fzs_total = re.search(
+            r"Extracting FZS rates for (\d+) currencies", text
+        )
         if m_cmd:
             idx = int(m_cmd.group(1))
             total = int(m_cmd.group(2))
@@ -888,6 +899,23 @@ class TravelportGUI:
             self._set_step(3)
             self._add_route_row(cmd, idx)
             self._update_counter()
+
+        elif m_fzs:
+            idx = int(m_fzs.group(1))
+            total = int(m_fzs.group(2))
+            self._done = idx
+            self._total = total
+            self._completed_routes = idx
+            self._set_step(3)
+            self._update_counter()
+            self._refresh_eta()
+
+        elif m_fzs_total:
+            total = int(m_fzs_total.group(1))
+            if total > 0:
+                self._total = total
+                self._set_step(3)
+                self._update_counter()
 
         # ── Route succeeded ──
         elif re.search(
@@ -1391,7 +1419,7 @@ class TravelportGUI:
 
     def _browse_prev_rates(self):
         from tkinter import simpledialog
-        from datetime import date as _d, timedelta as _td
+        from datetime import date as _d, datetime as _dt, timedelta as _td
 
         path = filedialog.askopenfilename(
             title="Select previous rates file",
@@ -1405,7 +1433,23 @@ class TravelportGUI:
         )
         if not path:
             return
+        # Prefer the most recent archived snapshot date over calendar yesterday:
+        # users typically import to match the latest prior run, not an arbitrary
+        # "yesterday" that may have no data.
         default_date = (_d.today() - _td(days=1)).strftime("%Y-%m-%d")
+        archive_dir = os.path.join("data", "archive", "currency")
+        if os.path.isdir(archive_dir):
+            dates: list[_d] = []
+            for name in os.listdir(archive_dir):
+                m = re.match(r"^rates_(\d{4}-\d{2}-\d{2})\.json$", name)
+                if not m:
+                    continue
+                try:
+                    dates.append(_dt.strptime(m.group(1), "%Y-%m-%d").date())
+                except ValueError:
+                    continue
+            if dates:
+                default_date = max(dates).strftime("%Y-%m-%d")
         date_str = simpledialog.askstring(
             "Effective date",
             "Which date does this file represent? (YYYY-MM-DD)",
