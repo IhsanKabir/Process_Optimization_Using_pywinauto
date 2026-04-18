@@ -33,6 +33,55 @@ USD_TRACKER_FILE = "usd_tracker.json"
 RATE_FILE_PATTERN = re.compile(r"^rates_(\d{4}-\d{2}-\d{2})\.json$")
 DATE_FMT = "%Y-%m-%d"
 
+# Extracts the leading numeric portion from a rate cell such as
+# "122.94", "122.94 (04-APR-26)", or "122,940.50".
+_RE_RATE_NUM = re.compile(r"-?\d+(?:\.\d+)?")
+# Extracts a date bracket like "(04-APR-26)" or "(04 APR 2026)".
+_RE_BRACKET_DATE = re.compile(
+    r"\(\s*(\d{1,2})[-\s]+([A-Za-z]{3})[-\s]+(\d{2,4})\s*\)"
+)
+_MONTH_MAP = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
+
+
+def _parse_rate_value(value) -> Optional[float]:
+    """Extract the numeric rate from a cell value, ignoring trailing annotations."""
+    if value is None:
+        return None
+    s = str(value).replace(",", "").strip()
+    if not s:
+        return None
+    match = _RE_RATE_NUM.search(s)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _parse_bracket_date(value) -> Optional[date]:
+    """Extract a bracket date like '(04-APR-26)' from a cell value."""
+    if value is None:
+        return None
+    match = _RE_BRACKET_DATE.search(str(value))
+    if not match:
+        return None
+    day_s, mon_s, year_s = match.group(1), match.group(2).upper(), match.group(3)
+    month = _MONTH_MAP.get(mon_s)
+    if month is None:
+        return None
+    try:
+        day = int(day_s)
+        year = int(year_s)
+        if year < 100:
+            year += 2000
+        return date(year, month, day)
+    except ValueError:
+        return None
+
 
 @dataclass(frozen=True)
 class RateSnapshot:
@@ -177,14 +226,19 @@ def import_previous_rates(path: str, snapshot_date: date) -> RateSnapshot:
     """Load a user-supplied file and persist it as the snapshot for snapshot_date.
 
     Accepts .json, .csv, .xlsx. Unknown extensions are rejected.
+
+    When the USD row carries a bracket date like '(04-APR-26)', that date is
+    also written to the USD tracker so the current-day USD cell can render
+    the correct "last changed" annotation.
     """
     ext = os.path.splitext(path)[1].lower()
+    usd_last_changed: Optional[date] = None
     if ext == ".json":
         rates = _read_json_rates(path)
     elif ext == ".csv":
-        rates = _read_csv_rates(path)
+        rates, usd_last_changed = _read_csv_rates(path)
     elif ext in (".xlsx", ".xlsm"):
-        rates = _read_xlsx_rates(path)
+        rates, usd_last_changed = _read_xlsx_rates(path)
     else:
         raise ValueError(f"Unsupported file type: {ext} (expected .json, .csv, .xlsx)")
 
@@ -193,6 +247,14 @@ def import_previous_rates(path: str, snapshot_date: date) -> RateSnapshot:
 
     snapshot = RateSnapshot(snapshot_date=snapshot_date, rates=rates, source="imported")
     save_snapshot(snapshot)
+
+    usd_rate = rates.get("USD")
+    if usd_rate and usd_last_changed:
+        save_usd_tracker(UsdTracker(rate=usd_rate, last_changed_date=usd_last_changed))
+        logger.info(
+            "  [IMPORT] Seeded USD tracker: rate=%s, last_changed=%s",
+            usd_rate, usd_last_changed.strftime(DATE_FMT),
+        )
     return snapshot
 
 
@@ -212,13 +274,14 @@ def _read_json_rates(path: str) -> dict:
     return {}
 
 
-def _read_csv_rates(path: str) -> dict:
+def _read_csv_rates(path: str) -> tuple[dict, Optional[date]]:
     rates: dict = {}
+    usd_last_changed: Optional[date] = None
     with open(path, "r", encoding="utf-8-sig", newline="") as fh:
         reader = csv.reader(fh)
         rows = list(reader)
     if not rows:
-        return rates
+        return rates, None
     header = [c.strip().lower() for c in rows[0]]
     if "currency" in header and "rate" in header:
         cur_i = header.index("currency")
@@ -235,14 +298,16 @@ def _read_csv_rates(path: str) -> dict:
         cur = cur_raw.split()[-1] if cur_raw else ""
         if len(cur) != 3 or not cur.isalpha():
             continue
-        try:
-            rates[cur] = float(str(row[rate_i]).replace(",", "").strip())
-        except ValueError:
+        rate_val = _parse_rate_value(row[rate_i])
+        if rate_val is None:
             continue
-    return rates
+        rates[cur] = rate_val
+        if cur == "USD" and usd_last_changed is None:
+            usd_last_changed = _parse_bracket_date(row[rate_i])
+    return rates, usd_last_changed
 
 
-def _read_xlsx_rates(path: str) -> dict:
+def _read_xlsx_rates(path: str) -> tuple[dict, Optional[date]]:
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
@@ -251,11 +316,12 @@ def _read_xlsx_rates(path: str) -> dict:
     wb = load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
     rates: dict = {}
+    usd_last_changed: Optional[date] = None
     rows_iter = ws.iter_rows(values_only=True)
     try:
         first = next(rows_iter)
     except StopIteration:
-        return rates
+        return rates, None
 
     def _is_header(cells) -> bool:
         return any(
@@ -276,11 +342,13 @@ def _read_xlsx_rates(path: str) -> dict:
         cur = cur_raw.split()[-1] if cur_raw else ""
         if len(cur) != 3 or not cur.isalpha():
             continue
-        try:
-            rates[cur] = float(str(rate_cell).replace(",", "").strip())
-        except (TypeError, ValueError):
+        rate_val = _parse_rate_value(rate_cell)
+        if rate_val is None:
             continue
-    return rates
+        rates[cur] = rate_val
+        if cur == "USD" and usd_last_changed is None:
+            usd_last_changed = _parse_bracket_date(rate_cell)
+    return rates, usd_last_changed
 
 
 def _coerce_rate_map(raw: dict) -> dict:
