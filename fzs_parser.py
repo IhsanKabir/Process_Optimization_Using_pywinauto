@@ -19,10 +19,12 @@ from typing import Optional
 
 logger = logging.getLogger("travelport.fzs_parser")
 
-# Patterns to extract rate from FZS output
-# Strict: "1USD = 122.7100 BDT" — requires the exact currency codes we asked for.
+# Patterns to extract rate from FZS output.
+# Travelport Smartpoint FZS prints:
+#   BANK SELLING RATE  1LKR EQUALS  0.385054    BDT
+# Older/alternate formats may use "=" instead of "EQUALS".
 _RE_RATE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*([A-Z]{3})\s*=\s*(\d+(?:\.\d+)?)\s*([A-Z]{3})"
+    r"(\d+(?:\.\d+)?)\s*([A-Z]{3})\s*(?:=|EQUALS?)\s*(\d+(?:\.\d+)?)\s*([A-Z]{3})"
 )
 # Error markers Travelport emits when a command is malformed/unsupported.
 _ERROR_MARKERS = (
@@ -81,4 +83,5 @@ def parse_fzs_output(
     logger.warning(
         f"  Could not parse FZS rate from output for {from_currency}->{to_currency}"
     )
+    logger.debug(f"  FZS raw output ({from_currency}->{to_currency}): {result['raw_text']!r}")
     return result
