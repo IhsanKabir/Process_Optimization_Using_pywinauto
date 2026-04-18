@@ -245,6 +245,83 @@ def _tqdm_stream():
     return None
 
 
+def _format_eta(seconds: float) -> str:
+    """Format elapsed/remaining seconds as `Xm Ys` (or `Ys` when under a minute)."""
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m {secs}s"
+
+
+def _log_eta(
+    logger_obj,
+    start_ts: float,
+    done: int,
+    total: int,
+    label: str = "progress",
+    every: int = 5,
+) -> None:
+    """Emit `[ETA ~Xm Ys] label done/total` every `every` items (CLI fallback for tqdm).
+
+    Skip if nothing done yet, total unknown, or we're not on a tick boundary.
+    """
+    import time as _t
+
+    if total <= 0 or done <= 0:
+        return
+    if done != total and done % max(1, every) != 0:
+        return
+    elapsed = _t.time() - start_ts
+    if elapsed <= 0:
+        return
+    per_item = elapsed / done
+    remaining = per_item * (total - done)
+    logger_obj.info(
+        f"  [ETA ~{_format_eta(remaining)}] {label} {done}/{total} "
+        f"(elapsed {_format_eta(elapsed)})"
+    )
+
+
+def _install_cli_esc_listener(stop_event, logger_obj) -> None:
+    """Windows-only: poll GetAsyncKeyState(VK_ESCAPE) and set stop_event on press.
+
+    No-op when stop_event is None, on non-Windows platforms, or when a GUI
+    is driving the run (the GUI already owns the ESC shortcut).
+    """
+    if stop_event is None or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        import threading
+
+        user32 = ctypes.windll.user32
+        VK_ESCAPE = 0x1B
+
+        def _watch() -> None:
+            import time as _t
+
+            while not stop_event.is_set():
+                try:
+                    if user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000:
+                        logger_obj.info(
+                            "  [ESC] Cancel requested - finishing current step..."
+                        )
+                        stop_event.set()
+                        return
+                except Exception:
+                    return
+                _t.sleep(0.1)
+
+        t = threading.Thread(target=_watch, daemon=True, name="cli-esc-listener")
+        t.start()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger_obj.debug(f"  CLI ESC listener unavailable: {exc}")
+
+
 def _env_truthy(name: str) -> bool:
     """Return True when an environment variable is set to a truthy value."""
     return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
@@ -720,6 +797,115 @@ def run_with_args(args, stop_event=None):
     return main(prebuilt_args=args, stop_event=stop_event)
 
 
+def _run_currency_report_mode(args, config, stop_event):
+    """Run standalone Currency Rate report via FZS for the configured pair list."""
+    from datetime import date as _date, datetime as _dt
+
+    from currency_archive import import_previous_rates
+    from currency_report import generate_currency_report
+
+    pairs = config.get("currency_report_pairs") or []
+    local_cur = config.get("local_currency", "BDT")
+    if not pairs:
+        logger.error("  No 'currency_report_pairs' configured.")
+        sys.exit(1)
+
+    # Optional: seed a previous-day snapshot from a user file before generating.
+    if getattr(args, "load_previous_rates", None):
+        prev_date_str = getattr(args, "previous_date", None)
+        if prev_date_str:
+            try:
+                prev_date = _dt.strptime(prev_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                logger.error(f"  Invalid --previous-date value: {prev_date_str}")
+                sys.exit(1)
+        else:
+            from datetime import timedelta
+            prev_date = _date.today() - timedelta(days=1)
+        try:
+            snap = import_previous_rates(args.load_previous_rates, prev_date)
+            logger.info(
+                f"  [IMPORT] Loaded {len(snap.rates)} rates for {prev_date} from "
+                f"{os.path.basename(args.load_previous_rates)}"
+            )
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            logger.error(f"  Could not import previous rates: {exc}")
+            sys.exit(1)
+
+    if not args.auto:
+        logger.error("  --currency-report requires --auto (live Smartpoint session).")
+        sys.exit(1)
+
+    logger.info(
+        f"[2/3] Extracting FZS rates for {len(pairs)} currencies into {local_cur}..."
+    )
+    from smartpoint_automation import SmartpointAutomation, StopRequested
+    from fzs_parser import parse_fzs_output
+
+    automation = SmartpointAutomation(stop_event=stop_event)
+    if not automation.connect():
+        logger.error("  Please ensure Smartpoint is open.")
+        sys.exit(1)
+
+    username, password, pcc = CredentialManager.get_credentials()
+    if username and password and not _env_truthy("SMARTPOINT_SKIP_AUTO_LOGIN"):
+        try:
+            if not automation.login(username, password, pcc):
+                logger.error("  Login failed; sign in manually and retry.")
+                sys.exit(1)
+        except Exception as exc:
+            logger.error(f"  Login error: {exc}")
+            sys.exit(1)
+
+    automation.refresh_terminal()
+
+    current_rates: dict[str, float] = {}
+    import time as _t_fzs
+
+    fzs_start = _t_fzs.time()
+    fzs_total = len(pairs)
+    for idx, cur in enumerate(pairs, 1):
+        if stop_event and stop_event.is_set():
+            logger.info("  [STOP] Stop requested — finishing after this point.")
+            break
+        cur = cur.upper()
+        try:
+            raw = automation.run_fzs_command(cur, local_cur)
+        except StopRequested:
+            logger.info("  [STOP] Stop requested during FZS extraction.")
+            break
+        except Exception as exc:
+            logger.warning(f"  [FZS] {cur}->{local_cur} failed: {exc}")
+            continue
+        parsed = parse_fzs_output(raw, cur, local_cur)
+        if parsed.get("rate"):
+            current_rates[cur] = float(parsed["rate"])
+            logger.info(f"  [{idx}/{fzs_total}] {cur} -> {local_cur}: {parsed['rate']}")
+        else:
+            logger.warning(f"  [{idx}/{fzs_total}] Could not parse rate for {cur}")
+        _log_eta(logger, fzs_start, idx, fzs_total, label="FZS rates", every=5)
+
+    if not current_rates:
+        logger.error("  No rates extracted; report not generated.")
+        sys.exit(1)
+
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    ts = _dt.now().strftime("%Y-%m-%d_%H%M")
+    if args.output:
+        out_path = args.output
+    else:
+        out_path = os.path.join(REPORTS_DIR, f"currency_rates_{ts}.xlsx")
+
+    logger.info("[3/3] Writing Currency Rate report...")
+    result = generate_currency_report(current_rates, out_path)
+    logger.info(f"  [OK] Currency Rate report: {result.path}")
+    logger.info(
+        f"  Previous-day basis: "
+        f"{result.previous_date.isoformat() if result.previous_date else 'none (first run)'}"
+    )
+    return result.path
+
+
 def main(prebuilt_args=None, stop_event=None):
     """Main entry point. Called directly from CLI or via run_with_args() from GUI."""
     import time as _time
@@ -815,6 +1001,23 @@ def main(prebuilt_args=None, stop_event=None):
         action="store_true",
         help="Disable data validation and sanity checks",
     )
+    arg_parser.add_argument(
+        "--currency-report",
+        action="store_true",
+        help="Generate the standalone Currency Rate report via FZS commands",
+    )
+    arg_parser.add_argument(
+        "--load-previous-rates",
+        type=str,
+        default=None,
+        help="Path to a JSON/CSV/XLSX file to seed the previous-day rates (used with --previous-date)",
+    )
+    arg_parser.add_argument(
+        "--previous-date",
+        type=str,
+        default=None,
+        help="Effective date (YYYY-MM-DD) for --load-previous-rates; defaults to yesterday",
+    )
 
     if prebuilt_args is not None:
         # Called from GUI with a ready-made Namespace - skip argparse entirely
@@ -826,6 +1029,15 @@ def main(prebuilt_args=None, stop_event=None):
         args = arg_parser.parse_args()
 
     use_tqdm = _should_use_tqdm(getattr(args, "_gui_mode", False))
+
+    # CLI-only: install a global ESC watcher so users can abort without the GUI.
+    # The GUI installs its own listener already, so skip when it drives the run.
+    if not getattr(args, "_gui_mode", False):
+        if _stop is None:
+            import threading as _threading
+
+            _stop = _threading.Event()
+        _install_cli_esc_listener(_stop, logger)
 
     # QUICK PASTE MODE INTERCEPT
     if getattr(args, "quick_paste", False):
@@ -1174,6 +1386,23 @@ def main(prebuilt_args=None, stop_event=None):
     # [2/4] Extraction
     failed_commands = []
 
+    # CURRENCY RATE REPORT MODE
+    if getattr(args, "currency_report", False):
+        result_path = _run_currency_report_mode(args, config, _stop)
+        elapsed = _time.time() - start_time
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("  CURRENCY REPORT SUMMARY")
+        logger.info("-" * 60)
+        logger.info(f"  Report:   {result_path}")
+        logger.info(f"  Duration: {minutes}m {seconds}s")
+        logger.info("=" * 60)
+        if prebuilt_args is not None:
+            return result_path
+        return result_path
+
     # PENALTY MODE EXTRACTION
     if args.penalty:
         penalty_records = []
@@ -1226,13 +1455,23 @@ def main(prebuilt_args=None, stop_event=None):
                 command_iter = commands
                 logger.info(f"  Executing {len(commands)} commands...")
 
+            penalty_loop_start = _time.time()
+            penalty_total = len(commands)
             for i, cmd in enumerate(command_iter, 1):
                 if _stop and _stop.is_set():
                     logger.info("  [STOP] Stop requested - finishing after this point.")
                     break
                 cmd_str = cmd["command"]
                 if not use_tqdm:
-                    logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
+                    logger.info(f"  [{i}/{penalty_total}] {cmd_str}")
+                    _log_eta(
+                        logger,
+                        penalty_loop_start,
+                        i,
+                        penalty_total,
+                        label="penalty commands",
+                        every=5,
+                    )
 
                 command_penalties = automation.run_penalty_command(cmd_str)
                 if not command_penalties:
@@ -1338,6 +1577,8 @@ def main(prebuilt_args=None, stop_event=None):
                 else:
                     airport_items = list(airport_items)
 
+                tax_loop_start = _time.time()
+                tax_total = len(tax_airports)
                 for index, (airport_code, airport_info) in enumerate(airport_items, 1):
                     if _stop and _stop.is_set():
                         logger.info("  [STOP] Stop requested - finishing after this point.")
@@ -1347,7 +1588,15 @@ def main(prebuilt_args=None, stop_event=None):
                     # Only log if not using tqdm
                     if not use_tqdm:
                         logger.info(
-                            f"  [{index}/{len(tax_airports)}] Airport: {airport_code} ({country_code})"
+                            f"  [{index}/{tax_total}] Airport: {airport_code} ({country_code})"
+                        )
+                        _log_eta(
+                            logger,
+                            tax_loop_start,
+                            index,
+                            tax_total,
+                            label="tax airports",
+                            every=5,
                         )
 
                     # Get tax types
@@ -1507,6 +1756,8 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(f"  Executing {len(commands)} commands...")
 
             commands_attempted = 0
+            fare_loop_start = _time.time()
+            fare_total = len(commands)
             for i, cmd in enumerate(command_iter, 1):
                 if _stop and _stop.is_set():
                     logger.info("  [STOP] Stop requested - finishing after this point.")
@@ -1521,7 +1772,15 @@ def main(prebuilt_args=None, stop_event=None):
 
                 # Only log if not using tqdm
                 if not use_tqdm:
-                    logger.info(f"  [{i}/{len(commands)}] {cmd_str}")
+                    logger.info(f"  [{i}/{fare_total}] {cmd_str}")
+                    _log_eta(
+                        logger,
+                        fare_loop_start,
+                        i,
+                        fare_total,
+                        label="fare commands",
+                        every=5,
+                    )
 
                 terminal_text = ""
                 file_key = generate_file_key(cmd)
@@ -2002,37 +2261,6 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info("  DB is primary snapshot source; skipping JSON archive write.")
         logger.info("")
 
-    # -- FZS EXTRACTION (Exchange Rates) --
-    fzs_data = {}
-    if args.auto and not args.tax and not (_stop and _stop.is_set()):
-        # Collect unique currency pairs from parsed data
-        currency_pairs = set()
-        local_currency = config.get("local_currency", "BDT")
-        for route_key, route_info in all_route_data.items():
-            if isinstance(route_info, dict):
-                fs_taxes = route_info.get("fs_taxes", {})
-                base_cur = fs_taxes.get("base_currency")
-                if base_cur and base_cur != local_currency:
-                    currency_pairs.add((base_cur, local_currency))
-
-        if currency_pairs:
-            logger.info(f"  [FZS] Extracting exchange rates for {len(currency_pairs)} currency pair(s)...")
-            from fzs_parser import parse_fzs_output
-
-            try:
-                for from_cur, to_cur in sorted(currency_pairs):
-                    if _stop and _stop.is_set():
-                        break
-                    fzs_text = automation.run_fzs_command(from_cur, to_cur)
-                    parsed = parse_fzs_output(fzs_text, from_cur, to_cur)
-                    fzs_data[f"{from_cur}-{to_cur}"] = parsed
-                    if parsed["rate"] > 0:
-                        logger.info(f"    [OK] {from_cur} -> {to_cur}: {parsed['rate']}")
-                    else:
-                        logger.warning(f"    [!] Could not parse rate for {from_cur} -> {to_cur}")
-            except Exception as exc:
-                logger.warning(f"  [FZS] FZS extraction failed: {exc}")
-
     # [4/4] Generate Report
     if _stop and _stop.is_set():
         return _stop_run("  [STOP] Stop requested - skipping report generation.", partial_data=all_route_data)
@@ -2087,21 +2315,6 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(f"  [OK] Attached FTAX to {result_path}")
             except Exception as e:
                 logger.error(f"  Failed to append FTAX sheets: {e}")
-
-        # Append FZS Exchange Rates sheet
-        if fzs_data:
-            logger.info("  Appending FZS Exchange Rates sheet...")
-            import openpyxl
-            from excel_report import _write_fzs_sheet
-
-            try:
-                wb = openpyxl.load_workbook(result_path)
-                ws_fzs = wb.create_sheet("Exchange Rates (FZS)")
-                _write_fzs_sheet(ws_fzs, fzs_data)
-                wb.save(result_path)
-                logger.info(f"  [OK] Attached FZS rates to {result_path}")
-            except Exception as e:
-                logger.error(f"  Failed to append FZS sheet: {e}")
 
     # [DB] Optional persistence - keep current file/report flow unchanged
     _run_mode = "auto" if not args.tax else "tax-mode"

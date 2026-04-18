@@ -3,6 +3,8 @@
     "excel_output_filename": "fare_report_{date}.xlsx",
     "rbd_sort_order": ["F", "A", "J", "C", "D", "I", "Z", "Y", "B", "M", "H", "K", "Q", "T", "N", "R", "V", "X", "L", "U", "E", "G", "S", "W", "O"],
     "domestic_airports": ["DAC", "CGP", "ZYL", "CXB"],
+    "currency_report_pairs": ["KWD", "OMR", "GBP", "EUR", "USD", "SGD", "QAR", "AED", "SAR", "MYR", "CNY", "HKD", "MVR", "THB", "INR", "NPR", "LKR"],
+    "local_currency": "BDT",
     "airline_names": {
         "BG": "Biman Bangladesh",
         "BS": "US-Bangla",

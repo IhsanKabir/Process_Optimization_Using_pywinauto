@@ -202,6 +202,16 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
             except ValidationError as e:
                 raise ConfigurationError(f"Invalid airport in domestic_airports: {e}")
 
+    # Validate currency report pairs (optional, used by --currency-report)
+    if "currency_report_pairs" in config:
+        if not isinstance(config["currency_report_pairs"], list):
+            raise ConfigurationError("currency_report_pairs must be a list")
+        for cur in config["currency_report_pairs"]:
+            if not isinstance(cur, str) or len(cur) != 3 or not cur.isalpha():
+                raise ConfigurationError(
+                    f"Invalid currency in currency_report_pairs: '{cur}' (must be 3-letter code)"
+                )
+
     # Validate tax airports if present
     if "tax_airports" in config:
         if not isinstance(config["tax_airports"], dict):

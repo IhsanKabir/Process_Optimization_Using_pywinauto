@@ -507,6 +507,7 @@ class TravelportGUI:
             ("Fares", "fare"),
             ("Taxes", "tax"),
             ("Penalties", "penalty"),
+            ("Currency Rate", "currency"),
             ("Manual (paste GDS output)", "quickpaste"),
         ]:
             ttk.Radiobutton(parent, text=label, variable=self.mode_var, value=val).pack(
@@ -601,6 +602,31 @@ class TravelportGUI:
         tk.Label(
             parent,
             text="blank = previous run  |  date or browse for snapshot file",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+        ).pack(anchor="w")
+
+        tk.Label(
+            parent,
+            text="Previous rates file (Currency Rate only):",
+            bg="#f2f2f2",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(6, 0))
+        self._prev_rates_path = None
+        self._prev_rates_date = None
+        self._prev_rates_var = tk.StringVar(value="")
+        prev_row = tk.Frame(parent, bg="#f2f2f2")
+        prev_row.pack(fill="x")
+        ttk.Entry(prev_row, textvariable=self._prev_rates_var, state="readonly").pack(
+            side="left", fill="x", expand=True
+        )
+        ttk.Button(
+            prev_row, text="Browse", width=7, command=self._browse_prev_rates
+        ).pack(side="left", padx=(4, 0))
+        tk.Label(
+            parent,
+            text="Optional. JSON / CSV / XLSX — sets the Previous Date column.",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
@@ -1363,6 +1389,37 @@ class TravelportGUI:
         if path:
             self.compare_var.set(path)
 
+    def _browse_prev_rates(self):
+        from tkinter import simpledialog
+        from datetime import date as _d, timedelta as _td
+
+        path = filedialog.askopenfilename(
+            title="Select previous rates file",
+            filetypes=[
+                ("Supported", "*.json *.csv *.xlsx *.xlsm"),
+                ("JSON", "*.json"),
+                ("CSV", "*.csv"),
+                ("Excel", "*.xlsx *.xlsm"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        default_date = (_d.today() - _td(days=1)).strftime("%Y-%m-%d")
+        date_str = simpledialog.askstring(
+            "Effective date",
+            "Which date does this file represent? (YYYY-MM-DD)",
+            initialvalue=default_date,
+            parent=self.root,
+        )
+        if not date_str:
+            return
+        self._prev_rates_path = path
+        self._prev_rates_date = date_str.strip()
+        self._prev_rates_var.set(
+            f"{os.path.basename(path)}  ({self._prev_rates_date})"
+        )
+
     def _open_report(self):
         if self._last_report and os.path.exists(self._last_report):
             os.startfile(self._last_report)
@@ -1547,11 +1604,15 @@ class TravelportGUI:
         except ValueError:
             limit = 0
         is_quickpaste = mode == "quickpaste"
+        is_currency = mode == "currency"
         return argparse.Namespace(
             auto=(not is_quickpaste),
             tax=(mode == "tax"),
             penalty=(mode == "penalty"),
             quick_paste=is_quickpaste,
+            currency_report=is_currency,
+            load_previous_rates=getattr(self, "_prev_rates_path", None) if is_currency else None,
+            previous_date=getattr(self, "_prev_rates_date", None) if is_currency else None,
             route=self.route_var.get().strip() or None,
             one_direction=False,
             airline=self.airline_var.get().strip() or None,
