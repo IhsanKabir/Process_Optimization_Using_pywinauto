@@ -172,6 +172,22 @@ class TestValidateConfig:
         with pytest.raises(ConfigurationError, match="Invalid airport code"):
             validate_config(config)
 
+    def test_valid_airport_country_codes(self):
+        """Test broader airport-country lookup config."""
+        config = deepcopy(SAMPLE_CONFIG)
+        config["airport_country_codes"] = {"DAC": "BD", "DOH": "QA"}
+
+        result = validate_config(config)
+        assert result["airport_country_codes"]["DAC"] == "BD"
+
+    def test_invalid_airport_country_codes(self):
+        """Test invalid airport_country_codes entries."""
+        config = deepcopy(SAMPLE_CONFIG)
+        config["airport_country_codes"] = {"DACC": "BD"}
+
+        with pytest.raises(ConfigurationError, match="Invalid airport code"):
+            validate_config(config)
+
 
 class TestSanitizeCommand:
     """Test command sanitization."""

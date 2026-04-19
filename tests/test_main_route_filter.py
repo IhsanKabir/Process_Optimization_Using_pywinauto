@@ -3,13 +3,16 @@ import shutil
 from pathlib import Path
 import pytest
 from main import (
+    _build_explicit_route_commands,
     _command_matches_route,
     _extract_tax_airport_queries,
     _ensure_commands_template,
     _fd_output_has_fares,
     _find_pure_airline_option_in_fs_page,
     _normalize_database_url,
+    _parse_requested_routes,
     _resolve_tax_airport_query,
+    _resolve_explicit_airline_codes,
     _should_use_tqdm,
     _resolve_database_url,
     _route_variants,
@@ -50,6 +53,14 @@ TEST_TAX_CONFIG = {
         "DXB": {"country": "AE", "name": "UAE"},
         "AUH": {"country": "AE", "name": "UAE"},
         "SHJ": {"country": "AE", "name": "UAE"},
+    },
+    "airport_country_codes": {
+        "DAC": "BD",
+        "KUL": "MY",
+        "MCT": "OM",
+        "DXB": "AE",
+        "AUH": "AE",
+        "SHJ": "AE",
     },
 }
 
@@ -103,6 +114,54 @@ def test_extract_tax_airport_queries_keeps_six_letter_city_name():
     assert _extract_tax_airport_queries(airport_query="Muscat") == ["Muscat"]
 
 
+def test_parse_requested_routes_normalizes_and_deduplicates():
+    assert _parse_requested_routes("dac-mct, DACMCT, cgp-doh") == [
+        "DAC-MCT",
+        "CGP-DOH",
+    ]
+
+
+def test_resolve_explicit_airline_codes_uses_filter_when_present():
+    assert _resolve_explicit_airline_codes("bg, ek, BG", TEST_TAX_CONFIG) == [
+        "BG",
+        "EK",
+    ]
+
+
+def test_resolve_explicit_airline_codes_defaults_to_configured_airlines():
+    assert _resolve_explicit_airline_codes(None, TEST_TAX_CONFIG) == ["BG"]
+
+
+def test_build_explicit_route_commands_generates_both_directions_for_all_airlines():
+    config = {
+        **TEST_TAX_CONFIG,
+        "airline_names": {"BG": "Biman Bangladesh", "BS": "US-Bangla"},
+    }
+
+    commands, routes, airlines = _build_explicit_route_commands(
+        "DAC-MCT", None, config, one_direction=False
+    )
+
+    assert routes == ["DAC-MCT"]
+    assert airlines == ["BG", "BS"]
+    assert [command["command"] for command in commands] == [
+        "FDDACMCT/BG",
+        "FDDACMCT/BS",
+        "FDMCTDAC/BG",
+        "FDMCTDAC/BS",
+    ]
+
+
+def test_build_explicit_route_commands_honors_one_direction_and_airline_filter():
+    commands, routes, airlines = _build_explicit_route_commands(
+        "DAC-KWI", "KU", TEST_TAX_CONFIG, one_direction=True
+    )
+
+    assert routes == ["DAC-KWI"]
+    assert airlines == ["KU"]
+    assert [command["command"] for command in commands] == ["FDDACKWI/KU"]
+
+
 def test_resolve_tax_airport_query_matches_exact_code():
     code, info, matched_alias = _resolve_tax_airport_query(
         "KUL", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG
@@ -137,11 +196,17 @@ def test_resolve_tax_airport_query_rejects_ambiguous_country_name():
 
 
 def test_route_like_tax_alias_fails_when_first_airport_is_not_configured():
-    first_airport = _extract_tax_airport_queries(route_query="DAC-MCT")[0]
+    first_airport = _extract_tax_airport_queries(route_query="XXX-MCT")[0]
 
     with pytest.raises(ValidationError, match="not found in configured tax airports"):
         _resolve_tax_airport_query(
-            first_airport, TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG
+            first_airport,
+            {
+                **TEST_TAX_CONFIG["tax_airports"],
+                "DAC": {"country": "BD"},
+                "KUL": {"country": "MY"},
+            },
+            TEST_TAX_CONFIG,
         )
 
 
@@ -155,13 +220,23 @@ def test_select_tax_airports_for_run_prefers_explicit_airport():
     assert metadata["resolutions"][0]["display_name"] == "Kuala Lumpur"
 
 
-def test_select_tax_airports_for_run_accepts_legacy_route_alias():
-    args = SimpleNamespace(airport=None, route="KUL-DAC", limit=0)
+def test_select_tax_airports_for_run_allows_explicit_airport_outside_default_tax_list():
+    args = SimpleNamespace(airport="DAC", route=None, limit=0)
 
     selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
 
-    assert list(selected.keys()) == ["KUL"]
-    assert metadata["requested_queries"] == ["KUL"]
+    assert list(selected.keys()) == ["DAC"]
+    assert selected["DAC"]["country"] == "BD"
+    assert metadata["resolutions"][0]["display_name"] == "Dhaka"
+
+
+def test_select_tax_airports_for_run_accepts_legacy_route_alias():
+    args = SimpleNamespace(airport=None, route="DAC-MCT", limit=0)
+
+    selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
+
+    assert list(selected.keys()) == ["DAC"]
+    assert metadata["requested_queries"] == ["DAC"]
 
 
 def test_select_tax_airports_for_run_accepts_multiple_explicit_airports():

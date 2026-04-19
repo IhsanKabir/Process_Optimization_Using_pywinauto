@@ -1265,7 +1265,7 @@ class TravelportGUI:
         else:
             self._primary_filter_label_var.set("Route:")
             self._primary_filter_help_var.set(
-                "e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)"
+                "e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = configured list)"
             )
             self._airline_help_var.set("e.g. BG or BG,BS,EK  (blank = all)")
             self._airline_label.configure(fg="#000")

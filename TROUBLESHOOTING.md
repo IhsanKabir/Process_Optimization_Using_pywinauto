@@ -169,31 +169,39 @@ cat data/raw/*.txt
 **Error**: `pytest` errors
 
 **Solution**:
-```bash
+```powershell
 # Install dev dependencies
-pip install -r requirements-dev.txt
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 
 # Run tests with verbose output
-pytest -v
+.\run_tests.ps1 -v
 
 # Run specific test file
-pytest tests/test_parser.py -v
+.\run_tests.ps1 tests/test_parser.py -v
 
 # Check coverage
-pytest --cov=. --cov-report=html
+.\run_tests.ps1 --cov=. --cov-report=html
 ```
+
+If `pytest` still behaves strangely on Windows, check where it resolves from:
+```powershell
+Get-Command pytest
+```
+If it points to another project's `.venv`, use `.\run_tests.ps1` or `.\.venv\Scripts\python.exe -m pytest` instead of bare `pytest`.
 
 #### Issue: Import errors in tests
 **Error**: `ModuleNotFoundError` when running tests
 
 **Solution**:
-```bash
+```powershell
 # Run pytest from project root
-cd /path/to/Process_Optimization_Using_pywinauto
-pytest
+cd C:\path\to\Process_Optimization_Using_pywinauto
+.\run_tests.ps1
 
 # Or install package in development mode
-pip install -e .
+.\.venv\Scripts\python.exe -m pip install -e .
 ```
 
 ---

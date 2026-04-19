@@ -87,6 +87,8 @@ def _build_summary_sheet(ws, data, config):
         country_name = ""
         if config and "tax_airports" in config:
             country_name = config["tax_airports"].get(airport_code, {}).get("name", "")
+        if not country_name:
+            country_name = airport_data.get("_country", "")
 
         for tax_type in airport_data.get("taxes", []):
             code = tax_type.get("code", "")
@@ -179,6 +181,8 @@ def _build_details_sheet(ws, data, config):
         country_name = ""
         if config and "tax_airports" in config:
             country_name = config["tax_airports"].get(airport_code, {}).get("name", "")
+        if not country_name:
+            country_name = airport_data.get("_country", "")
 
         for tax_type in airport_data.get("taxes", []):
             # Title block

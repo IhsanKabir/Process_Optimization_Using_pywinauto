@@ -163,8 +163,10 @@ SMARTPOINT_PCC=your_pcc
 ### Development Setup
 
 For development and testing:
-```bash
-pip install -r requirements-dev.txt
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
 ## Running the Tool
@@ -239,15 +241,18 @@ Example config structure:
 ## Testing
 
 Run the test suite:
-```bash
+```powershell
 # Run all tests
-pytest
+.\run_tests.ps1
 
 # Run with coverage
-pytest --cov=. --cov-report=html
+.\run_tests.ps1 --cov=. --cov-report=html
 
 # Run specific test file
-pytest tests/test_parser.py -v
+.\run_tests.ps1 tests/test_parser.py -v
+
+# Direct invocation if you prefer not to use the wrapper
+.\.venv\Scripts\python.exe -m pytest
 
 # Run linting
 flake8 .

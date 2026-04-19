@@ -106,6 +106,22 @@
           "name": "Maldives"
         }
       }]
+    },
+    "airport_country_codes": {
+      "type": "object",
+      "description": "Broader airport-to-country mapping used for explicit FTAX airport searches outside the default tax_airports list",
+      "patternProperties": {
+        "^[A-Z]{3}$": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$"
+        }
+      },
+      "additionalProperties": false,
+      "examples": [{
+        "DAC": "BD",
+        "CGP": "BD",
+        "DOH": "QA"
+      }]
     }
   }
 }
