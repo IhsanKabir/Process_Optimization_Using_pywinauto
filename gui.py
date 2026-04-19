@@ -535,9 +535,46 @@ class TravelportGUI:
         body = tk.Frame(self.root, bg="#f2f2f2")
         body.pack(fill="both", expand=True, padx=10, pady=8)
 
-        left = tk.Frame(body, bg="#f2f2f2", width=270)
-        left.pack(side="left", fill="y", padx=(0, 10))
-        left.pack_propagate(False)
+        # Scrollable left panel — wraps the controls in a Canvas so taller content
+        # (e.g. Currency mode with Previous Rates + Output Path) stays reachable.
+        left_container = tk.Frame(body, bg="#f2f2f2", width=290)
+        left_container.pack(side="left", fill="y", padx=(0, 10))
+        left_container.pack_propagate(False)
+
+        left_canvas = tk.Canvas(
+            left_container, bg="#f2f2f2", highlightthickness=0, borderwidth=0
+        )
+        left_scrollbar = ttk.Scrollbar(
+            left_container, orient="vertical", command=left_canvas.yview
+        )
+        left_canvas.configure(yscrollcommand=left_scrollbar.set)
+        left_canvas.pack(side="left", fill="both", expand=True)
+        left_scrollbar.pack(side="right", fill="y")
+
+        left = tk.Frame(left_canvas, bg="#f2f2f2")
+        left_window = left_canvas.create_window((0, 0), window=left, anchor="nw")
+
+        def _on_left_canvas_configure(event):
+            # Keep inner frame width in sync with the canvas viewport.
+            left_canvas.itemconfigure(left_window, width=event.width)
+
+        def _on_left_inner_configure(_event):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+
+        def _on_left_mousewheel(event):
+            left_canvas.yview_scroll(int(-event.delta / 120), "units")
+
+        def _bind_left_wheel(_event):
+            left_canvas.bind_all("<MouseWheel>", _on_left_mousewheel)
+
+        def _unbind_left_wheel(_event):
+            left_canvas.unbind_all("<MouseWheel>")
+
+        left_canvas.bind("<Configure>", _on_left_canvas_configure)
+        left.bind("<Configure>", _on_left_inner_configure)
+        left_canvas.bind("<Enter>", _bind_left_wheel)
+        left_canvas.bind("<Leave>", _unbind_left_wheel)
+
         self._build_left(left)
 
         right = tk.Frame(body, bg="#f2f2f2")
@@ -568,7 +605,7 @@ class TravelportGUI:
         self.mode_var = tk.StringVar(value="fare")
         for label, val in [
             ("Fares", "fare"),
-            ("Taxes", "tax"),
+            ("Future Tax", "tax"),
             ("Penalties", "penalty"),
             ("Currency Rate", "currency"),
             ("Manual (paste GDS output)", "quickpaste"),
@@ -648,7 +685,7 @@ class TravelportGUI:
             g_options_core, text="Skip change report", variable=self.no_changes_var
         ).pack(anchor="w", pady=1)
 
-        # ── Group 4b: Options — only-flags (Fares/Taxes modes only) ─────
+        # ── Group 4b: Options — only-flags (Fares mode only) ────────────
         g_only_flags = tk.Frame(parent, bg="#f2f2f2")
         self.only_fd_var = tk.BooleanVar(value=False)
         self.only_yq_var = tk.BooleanVar(value=False)
@@ -737,7 +774,7 @@ class TravelportGUI:
             (g_speed, lambda m: True),
             (g_filters, lambda m: m != "currency"),
             (g_options_core, lambda m: True),
-            (g_only_flags, lambda m: m in {"fare", "tax"}),
+            (g_only_flags, lambda m: m == "fare"),
             (g_compare, lambda m: m in {"fare", "tax", "penalty"}),
             (g_prev_rates, lambda m: m == "currency"),
             (g_output, lambda m: True),
