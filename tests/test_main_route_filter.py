@@ -1,20 +1,25 @@
 import json
 import shutil
 from pathlib import Path
+import pytest
 from main import (
     _command_matches_route,
+    _extract_tax_airport_queries,
     _ensure_commands_template,
     _fd_output_has_fares,
     _find_pure_airline_option_in_fs_page,
     _normalize_database_url,
+    _resolve_tax_airport_query,
     _should_use_tqdm,
     _resolve_database_url,
     _route_variants,
+    _select_tax_airports_for_run,
     _should_recheck_same_fs_page,
     _should_run_fs_extraction,
     load_config,
 )
 from types import SimpleNamespace
+from exceptions import ValidationError
 
 
 def _make_local_temp_dir(name: str):
@@ -23,6 +28,30 @@ def _make_local_temp_dir(name: str):
         shutil.rmtree(path)
     path.mkdir(parents=True)
     return path
+
+
+TEST_TAX_CONFIG = {
+    "commands_file": "commands.txt",
+    "rbd_sort_order": ["Y"],
+    "airline_names": {"BG": "Biman Bangladesh"},
+    "city_names": {
+        "DAC": "Dhaka",
+        "SIN": "Singapore",
+        "KUL": "Kuala Lumpur",
+        "MCT": "Muscat",
+        "DXB": "Dubai",
+        "AUH": "Abu Dhabi",
+        "SHJ": "Sharjah",
+    },
+    "tax_airports": {
+        "SIN": {"country": "SG", "name": "Singapore"},
+        "KUL": {"country": "MY", "name": "Malaysia"},
+        "MCT": {"country": "OM", "name": "Oman"},
+        "DXB": {"country": "AE", "name": "UAE"},
+        "AUH": {"country": "AE", "name": "UAE"},
+        "SHJ": {"country": "AE", "name": "UAE"},
+    },
+}
 
 
 def test_route_variants_include_reverse_by_default():
@@ -54,6 +83,137 @@ def test_command_falls_back_to_raw_command_text_when_needed():
 
     assert _command_matches_route(reverse, "DAC-MCT")
     assert not _command_matches_route(reverse, "DAC-MCT", one_direction=True)
+
+
+def test_extract_tax_airport_queries_uses_first_airport_from_route_like_input():
+    assert _extract_tax_airport_queries(route_query="KUL-DAC") == ["KUL"]
+
+
+def test_extract_tax_airport_queries_accepts_comma_separated_values():
+    assert _extract_tax_airport_queries(airport_query="KUL,MCT") == ["KUL", "MCT"]
+
+
+def test_extract_tax_airport_queries_accepts_mixed_names_and_route_aliases():
+    assert _extract_tax_airport_queries(
+        airport_query="Kuala Lumpur, MCT-DAC, Muscat"
+    ) == ["Kuala Lumpur", "MCT", "Muscat"]
+
+
+def test_extract_tax_airport_queries_keeps_six_letter_city_name():
+    assert _extract_tax_airport_queries(airport_query="Muscat") == ["Muscat"]
+
+
+def test_resolve_tax_airport_query_matches_exact_code():
+    code, info, matched_alias = _resolve_tax_airport_query(
+        "KUL", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG
+    )
+
+    assert code == "KUL"
+    assert info["country"] == "MY"
+    assert matched_alias == "KUL"
+
+
+def test_resolve_tax_airport_query_matches_exact_city_name():
+    code, _info, matched_alias = _resolve_tax_airport_query(
+        "Kuala Lumpur", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG
+    )
+
+    assert code == "KUL"
+    assert matched_alias == "Kuala Lumpur"
+
+
+def test_resolve_tax_airport_query_matches_unique_partial_name():
+    code, _info, matched_alias = _resolve_tax_airport_query(
+        "muscat", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG
+    )
+
+    assert code == "MCT"
+    assert matched_alias == "Muscat"
+
+
+def test_resolve_tax_airport_query_rejects_ambiguous_country_name():
+    with pytest.raises(ValidationError, match="matches multiple configured tax airports"):
+        _resolve_tax_airport_query("uae", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG)
+
+
+def test_route_like_tax_alias_fails_when_first_airport_is_not_configured():
+    first_airport = _extract_tax_airport_queries(route_query="DAC-MCT")[0]
+
+    with pytest.raises(ValidationError, match="not found in configured tax airports"):
+        _resolve_tax_airport_query(
+            first_airport, TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG
+        )
+
+
+def test_select_tax_airports_for_run_prefers_explicit_airport():
+    args = SimpleNamespace(airport="KUL", route=None, limit=0)
+
+    selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
+
+    assert list(selected.keys()) == ["KUL"]
+    assert metadata["resolved_codes"] == ["KUL"]
+    assert metadata["resolutions"][0]["display_name"] == "Kuala Lumpur"
+
+
+def test_select_tax_airports_for_run_accepts_legacy_route_alias():
+    args = SimpleNamespace(airport=None, route="KUL-DAC", limit=0)
+
+    selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
+
+    assert list(selected.keys()) == ["KUL"]
+    assert metadata["requested_queries"] == ["KUL"]
+
+
+def test_select_tax_airports_for_run_accepts_multiple_explicit_airports():
+    args = SimpleNamespace(airport="KUL,Muscat", route=None, limit=0)
+
+    selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
+
+    assert list(selected.keys()) == ["KUL", "MCT"]
+    assert metadata["requested_queries"] == ["KUL", "Muscat"]
+    assert metadata["resolved_codes"] == ["KUL", "MCT"]
+
+
+def test_select_tax_airports_for_run_deduplicates_same_airport():
+    args = SimpleNamespace(airport="KUL,Kuala Lumpur", route=None, limit=0)
+
+    selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
+
+    assert list(selected.keys()) == ["KUL"]
+    assert metadata["resolved_codes"] == ["KUL"]
+    assert len(metadata["resolutions"]) == 1
+
+
+def test_select_tax_airports_for_run_uses_configured_routes_when_no_explicit_query(
+    monkeypatch,
+):
+    tmp_path = _make_local_temp_dir("tmp_test_tax_airport_selection")
+    commands_path = tmp_path / "commands.txt"
+    commands_path.write_text(
+        "\n".join(
+            [
+                "FDDACKUL/BG",
+                "FDKULDAC/BG",
+                "FDDACMCT/BG",
+                "FDMCTDAC/BG",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    args = SimpleNamespace(airport=None, route=None, limit=0)
+
+    try:
+        import main
+
+        monkeypatch.setattr(main, "SCRIPT_DIR", str(tmp_path))
+        selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
+
+        assert list(selected.keys()) == ["KUL", "MCT"]
+        assert metadata["requested_queries"] == []
+        assert metadata["skipped_by_route_filter"] == 4
+    finally:
+        shutil.rmtree(tmp_path, ignore_errors=True)
 
 
 def test_database_url_prefers_environment(monkeypatch):

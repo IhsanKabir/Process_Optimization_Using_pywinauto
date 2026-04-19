@@ -639,31 +639,44 @@ class TravelportGUI:
         # ── Group 3: Filters (hidden in Currency) ───────────────────────
         g_filters = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_filters, "Filters")
+        self._primary_filter_label_var = tk.StringVar(value="Route:")
+        self._primary_filter_help_var = tk.StringVar(
+            value="e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)"
+        )
+        self._airline_help_var = tk.StringVar(
+            value="e.g. BG or BG,BS,EK  (blank = all)"
+        )
         tk.Label(
-            g_filters, text="Route:", bg="#f2f2f2", font=("Segoe UI", 9)
+            g_filters,
+            textvariable=self._primary_filter_label_var,
+            bg="#f2f2f2",
+            font=("Segoe UI", 9),
         ).pack(anchor="w")
         self.route_var = tk.StringVar()
         ttk.Entry(g_filters, textvariable=self.route_var).pack(fill="x")
         tk.Label(
             g_filters,
-            text="e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)",
+            textvariable=self._primary_filter_help_var,
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
-        tk.Label(
+        self._airline_label = tk.Label(
             g_filters, text="Airline:", bg="#f2f2f2", font=("Segoe UI", 9)
-        ).pack(anchor="w", pady=(5, 0))
+        )
+        self._airline_label.pack(anchor="w", pady=(5, 0))
         self.airline_var = tk.StringVar()
-        ttk.Entry(g_filters, textvariable=self.airline_var).pack(fill="x")
-        tk.Label(
+        self._airline_entry = ttk.Entry(g_filters, textvariable=self.airline_var)
+        self._airline_entry.pack(fill="x")
+        self._airline_hint_label = tk.Label(
             g_filters,
-            text="e.g. BG or BG,BS,EK  (blank = all)",
+            textvariable=self._airline_help_var,
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
-        ).pack(anchor="w")
+        )
+        self._airline_hint_label.pack(anchor="w")
 
         tk.Label(
             g_filters, text="Limit (0 = run all):", bg="#f2f2f2", font=("Segoe UI", 9)
@@ -1235,7 +1248,29 @@ class TravelportGUI:
         for group, pred in self._left_sections:
             if pred(mode):
                 group.pack(fill="x")
+        self._update_filter_controls(mode)
         self._update_tree_headings(mode)
+
+    def _update_filter_controls(self, mode: str):
+        """Rename the shared filter field and disable airline input in tax mode."""
+        if mode == "tax":
+            self._primary_filter_label_var.set("Airport:")
+            self._primary_filter_help_var.set(
+                "e.g. KUL,MCT or Kuala Lumpur,Muscat or KUL-DAC (uses KUL)  (blank = all)"
+            )
+            self._airline_help_var.set("Ignored in Future Tax mode")
+            self._airline_label.configure(fg="#999")
+            self._airline_hint_label.configure(fg="#999")
+            self._airline_entry.configure(state="disabled")
+        else:
+            self._primary_filter_label_var.set("Route:")
+            self._primary_filter_help_var.set(
+                "e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)"
+            )
+            self._airline_help_var.set("e.g. BG or BG,BS,EK  (blank = all)")
+            self._airline_label.configure(fg="#000")
+            self._airline_hint_label.configure(fg="#999")
+            self._airline_entry.configure(state="normal")
 
     def _update_tree_headings(self, mode: str):
         """Rename the tree's two visible columns to match the current mode."""
@@ -1872,9 +1907,10 @@ class TravelportGUI:
             currency_report=is_currency,
             load_previous_rates=getattr(self, "_prev_rates_path", None) if is_currency else None,
             previous_date=getattr(self, "_prev_rates_date", None) if is_currency else None,
-            route=self.route_var.get().strip() or None,
+            route=self.route_var.get().strip() or None if mode != "tax" else None,
+            airport=self.route_var.get().strip() or None if mode == "tax" else None,
             one_direction=False,
-            airline=self.airline_var.get().strip() or None,
+            airline=self.airline_var.get().strip() or None if mode != "tax" else None,
             limit=limit,
             only_fd=self.only_fd_var.get(),
             only_yq=self.only_yq_var.get(),

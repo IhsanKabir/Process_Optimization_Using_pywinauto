@@ -133,7 +133,8 @@ TravelportAuto.exe [flags]
 | `--tax` | | Run tax extraction (FTAX) instead of fares |
 | `--penalty` | | Run Rule 16 penalty extraction |
 | `--quick-paste` | | Manual mode: paste GDS output yourself |
-| `--route ROUTE` | `--route DAC-MCT` | Only run commands for this route (both directions) |
+| `--route ROUTE` | `--route DAC-MCT` | Only run fare commands for this route (both directions). In `--tax` mode, kept as a backward-compatible airport alias. |
+| `--airport AIRPORT` | `--airport KUL,MCT` | In `--tax` mode, run one or more configured airport codes or airport names |
 | `--one-direction` | | With `--route`, match only the exact direction typed |
 | `--airline CODE` | `--airline BG` or `--airline BG,BS` | Only run commands for these airline(s) |
 | `--limit N` | `--limit 5` | Stop after N commands (useful for testing) |
@@ -167,7 +168,18 @@ TravelportAuto.exe --auto
 
 ### 7.2 Tax mode (`--tax`)
 
-Runs FTAX commands for every airport listed under `tax_airports` in `config.json`. Extracts current, upcoming, and expired tax rates with effective dates.
+Runs FTAX commands for the configured airports listed under `tax_airports` in `config.json`. Extracts current, upcoming, and expired tax rates with effective dates.
+
+To target specific airports, use one or more airport codes or airport names:
+
+```bat
+TravelportAuto.exe --auto --tax --airport KUL
+TravelportAuto.exe --auto --tax --airport KUL,MCT
+TravelportAuto.exe --auto --tax --airport "Kuala Lumpur"
+TravelportAuto.exe --auto --tax --airport "Kuala Lumpur, Muscat"
+```
+
+`--tax --route KUL-DAC` is still accepted for backward compatibility and will use the first airport (`KUL`).
 
 Output: **tax_report_YYYY-MM-DD_HHMM.xlsx**
 

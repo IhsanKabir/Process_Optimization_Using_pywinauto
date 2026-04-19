@@ -53,6 +53,7 @@ from exceptions import ConfigurationError, ValidationError
 from validators import (
     validate_config,
     validate_limit,
+    validate_route,
     sanitize_command,
     validate_parsed_fares,
     validate_currency_code,
@@ -719,6 +720,250 @@ def _command_matches_route(
     return any(route_variant in raw_command for route_variant in route_variants)
 
 
+def _extract_tax_airport_queries(
+    airport_query: str | None = None, route_query: str | None = None
+) -> list[str] | None:
+    """Normalize explicit tax-airport input from `--airport` or legacy `--route`."""
+    raw_query = (airport_query or "").strip() or (route_query or "").strip()
+    if not raw_query:
+        return None
+
+    normalized_queries: list[str] = []
+    for chunk in raw_query.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+
+        if "-" in chunk:
+            route_candidate = re.sub(r"\s+", "", chunk)
+            try:
+                origin, _destination = validate_route(route_candidate)
+                normalized_queries.append(origin)
+                continue
+            except ValidationError:
+                pass
+
+        normalized_queries.append(chunk)
+
+    return normalized_queries or None
+
+
+def _tax_airport_display_name(airport_code: str, airport_info: dict, config: dict) -> str:
+    """Return the most user-friendly label for a configured tax airport."""
+    city_name = str(config.get("city_names", {}).get(airport_code, "") or "").strip()
+    if city_name:
+        return city_name
+    info_name = str(airport_info.get("name", "") or "").strip()
+    if info_name:
+        return info_name
+    return airport_code
+
+
+def _tax_airport_name_aliases(
+    airport_code: str, airport_info: dict, config: dict
+) -> list[str]:
+    """Return configured non-code aliases that can identify a tax airport."""
+    aliases: list[str] = []
+    for alias in (
+        config.get("city_names", {}).get(airport_code),
+        airport_info.get("name"),
+    ):
+        text = str(alias or "").strip()
+        if not text:
+            continue
+        if text.casefold() == airport_code.casefold():
+            continue
+        if any(text.casefold() == existing.casefold() for existing in aliases):
+            continue
+        aliases.append(text)
+    return aliases
+
+
+def _format_tax_airport_candidates(
+    airport_codes: list[str], tax_airports: dict, config: dict
+) -> str:
+    """Return a compact list of configured tax-airport choices."""
+    labels = []
+    for airport_code in airport_codes:
+        airport_info = tax_airports.get(airport_code, {})
+        display_name = _tax_airport_display_name(airport_code, airport_info, config)
+        extra_name = str(airport_info.get("name", "") or "").strip()
+        if extra_name and extra_name.casefold() != display_name.casefold():
+            labels.append(f"{airport_code} ({display_name} / {extra_name})")
+        else:
+            labels.append(f"{airport_code} ({display_name})")
+    return ", ".join(labels)
+
+
+def _resolve_tax_airport_query(
+    query: str, tax_airports: dict, config: dict
+) -> tuple[str, dict, str]:
+    """Resolve a single airport code or configured airport name to one tax airport."""
+    query_text = str(query or "").strip()
+    if not query_text:
+        raise ValidationError("airport", query, "cannot be empty")
+
+    query_key = query_text.casefold()
+
+    for airport_code, airport_info in tax_airports.items():
+        if airport_code.casefold() == query_key:
+            return airport_code, airport_info, airport_code
+
+    exact_name_matches: list[tuple[str, str]] = []
+    partial_matches: list[tuple[str, str]] = []
+
+    for airport_code, airport_info in tax_airports.items():
+        aliases = _tax_airport_name_aliases(airport_code, airport_info, config)
+        exact_alias = next(
+            (alias for alias in aliases if alias.casefold() == query_key),
+            None,
+        )
+        if exact_alias:
+            exact_name_matches.append((airport_code, exact_alias))
+            continue
+
+        partial_alias = next(
+            (alias for alias in aliases if query_key in alias.casefold()),
+            None,
+        )
+        if partial_alias:
+            partial_matches.append((airport_code, partial_alias))
+
+    if len(exact_name_matches) == 1:
+        airport_code, matched_alias = exact_name_matches[0]
+        return airport_code, tax_airports[airport_code], matched_alias
+
+    if len(exact_name_matches) > 1:
+        matched_codes = [airport_code for airport_code, _alias in exact_name_matches]
+        raise ValidationError(
+            "airport",
+            query,
+            "matches multiple configured tax airports: "
+            + _format_tax_airport_candidates(matched_codes, tax_airports, config),
+        )
+
+    if len(partial_matches) == 1:
+        airport_code, matched_alias = partial_matches[0]
+        return airport_code, tax_airports[airport_code], matched_alias
+
+    if len(partial_matches) > 1:
+        matched_codes = [airport_code for airport_code, _alias in partial_matches]
+        raise ValidationError(
+            "airport",
+            query,
+            "matches multiple configured tax airports: "
+            + _format_tax_airport_candidates(matched_codes, tax_airports, config),
+        )
+
+    raise ValidationError(
+        "airport",
+        query,
+        "not found in configured tax airports. Valid options: "
+        + _format_tax_airport_candidates(sorted(tax_airports.keys()), tax_airports, config),
+    )
+
+
+def _configured_route_airports(commands_file: str) -> set[str]:
+    """Return airport codes referenced by configured FD commands."""
+    route_airports: set[str] = set()
+    if not os.path.exists(commands_file):
+        return route_airports
+
+    with open(commands_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("FD") and "/" in line and len(line) >= 8:
+                route_airports.add(line[2:5].upper())
+                route_airports.add(line[5:8].upper())
+    return route_airports
+
+
+def _filter_tax_airports_by_configured_routes(
+    tax_airports: dict, commands_file: str
+) -> tuple[dict, int]:
+    """Filter tax airports to those appearing in configured routes when possible."""
+    route_airports = _configured_route_airports(commands_file)
+    if not route_airports:
+        return tax_airports, 0
+
+    filtered = {
+        airport_code: airport_info
+        for airport_code, airport_info in tax_airports.items()
+        if airport_code.upper() in route_airports
+    }
+    if not filtered:
+        return tax_airports, 0
+
+    return filtered, len(tax_airports) - len(filtered)
+
+
+def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
+    """Select which configured tax airports should run for the current invocation."""
+    tax_airports = dict(config.get("tax_airports", {}))
+    metadata = {
+        "requested_queries": [],
+        "resolved_codes": [],
+        "resolutions": [],
+        "skipped_by_route_filter": 0,
+    }
+
+    if not tax_airports:
+        return tax_airports, metadata
+
+    requested_queries = _extract_tax_airport_queries(
+        getattr(args, "airport", None), getattr(args, "route", None)
+    )
+    if requested_queries:
+        selected_tax_airports: dict = {}
+        resolutions: list[dict] = []
+
+        for requested_query in requested_queries:
+            airport_code, airport_info, matched_alias = _resolve_tax_airport_query(
+                requested_query, tax_airports, config
+            )
+            if airport_code in selected_tax_airports:
+                continue
+
+            selected_info = dict(airport_info)
+            display_name = _tax_airport_display_name(airport_code, selected_info, config)
+            selected_info["_display_name"] = display_name
+            selected_info["_matched_alias"] = matched_alias
+            selected_tax_airports[airport_code] = selected_info
+            resolutions.append(
+                {
+                    "requested_query": requested_query,
+                    "resolved_code": airport_code,
+                    "display_name": display_name,
+                    "matched_alias": matched_alias,
+                    "country_code": selected_info.get("country"),
+                }
+            )
+
+        metadata.update(
+            {
+                "requested_queries": requested_queries,
+                "resolved_codes": list(selected_tax_airports.keys()),
+                "resolutions": resolutions,
+            }
+        )
+        return selected_tax_airports, metadata
+
+    commands_file = os.path.join(SCRIPT_DIR, config.get("commands_file", "commands.txt"))
+    tax_airports, skipped = _filter_tax_airports_by_configured_routes(
+        tax_airports, commands_file
+    )
+    metadata["skipped_by_route_filter"] = skipped
+
+    if getattr(args, "limit", 0) > 0:
+        tax_airports = {
+            airport_code: airport_info
+            for index, (airport_code, airport_info) in enumerate(tax_airports.items())
+            if index < args.limit
+        }
+
+    return tax_airports, metadata
+
+
 def _fd_output_has_fares(raw_text: str) -> bool:
     """Return True when FD output contains actual fare rows."""
     if not raw_text or not raw_text.strip():
@@ -926,7 +1171,14 @@ def main(prebuilt_args=None, stop_event=None):
         "--limit", type=int, default=0, help="Limit commands (testing)"
     )
     arg_parser.add_argument(
-        "--route", type=str, help="Filter commands to a specific route (e.g. DAC-MLE)"
+        "--route",
+        type=str,
+        help="Filter fares to a specific route (e.g. DAC-MLE). In --tax mode, this remains a backward-compatible single-airport alias.",
+    )
+    arg_parser.add_argument(
+        "--airport",
+        type=str,
+        help="In --tax mode, run one or more configured airport codes or airport names, comma-separated (e.g. KUL,MCT or Kuala Lumpur,Muscat)",
     )
     arg_parser.add_argument(
         "-1d",
@@ -955,7 +1207,9 @@ def main(prebuilt_args=None, stop_event=None):
         help="Extract only exchange rates (alias for --only-yq)",
     )
     arg_parser.add_argument(
-        "--tax", action="store_true", help="Extract Tax (FTAX) data instead of fares"
+        "--tax",
+        action="store_true",
+        help="Extract Future Tax (FTAX) data instead of fares; optionally target one or more airports with --airport",
     )
     arg_parser.add_argument(
         "--penalty",
@@ -1203,36 +1457,30 @@ def main(prebuilt_args=None, stop_event=None):
             logger.error("  No 'tax_airports' defined in config.")
             sys.exit(1)
 
-        # Filter tax_airports to only those appearing in configured routes
-        commands_file = os.path.join(
-            SCRIPT_DIR, config.get("commands_file", "commands.txt")
-        )
-        if os.path.exists(commands_file):
-            route_airports = set()
-            with open(commands_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("FD") and "/" in line and len(line) >= 8:
-                        route_airports.add(line[2:5].upper())
-                        route_airports.add(line[5:8].upper())
-            if route_airports:
-                filtered = {
-                    k: v for k, v in tax_airports.items()
-                    if k.upper() in route_airports
-                }
-                if filtered:
-                    skipped = len(tax_airports) - len(filtered)
-                    tax_airports = filtered
-                    if skipped > 0:
-                        logger.info(
-                            f"  Filtered to {len(tax_airports)} airports matching configured routes "
-                            f"(skipped {skipped} unrelated)"
-                        )
+        try:
+            tax_airports, tax_selection = _select_tax_airports_for_run(config, args)
+        except ValidationError as e:
+            logger.error(f"  {e}")
+            sys.exit(1)
 
-        if args.limit > 0:
-            tax_airports = {
-                k: v for i, (k, v) in enumerate(tax_airports.items()) if i < args.limit
-            }
+        if tax_selection["resolutions"]:
+            resolution_summary = "; ".join(
+                (
+                    f"{item['resolved_code']} ({item['display_name']}) "
+                    f"via '{item['matched_alias']}' -> FTAX-{item['country_code']}"
+                )
+                for item in tax_selection["resolutions"]
+            )
+            logger.info(
+                f"  [FILTER] Tax airports resolved: {resolution_summary}"
+            )
+        elif tax_selection["skipped_by_route_filter"] > 0:
+            logger.info(
+                f"  Filtered to {len(tax_airports)} airports matching configured routes "
+                f"(skipped {tax_selection['skipped_by_route_filter']} unrelated)"
+            )
+
+        if args.limit > 0 and not tax_selection["resolutions"]:
             logger.info(f"  [TESTING] Limited to first {args.limit} airports")
         logger.info(f"  {len(tax_airports)} tax airports loaded from config")
     else:
@@ -1584,11 +1832,14 @@ def main(prebuilt_args=None, stop_event=None):
                         logger.info("  [STOP] Stop requested - finishing after this point.")
                         break
                     country_code = airport_info["country"]
+                    display_name = _tax_airport_display_name(
+                        airport_code, airport_info, config
+                    )
 
                     # Only log if not using tqdm
                     if not use_tqdm:
                         logger.info(
-                            f"  [{index}/{tax_total}] Airport: {airport_code} ({country_code})"
+                            f"  [{index}/{tax_total}] Airport: {airport_code} ({display_name}) -> FTAX-{country_code}"
                         )
                         _log_eta(
                             logger,
@@ -2081,8 +2332,9 @@ def main(prebuilt_args=None, stop_event=None):
 
                     for index, (acode, ainfo) in enumerate(target_airports.items(), 1):
                         ccode = ainfo["country"]
+                        display_name = _tax_airport_display_name(acode, ainfo, config)
                         logger.info(
-                            f"  [{index}/{len(target_airports)}] Airport: {acode} ({ccode})"
+                            f"  [{index}/{len(target_airports)}] Airport: {acode} ({display_name}) -> FTAX-{ccode}"
                         )
 
                         list_cmd = f"FTAX-{ccode}"
