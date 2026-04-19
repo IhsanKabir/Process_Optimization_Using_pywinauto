@@ -133,7 +133,7 @@ TravelportAuto.exe [flags]
 | `--tax` | | Run tax extraction (FTAX) instead of fares |
 | `--penalty` | | Run Rule 16 penalty extraction |
 | `--quick-paste` | | Manual mode: paste GDS output yourself |
-| `--route ROUTE` | `--route DAC-MCT` | Only run fare commands for this route (both directions). In `--tax` mode, kept as a backward-compatible airport alias. |
+| `--route ROUTE` | `--route DAC-MCT` | For fare/penalty runs, first uses configured commands for this route and falls back to generated FD commands when needed. In `--tax` mode, kept as a backward-compatible airport alias. |
 | `--airport AIRPORT` | `--airport KUL,MCT` | In `--tax` mode, run one or more configured airport codes or airport names |
 | `--one-direction` | | With `--route`, match only the exact direction typed |
 | `--airline CODE` | `--airline BG` or `--airline BG,BS` | Only run commands for these airline(s) |
@@ -170,10 +170,11 @@ TravelportAuto.exe --auto
 
 Runs FTAX commands for the configured airports listed under `tax_airports` in `config.json`. Extracts current, upcoming, and expired tax rates with effective dates.
 
-To target specific airports, use one or more airport codes or airport names:
+To target specific airports, use one or more airport codes or airport names. This can include airports outside the default `tax_airports` run list as long as the app knows their country code:
 
 ```bat
 TravelportAuto.exe --auto --tax --airport KUL
+TravelportAuto.exe --auto --tax --airport DAC
 TravelportAuto.exe --auto --tax --airport KUL,MCT
 TravelportAuto.exe --auto --tax --airport "Kuala Lumpur"
 TravelportAuto.exe --auto --tax --airport "Kuala Lumpur, Muscat"
@@ -219,6 +220,12 @@ You can combine filters:
 ```bash
 # Only Biman fares to Muscat, both directions
 TravelportAuto.exe --auto --route DAC-MCT --airline BG
+
+# Search a route even if it is not already listed in commands.txt
+TravelportAuto.exe --auto --route DAC-KWI --airline KU
+
+# Penalty mode uses the same route fallback logic
+TravelportAuto.exe --auto --penalty --route DAC-KWI --airline KU
 
 # Only outbound DAC→MCT for BG
 TravelportAuto.exe --auto --route DAC-MCT --one-direction --airline BG

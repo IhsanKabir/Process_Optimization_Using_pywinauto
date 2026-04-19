@@ -52,6 +52,7 @@ from change_detector import (
 from exceptions import ConfigurationError, ValidationError
 from validators import (
     validate_config,
+    validate_airline_code,
     validate_limit,
     validate_route,
     sanitize_command,
@@ -123,6 +124,40 @@ FS_OPTION_PATTERN = re.compile(
 )
 FS_LEG_PATTERN = re.compile(r"^\s*(\d+)\s+[#@-]?([A-Z0-9]{2})\s+", re.MULTILINE)
 _RE_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+DEFAULT_AIRPORT_COUNTRY_CODES = {
+    "DAC": "BD",
+    "CGP": "BD",
+    "ZYL": "BD",
+    "CXB": "BD",
+    "MLE": "MV",
+    "CAN": "CN",
+    "MCT": "OM",
+    "DOH": "QA",
+    "DXB": "AE",
+    "AUH": "AE",
+    "SHJ": "AE",
+    "RKT": "AE",
+    "RUH": "SA",
+    "JED": "SA",
+    "DMM": "SA",
+    "MED": "SA",
+    "KWI": "KW",
+    "BOM": "IN",
+    "DEL": "IN",
+    "MAA": "IN",
+    "BLR": "IN",
+    "CCU": "IN",
+    "SIN": "SG",
+    "BKK": "TH",
+    "KUL": "MY",
+    "HKT": "TH",
+    "MNL": "PH",
+    "SGN": "VN",
+    "HAN": "VN",
+    "PEK": "CN",
+    "PVG": "CN",
+    "SZX": "CN",
+}
 
 
 def setup_logging():
@@ -634,7 +669,10 @@ def _process_airport_taxes(
             if idx < len(tax_types):
                 automation.return_to_tax_list(country_code)
 
-        result[airport_code] = {"taxes": airport_tax_details}
+        result[airport_code] = {
+            "taxes": airport_tax_details,
+            "_country": country_code,
+        }
 
     return result
 
@@ -720,6 +758,94 @@ def _command_matches_route(
     return any(route_variant in raw_command for route_variant in route_variants)
 
 
+def _parse_requested_routes(route_query: str | None) -> list[str]:
+    """Normalize comma-separated route input into canonical `AAA-BBB` strings."""
+    if not route_query:
+        return []
+
+    normalized_routes: list[str] = []
+    seen_routes: set[str] = set()
+    for raw_route in str(route_query).split(","):
+        raw_route = raw_route.strip()
+        if not raw_route:
+            continue
+        origin, destination = validate_route(raw_route)
+        route_code = f"{origin}-{destination}"
+        if route_code in seen_routes:
+            continue
+        seen_routes.add(route_code)
+        normalized_routes.append(route_code)
+    return normalized_routes
+
+
+def _resolve_explicit_airline_codes(
+    airline_query: str | None, config: dict
+) -> list[str]:
+    """Resolve explicit fare/penalty airline filters or fall back to configured airlines."""
+    if airline_query:
+        airline_codes: list[str] = []
+        seen_codes: set[str] = set()
+        for raw_code in str(airline_query).split(","):
+            raw_code = raw_code.strip()
+            if not raw_code:
+                continue
+            code = validate_airline_code(raw_code)
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+            airline_codes.append(code)
+        if airline_codes:
+            return airline_codes
+
+    airline_names = config.get("airline_names", {})
+    if isinstance(airline_names, dict) and airline_names:
+        return [str(code).upper() for code in airline_names.keys()]
+
+    raise ConfigurationError(
+        "No airlines available to generate explicit route commands. Add airline_names or provide --airline."
+    )
+
+
+def _build_explicit_route_commands(
+    route_query: str,
+    airline_query: str | None,
+    config: dict,
+    one_direction: bool = False,
+) -> tuple[list[dict], list[str], list[str]]:
+    """Build FD commands directly from typed routes and airlines."""
+    routes = _parse_requested_routes(route_query)
+    if not routes:
+        return [], [], []
+
+    airline_codes = _resolve_explicit_airline_codes(airline_query, config)
+    commands: list[dict] = []
+    seen_commands: set[str] = set()
+
+    for route_code in routes:
+        origin, destination = route_code.split("-", 1)
+        direction_pairs = [(origin, destination)]
+        if not one_direction:
+            direction_pairs.append((destination, origin))
+
+        for dir_origin, dir_destination in direction_pairs:
+            for airline_code in airline_codes:
+                command = f"FD{dir_origin}{dir_destination}/{airline_code}"
+                if command in seen_commands:
+                    continue
+                seen_commands.add(command)
+                commands.append(
+                    {
+                        "origin": dir_origin,
+                        "destination": dir_destination,
+                        "airline": airline_code,
+                        "route": f"{dir_origin}-{dir_destination}",
+                        "command": command,
+                    }
+                )
+
+    return commands, routes, airline_codes
+
+
 def _extract_tax_airport_queries(
     airport_query: str | None = None, route_query: str | None = None
 ) -> list[str] | None:
@@ -777,6 +903,32 @@ def _tax_airport_name_aliases(
             continue
         aliases.append(text)
     return aliases
+
+
+def _configured_airport_country_codes(config: dict) -> dict[str, str]:
+    """Return known airport -> country code mappings for explicit tax searches."""
+    country_codes = dict(DEFAULT_AIRPORT_COUNTRY_CODES)
+    for airport_code, country_code in config.get("airport_country_codes", {}).items():
+        country_codes[str(airport_code).upper()] = str(country_code).upper()
+    for airport_code, airport_info in config.get("tax_airports", {}).items():
+        country_code = str(airport_info.get("country", "") or "").upper()
+        if country_code:
+            country_codes[str(airport_code).upper()] = country_code
+    return country_codes
+
+
+def _build_searchable_tax_airports(config: dict) -> dict[str, dict]:
+    """Return airports that can be used for explicit Future Tax lookups."""
+    searchable = {
+        airport_code: dict(airport_info)
+        for airport_code, airport_info in config.get("tax_airports", {}).items()
+    }
+
+    for airport_code, country_code in _configured_airport_country_codes(config).items():
+        if airport_code not in searchable:
+            searchable[airport_code] = {"country": country_code}
+
+    return searchable
 
 
 def _format_tax_airport_candidates(
@@ -900,6 +1052,7 @@ def _filter_tax_airports_by_configured_routes(
 def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
     """Select which configured tax airports should run for the current invocation."""
     tax_airports = dict(config.get("tax_airports", {}))
+    searchable_tax_airports = _build_searchable_tax_airports(config)
     metadata = {
         "requested_queries": [],
         "resolved_codes": [],
@@ -919,7 +1072,7 @@ def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
 
         for requested_query in requested_queries:
             airport_code, airport_info, matched_alias = _resolve_tax_airport_query(
-                requested_query, tax_airports, config
+                requested_query, searchable_tax_airports, config
             )
             if airport_code in selected_tax_airports:
                 continue
@@ -1490,11 +1643,12 @@ def main(prebuilt_args=None, stop_event=None):
         commands_file = os.path.join(
             SCRIPT_DIR, config.get("commands_file", "commands.txt")
         )
+        configured_commands: list[dict] = []
 
         if os.path.exists(commands_file):
             # User's local commands.txt - may have been customised; always prefer it.
             logger.info(f"  Loading local commands from {commands_file}")
-            commands = load_commands(commands_file)
+            configured_commands = load_commands(commands_file)
         else:
             # First run - download the default command list from GitHub and save
             # it next to the exe so the user can edit it later.
@@ -1508,23 +1662,24 @@ def main(prebuilt_args=None, stop_event=None):
                     content = resp.read().decode("utf-8")
                 with open(commands_file, "w", encoding="utf-8") as fh:
                     fh.write(content)
-                commands = load_commands_from_text(content)
+                configured_commands = load_commands_from_text(content)
                 logger.info(
-                    f"  Downloaded {len(commands)} default commands -> saved to {commands_file}"
+                    f"  Downloaded {len(configured_commands)} default commands -> saved to {commands_file}"
                 )
                 logger.info("  You can edit commands.txt to add or remove routes.")
             except Exception as exc:
-                logger.error(f"  Could not download default commands: {exc}")
-                logger.error(
-                    f"  Create a commands.txt file in {SCRIPT_DIR} with your FD commands."
-                )
-                sys.exit(1)
+                if args.route:
+                    logger.warning(
+                        f"  Could not download default commands: {exc}. Falling back to explicit route generation."
+                    )
+                else:
+                    logger.error(f"  Could not download default commands: {exc}")
+                    logger.error(
+                        f"  Create a commands.txt file in {SCRIPT_DIR} with your FD commands."
+                    )
+                    sys.exit(1)
 
-        if not commands:
-            logger.error(
-                "  No valid route commands are configured. Please update commands.txt and try again."
-            )
-            sys.exit(1)
+        commands = list(configured_commands)
 
         # Apply filters
         if commands:
@@ -1563,6 +1718,51 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(f"  [TESTING] Limited to first {args.limit} commands")
             if not args.route and args.limit == 0:
                 logger.info(f"  {len(commands)} route commands loaded")
+
+        explicit_routes: list[str] = []
+        explicit_airlines: list[str] = []
+        if args.route and not commands:
+            try:
+                commands, explicit_routes, explicit_airlines = _build_explicit_route_commands(
+                    args.route,
+                    args.airline,
+                    config,
+                    one_direction=args.one_direction,
+                )
+            except (ValidationError, ConfigurationError) as e:
+                logger.error(f"  {e}")
+                sys.exit(1)
+
+            if commands:
+                direction_scope = (
+                    "exact direction only" if args.one_direction else "both directions"
+                )
+                airline_scope = (
+                    args.airline
+                    if args.airline
+                    else f"all configured airlines ({len(explicit_airlines)})"
+                )
+                logger.info(
+                    "  [FALLBACK] No configured commands matched. "
+                    f"Generated {len(commands)} command(s) for route(s) {', '.join(explicit_routes)} "
+                    f"using {airline_scope} ({direction_scope})"
+                )
+
+                if args.limit > 0:
+                    commands = commands[: args.limit]
+                    logger.info(f"  [TESTING] Limited to first {args.limit} commands")
+
+        if not commands:
+            if args.route:
+                logger.error(
+                    f"  No commands available for route(s) {args.route}. "
+                    "Provide --airline or add matching commands to commands.txt."
+                )
+            else:
+                logger.error(
+                    "  No valid route commands are configured. Please update commands.txt and try again."
+                )
+            sys.exit(1)
     logger.info("")
 
     # Initialize checkpoint manager if enabled
@@ -1907,7 +2107,10 @@ def main(prebuilt_args=None, stop_event=None):
                         if idx < len(tax_types):
                             automation.return_to_tax_list(country_code)
 
-                    tax_data[airport_code] = {"taxes": airport_tax_details}
+                    tax_data[airport_code] = {
+                        "taxes": airport_tax_details,
+                        "_country": country_code,
+                    }
 
                 automation.show_completion_signal()
             except StopRequested:

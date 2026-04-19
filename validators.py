@@ -240,6 +240,26 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
                     f"Invalid country code in tax_airports[{airport_code}]: {e}"
                 )
 
+    # Validate broader airport -> country mappings for explicit FTAX lookups
+    if "airport_country_codes" in config:
+        if not isinstance(config["airport_country_codes"], dict):
+            raise ConfigurationError("airport_country_codes must be a dictionary")
+
+        for airport_code, country_code in config["airport_country_codes"].items():
+            try:
+                validate_airport_code(airport_code)
+            except ValidationError as e:
+                raise ConfigurationError(
+                    f"Invalid airport code in airport_country_codes: {e}"
+                )
+
+            try:
+                validate_country_code(country_code)
+            except ValidationError as e:
+                raise ConfigurationError(
+                    f"Invalid country code in airport_country_codes[{airport_code}]: {e}"
+                )
+
     return config
 
 

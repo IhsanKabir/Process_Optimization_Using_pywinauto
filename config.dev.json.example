@@ -15,5 +15,10 @@
       "country": "SG",
       "name": "Singapore"
     }
+  },
+  "airport_country_codes": {
+    "DAC": "BD",
+    "CGP": "BD",
+    "SIN": "SG"
   }
 }
