@@ -131,97 +131,108 @@ def _write_sheet(
     previous_date: Optional[date],
     usd_tracker: UsdTracker,
 ) -> None:
-    # Column map (single Currency column, no duplicate labels, no blank spacer):
-    #   A: Currency       B: Current Rate       C: Previous Rate       D: Zenith Value
+    # Three separate blocks with narrow spacer columns between them.
+    #   A: Currency  | B: Exchange Rate To BDT    (Current block)
+    #   C: spacer
+    #   D: Currency  | E: Exchange Rate To BDT    (Previous block)
+    #   F: spacer
+    #   G: Currency  | H: Value                   (Zenith block)
     currencies = sorted(
         current_rates.keys(), key=lambda c: current_rates[c], reverse=True
     )
 
-    # Row 1 — group headers. Currency and Zenith span the date sub-row.
-    ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
-    a1 = ws.cell(row=1, column=1, value="Currency")
-    a1.font = HEADER_FONT
-    a1.alignment = CENTER
-    a1.border = THIN_BORDER
-    ws.cell(row=2, column=1).border = THIN_BORDER
+    # Row 1 — block titles, each merged across its 2 columns.
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=2)
+    cur_title = ws.cell(row=1, column=1, value="Current Date")
+    cur_title.font = HEADER_FONT
+    cur_title.alignment = CENTER
 
-    b1 = ws.cell(row=1, column=2, value="Current Date")
-    b1.font = HEADER_FONT
-    b1.alignment = CENTER
-    b1.border = THIN_BORDER
+    ws.merge_cells(start_row=1, start_column=4, end_row=1, end_column=5)
+    prev_title = ws.cell(row=1, column=4, value="Previous Date")
+    prev_title.font = HEADER_FONT
+    prev_title.alignment = CENTER
 
-    c1 = ws.cell(row=1, column=3, value="Previous Date")
-    c1.font = HEADER_FONT
-    c1.alignment = CENTER
-    c1.border = THIN_BORDER
+    # Zenith title spans rows 1–2 so its sub-header aligns with the others on row 3.
+    ws.merge_cells(start_row=1, start_column=7, end_row=2, end_column=8)
+    zen_title = ws.cell(row=1, column=7, value="Zenith")
+    zen_title.font = ZENITH_HEADER_FONT
+    zen_title.alignment = CENTER
 
-    ws.merge_cells(start_row=1, start_column=4, end_row=2, end_column=4)
-    d1 = ws.cell(row=1, column=4, value="Zenith Value")
-    d1.font = ZENITH_HEADER_FONT
-    d1.alignment = CENTER
-    d1.border = THIN_BORDER
-    ws.cell(row=2, column=4).border = THIN_BORDER
+    # Row 2 — date strings under Current/Previous (merged across their 2 cols).
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=2)
+    cur_date_cell = ws.cell(row=2, column=1, value=run_date.strftime("%d-%b-%y"))
+    cur_date_cell.font = DATE_FONT
+    cur_date_cell.alignment = CENTER
 
-    # Row 2 — date strings under the Current / Previous group headers.
-    b2 = ws.cell(row=2, column=2, value=run_date.strftime("%d-%b-%y"))
-    b2.font = DATE_FONT
-    b2.alignment = CENTER
-    b2.border = THIN_BORDER
+    prev_label_txt = previous_date.strftime("%d-%b-%y") if previous_date else "—"
+    ws.merge_cells(start_row=2, start_column=4, end_row=2, end_column=5)
+    prev_date_cell = ws.cell(row=2, column=4, value=prev_label_txt)
+    prev_date_cell.font = DATE_FONT
+    prev_date_cell.alignment = CENTER
 
-    prev_label = previous_date.strftime("%d-%b-%y") if previous_date else "—"
-    c2 = ws.cell(row=2, column=3, value=prev_label)
-    c2.font = DATE_FONT
-    c2.alignment = CENTER
-    c2.border = THIN_BORDER
+    # Row 3 — sub-headers for every block.
+    subheaders = [
+        (1, "Currency"),
+        (2, "Exchange Rate To BDT"),
+        (4, "Currency"),
+        (5, "Exchange Rate To BDT"),
+        (7, "Currency"),
+        (8, "Value"),
+    ]
+    for col, text in subheaders:
+        cell = ws.cell(row=3, column=col, value=text)
+        cell.font = TABLE_HEADER_FONT
+        cell.alignment = CENTER
+        cell.border = THIN_BORDER
 
-    # Row 3 — rate sub-header ("Exchange Rate To BDT") under B and C only.
-    sub_a = ws.cell(row=3, column=1, value="")
-    sub_a.border = THIN_BORDER
-
-    sub_b = ws.cell(row=3, column=2, value="Exchange Rate To BDT")
-    sub_b.font = TABLE_HEADER_FONT
-    sub_b.alignment = CENTER
-    sub_b.border = THIN_BORDER
-
-    sub_c = ws.cell(row=3, column=3, value="Exchange Rate To BDT")
-    sub_c.font = TABLE_HEADER_FONT
-    sub_c.alignment = CENTER
-    sub_c.border = THIN_BORDER
-
-    sub_d = ws.cell(row=3, column=4, value="")
-    sub_d.border = THIN_BORDER
+    # Borders for the merged header/date cells (openpyxl only styles the anchor cell).
+    header_ranges = [
+        (1, 1, 1, 2),  # Current title
+        (1, 4, 1, 5),  # Previous title
+        (1, 7, 2, 8),  # Zenith title
+        (2, 1, 2, 2),  # Current date
+        (2, 4, 2, 5),  # Previous date
+    ]
+    for r1, c1, r2, c2 in header_ranges:
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                ws.cell(row=r, column=c).border = THIN_BORDER
 
     # Data rows
     row = 4
     for cur in currencies:
         cur_rate = current_rates[cur]
         prev_rate = previous_rates.get(cur)
-
-        # Currency label (single column)
-        lbl = ws.cell(row=row, column=1, value=f"1 {cur}")
-        lbl.font = BODY_FONT
-        lbl.alignment = CENTER
-        lbl.border = THIN_BORDER
-
-        # Current rate
-        value_cell = ws.cell(row=row, column=2)
-        value_cell.border = THIN_BORDER
-        value_cell.alignment = CENTER
-
         is_changed = prev_rate is None or not _rates_equal(cur_rate, prev_rate)
+
+        # Current block — highlight on change.
+        cur_label = ws.cell(row=row, column=1, value=f"1 {cur}")
+        cur_label.font = BODY_FONT
+        cur_label.alignment = CENTER
+        cur_label.border = THIN_BORDER
+
+        cur_value = ws.cell(row=row, column=2)
+        cur_value.border = THIN_BORDER
+        cur_value.alignment = CENTER
+
         if is_changed:
-            lbl.fill = CHANGED_FILL
-            value_cell.fill = CHANGED_FILL
+            cur_label.fill = CHANGED_FILL
+            cur_value.fill = CHANGED_FILL
 
         if cur == "USD":
-            _write_usd_current_cell(value_cell, cur_rate, usd_tracker, run_date)
+            _write_usd_current_cell(cur_value, cur_rate, usd_tracker, run_date)
         else:
-            value_cell.value = cur_rate
-            value_cell.font = BODY_FONT
-            value_cell.number_format = "0.000000"
+            cur_value.value = cur_rate
+            cur_value.font = BODY_FONT
+            cur_value.number_format = "0.000000"
 
-        # Previous rate
-        prev_value_cell = ws.cell(row=row, column=3)
+        # Previous block — no highlight.
+        prev_label_cell = ws.cell(row=row, column=4, value=f"1 {cur}")
+        prev_label_cell.font = BODY_FONT
+        prev_label_cell.alignment = CENTER
+        prev_label_cell.border = THIN_BORDER
+
+        prev_value_cell = ws.cell(row=row, column=5)
         prev_value_cell.border = THIN_BORDER
         prev_value_cell.alignment = CENTER
         prev_value_cell.font = BODY_FONT
@@ -231,17 +242,28 @@ def _write_sheet(
         else:
             prev_value_cell.value = "—"
 
-        # Zenith
-        zenith_cell = ws.cell(row=row, column=4, value=1.0 / cur_rate if cur_rate else 0)
-        zenith_cell.font = BODY_FONT
-        zenith_cell.alignment = RIGHT
-        zenith_cell.border = THIN_BORDER
-        zenith_cell.number_format = "0.000000"
+        # Zenith block — 1 / current_rate, no highlight.
+        zen_label = ws.cell(row=row, column=7, value=f"1 {cur}")
+        zen_label.font = BODY_FONT
+        zen_label.alignment = CENTER
+        zen_label.border = THIN_BORDER
+
+        zen_value = ws.cell(row=row, column=8, value=1.0 / cur_rate if cur_rate else 0)
+        zen_value.font = BODY_FONT
+        zen_value.alignment = RIGHT
+        zen_value.border = THIN_BORDER
+        zen_value.number_format = "0.000000"
 
         row += 1
 
-    # Column widths — Currency | Current | Previous | Zenith
-    widths = {"A": 14, "B": 26, "C": 22, "D": 16}
+    # Column widths — two data columns per block + narrow spacers.
+    widths = {
+        "A": 10, "B": 24,
+        "C": 2,
+        "D": 10, "E": 24,
+        "F": 2,
+        "G": 10, "H": 14,
+    }
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
 
