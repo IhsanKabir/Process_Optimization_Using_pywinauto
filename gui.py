@@ -54,6 +54,65 @@ class _StdoutRedirect:
         return True
 
 
+# ── Tooltip helper ────────────────────────────────────────────────────────────
+
+
+class _Tooltip:
+    """Lightweight tkinter tooltip — shows a small label on hover."""
+
+    def __init__(self, widget, text: str, delay_ms: int = 450):
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self._tip: tk.Toplevel | None = None
+        self._after_id: str | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay_ms, self._show)
+
+    def _cancel(self):
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except tk.TclError:
+                pass
+            self._after_id = None
+
+    def _show(self):
+        if self._tip is not None or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self._tip = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tk.Label(
+            tw,
+            text=self.text,
+            justify="left",
+            bg="#ffffe0",
+            fg="#333",
+            relief="solid",
+            borderwidth=1,
+            font=("Segoe UI", 8),
+            padx=6,
+            pady=3,
+        ).pack()
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except tk.TclError:
+                pass
+            self._tip = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _runtime_dir() -> str:
@@ -332,8 +391,8 @@ class TravelportGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"TravelportAuto  {self.VERSION}")
-        self.root.geometry("920x640")
-        self.root.minsize(740, 520)
+        self.root.geometry("1180x680")
+        self.root.minsize(1060, 620)
 
         self.log_queue: queue.Queue = queue.Queue()
         self.stop_event = threading.Event()
@@ -476,7 +535,7 @@ class TravelportGUI:
         body = tk.Frame(self.root, bg="#f2f2f2")
         body.pack(fill="both", expand=True, padx=10, pady=8)
 
-        left = tk.Frame(body, bg="#f2f2f2", width=235)
+        left = tk.Frame(body, bg="#f2f2f2", width=270)
         left.pack(side="left", fill="y", padx=(0, 10))
         left.pack_propagate(False)
         self._build_left(left)
@@ -501,7 +560,11 @@ class TravelportGUI:
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 5))
 
     def _build_left(self, parent):
-        self._section(parent, "What to Extract")
+        self._left_parent = parent
+
+        # ── Group 1: What to Extract ────────────────────────────────────
+        g_extract = tk.Frame(parent, bg="#f2f2f2")
+        self._section(g_extract, "What to Extract")
         self.mode_var = tk.StringVar(value="fare")
         for label, val in [
             ("Fares", "fare"),
@@ -510,11 +573,11 @@ class TravelportGUI:
             ("Currency Rate", "currency"),
             ("Manual (paste GDS output)", "quickpaste"),
         ]:
-            ttk.Radiobutton(parent, text=label, variable=self.mode_var, value=val).pack(
-                anchor="w", pady=1
-            )
+            ttk.Radiobutton(
+                g_extract, text=label, variable=self.mode_var, value=val
+            ).pack(anchor="w", pady=1)
         tk.Label(
-            parent,
+            g_extract,
             text="Manual: copy terminal output first,\nthen press Start",
             bg="#f2f2f2",
             fg="#999",
@@ -523,7 +586,9 @@ class TravelportGUI:
         ).pack(anchor="w")
         self.mode_var.trace_add("write", self._on_mode_change)
 
-        self._section(parent, "Speed")
+        # ── Group 2: Speed ──────────────────────────────────────────────
+        g_speed = tk.Frame(parent, bg="#f2f2f2")
+        self._section(g_speed, "Speed")
         self.speed_var = tk.StringVar(value="normal")
         for label, val in [
             ("Normal", "normal"),
@@ -531,30 +596,32 @@ class TravelportGUI:
             ("Reliable (slower)", "safe"),
         ]:
             ttk.Radiobutton(
-                parent, text=label, variable=self.speed_var, value=val
+                g_speed, text=label, variable=self.speed_var, value=val
             ).pack(anchor="w", pady=1)
 
-        self._section(parent, "Filters")
-        tk.Label(parent, text="Route:", bg="#f2f2f2", font=("Segoe UI", 9)).pack(
-            anchor="w"
-        )
-        self.route_var = tk.StringVar()
-        ttk.Entry(parent, textvariable=self.route_var).pack(fill="x")
+        # ── Group 3: Filters (hidden in Currency) ───────────────────────
+        g_filters = tk.Frame(parent, bg="#f2f2f2")
+        self._section(g_filters, "Filters")
         tk.Label(
-            parent,
+            g_filters, text="Route:", bg="#f2f2f2", font=("Segoe UI", 9)
+        ).pack(anchor="w")
+        self.route_var = tk.StringVar()
+        ttk.Entry(g_filters, textvariable=self.route_var).pack(fill="x")
+        tk.Label(
+            g_filters,
             text="e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
-        tk.Label(parent, text="Airline:", bg="#f2f2f2", font=("Segoe UI", 9)).pack(
-            anchor="w", pady=(5, 0)
-        )
-        self.airline_var = tk.StringVar()
-        ttk.Entry(parent, textvariable=self.airline_var).pack(fill="x")
         tk.Label(
-            parent,
+            g_filters, text="Airline:", bg="#f2f2f2", font=("Segoe UI", 9)
+        ).pack(anchor="w", pady=(5, 0))
+        self.airline_var = tk.StringVar()
+        ttk.Entry(g_filters, textvariable=self.airline_var).pack(fill="x")
+        tk.Label(
+            g_filters,
             text="e.g. BG or BG,BS,EK  (blank = all)",
             bg="#f2f2f2",
             fg="#999",
@@ -562,93 +629,135 @@ class TravelportGUI:
         ).pack(anchor="w")
 
         tk.Label(
-            parent, text="Limit (0 = run all):", bg="#f2f2f2", font=("Segoe UI", 9)
+            g_filters, text="Limit (0 = run all):", bg="#f2f2f2", font=("Segoe UI", 9)
         ).pack(anchor="w", pady=(5, 0))
         self.limit_var = tk.StringVar(value="0")
-        ttk.Entry(parent, textvariable=self.limit_var, width=8).pack(anchor="w")
+        ttk.Entry(g_filters, textvariable=self.limit_var, width=8).pack(anchor="w")
 
-        self._section(parent, "Options")
+        # ── Group 4a: Options — core (always) ───────────────────────────
+        g_options_core = tk.Frame(parent, bg="#f2f2f2")
+        self._section(g_options_core, "Options")
         self.checkpoint_var = tk.BooleanVar(value=True)
         self.no_changes_var = tk.BooleanVar(value=False)
-        self.only_fd_var = tk.BooleanVar(value=False)
-        self.only_yq_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            parent,
-            text="Save progress (resume if interrupted)",
+            g_options_core,
+            text="Save progress (resume on interrupt)",
             variable=self.checkpoint_var,
         ).pack(anchor="w", pady=1)
         ttk.Checkbutton(
-            parent, text="Skip change report", variable=self.no_changes_var
-        ).pack(anchor="w", pady=1)
-        ttk.Checkbutton(
-            parent, text="Fares only (skip taxes)", variable=self.only_fd_var
-        ).pack(anchor="w", pady=1)
-        ttk.Checkbutton(
-            parent, text="Taxes only (skip fares)", variable=self.only_yq_var
+            g_options_core, text="Skip change report", variable=self.no_changes_var
         ).pack(anchor="w", pady=1)
 
+        # ── Group 4b: Options — only-flags (Fares/Taxes modes only) ─────
+        g_only_flags = tk.Frame(parent, bg="#f2f2f2")
+        self.only_fd_var = tk.BooleanVar(value=False)
+        self.only_yq_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            g_only_flags, text="Fares only (skip taxes)", variable=self.only_fd_var
+        ).pack(anchor="w", pady=1)
+        ttk.Checkbutton(
+            g_only_flags, text="Taxes only (skip fares)", variable=self.only_yq_var
+        ).pack(anchor="w", pady=1)
+
+        # ── Group 5: Compare against (hidden in Currency / Manual) ──────
+        g_compare = tk.Frame(parent, bg="#f2f2f2")
         tk.Label(
-            parent, text="Compare against:", bg="#f2f2f2", font=("Segoe UI", 9)
+            g_compare, text="Compare against:", bg="#f2f2f2", font=("Segoe UI", 9)
         ).pack(anchor="w", pady=(6, 0))
         self.compare_var = tk.StringVar()
-        compare_row = tk.Frame(parent, bg="#f2f2f2")
+        compare_row = tk.Frame(g_compare, bg="#f2f2f2")
         compare_row.pack(fill="x")
         ttk.Entry(compare_row, textvariable=self.compare_var).pack(
             side="left", fill="x", expand=True
         )
-        ttk.Button(
+        self._compare_browse_btn = ttk.Button(
             compare_row, text="Browse", width=7, command=self._browse_compare_file
-        ).pack(side="left", padx=(4, 0))
+        )
+        self._compare_browse_btn.pack(side="left", padx=(4, 0))
         tk.Label(
-            parent,
+            g_compare,
             text="blank = previous run  |  date or browse for snapshot file",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
+        # ── Group 6: Previous Rates (Currency mode only) ────────────────
+        g_prev_rates = tk.Frame(parent, bg="#f2f2f2")
         tk.Label(
-            parent,
-            text="Previous rates file (Currency Rate only):",
+            g_prev_rates,
+            text="Previous Rates File:",
             bg="#f2f2f2",
             font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(6, 0))
         self._prev_rates_path = None
         self._prev_rates_date = None
         self._prev_rates_var = tk.StringVar(value="")
-        prev_row = tk.Frame(parent, bg="#f2f2f2")
+        prev_row = tk.Frame(g_prev_rates, bg="#f2f2f2")
         prev_row.pack(fill="x")
         ttk.Entry(prev_row, textvariable=self._prev_rates_var, state="readonly").pack(
             side="left", fill="x", expand=True
         )
-        ttk.Button(
+        self._prev_rates_browse_btn = ttk.Button(
             prev_row, text="Browse", width=7, command=self._browse_prev_rates
-        ).pack(side="left", padx=(4, 0))
+        )
+        self._prev_rates_browse_btn.pack(side="left", padx=(4, 0))
         tk.Label(
-            parent,
-            text="Optional. JSON / CSV / XLSX — sets the Previous Date column.",
+            g_prev_rates,
+            text="Optional — sets the Previous Date column (Currency Rate only).",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
-        self._section(parent, "Output Path")
+        # ── Group 7: Output Path (always) ───────────────────────────────
+        g_output = tk.Frame(parent, bg="#f2f2f2")
+        self._section(g_output, "Output Path")
         tk.Label(
-            parent,
+            g_output,
             text="Leave blank — saved automatically",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
-        row = tk.Frame(parent, bg="#f2f2f2")
-        row.pack(fill="x")
+        out_row = tk.Frame(g_output, bg="#f2f2f2")
+        out_row.pack(fill="x")
         self.output_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.output_var).pack(
+        ttk.Entry(out_row, textvariable=self.output_var).pack(
             side="left", fill="x", expand=True
         )
-        ttk.Button(row, text="…", width=3, command=self._browse).pack(
-            side="left", padx=(2, 0)
+        self._output_browse_btn = ttk.Button(
+            out_row, text="…", width=3, command=self._browse
         )
+        self._output_browse_btn.pack(side="left", padx=(2, 0))
+
+        # Ordered list drives mode-aware show/hide.
+        self._left_sections = [
+            (g_extract, lambda m: True),
+            (g_speed, lambda m: True),
+            (g_filters, lambda m: m != "currency"),
+            (g_options_core, lambda m: True),
+            (g_only_flags, lambda m: m in {"fare", "tax"}),
+            (g_compare, lambda m: m in {"fare", "tax", "penalty"}),
+            (g_prev_rates, lambda m: m == "currency"),
+            (g_output, lambda m: True),
+        ]
+
+        # Tooltips (B.7) — attached after buttons exist.
+        _Tooltip(
+            self._compare_browse_btn,
+            "Browse for a JSON / CSV / XLSX snapshot to diff against.",
+        )
+        _Tooltip(
+            self._prev_rates_browse_btn,
+            "Browse for JSON / CSV / XLSX from a prior currency run.",
+        )
+        _Tooltip(
+            self._output_browse_btn,
+            "Leave empty to auto-name under data/reports/.",
+        )
+
+        self._apply_mode_visibility()
 
     # ── Right panel ───────────────────────────────────────────────────────────
 
@@ -684,7 +793,7 @@ class TravelportGUI:
             bg="#f2f2f2",
             fg="#0f3758",
             font=("Segoe UI", 9, "bold"),
-            width=14,
+            width=28,
             anchor="e",
         )
         self.counter_label.pack(side="left", padx=(6, 0))
@@ -907,6 +1016,19 @@ class TravelportGUI:
             self._total = total
             self._completed_routes = idx
             self._set_step(3)
+
+            # Insert a row per currency so the tree fills up with ticks.
+            m_succ = re.search(
+                r"\[\d+/\d+\]\s+([A-Z]{3})\s*->\s*[A-Z]{3}:\s*([\d.]+)", text
+            )
+            m_fail = re.search(
+                r"\[\d+/\d+\]\s+Could not parse rate for ([A-Z]{3})", text
+            )
+            if m_succ:
+                self._add_currency_row(idx, m_succ.group(1), m_succ.group(2), "done")
+            elif m_fail:
+                self._add_currency_row(idx, m_fail.group(1), "—", "failed")
+
             self._update_counter()
             self._refresh_eta()
 
@@ -961,6 +1083,26 @@ class TravelportGUI:
         self.tree.see(iid)
         self._current_row = iid
 
+    def _add_currency_row(self, idx: int, code: str, rate_str: str, state: str):
+        """Insert (or update) a currency row and mark it done/failed in one step.
+
+        Currency runs emit one log line per currency when the rate is finalised, so
+        each line is a completed event — no separate "running → done" transition.
+        """
+        iid = f"row_{idx}"
+        icon = "✓" if state == "done" else "✗"
+        detail = (
+            f"\u2192 BDT: {rate_str}" if state == "done" else "failed to parse"
+        )
+        values = (icon, code, detail)
+        if self.tree.exists(iid):
+            self.tree.item(iid, values=values, tags=(state,))
+        else:
+            self.tree.insert("", "end", iid=iid, values=values, tags=(state,))
+        self._row_states[iid] = state
+        self.tree.see(iid)
+        self._current_row = iid
+
     def _mark_row(self, state: str):
         if not self._current_row or not self.tree.exists(self._current_row):
             return
@@ -974,12 +1116,23 @@ class TravelportGUI:
         if previous_state not in {"done", "failed"} and state in {"done", "failed"}:
             self._completed_routes += 1
             self._refresh_eta()
+        self._update_counter()
 
     def _update_counter(self):
-        if self._total:
-            pct = int(self._done / self._total * 100)
-            self.counter_label.configure(text=f"{self._done} / {self._total}")
-            self.progress.configure(mode="determinate", value=pct)
+        if not self._total:
+            self.counter_label.configure(text="")
+            return
+        pct = int(self._done / self._total * 100)
+        done = sum(1 for s in self._row_states.values() if s == "done")
+        failed = sum(1 for s in self._row_states.values() if s == "failed")
+        running = sum(1 for s in self._row_states.values() if s == "running")
+        self.counter_label.configure(
+            text=(
+                f"\u2713 {done}  \u2717 {failed}  \u27f3 {running}   "
+                f"({self._done}/{self._total})"
+            )
+        )
+        self.progress.configure(mode="determinate", value=pct)
 
     def _refresh_eta(self):
         if self.stop_event.is_set():
@@ -1035,6 +1188,31 @@ class TravelportGUI:
     def _on_mode_change(self, *_):
         if self.mode_var.get() == "quickpaste":
             self.no_changes_var.set(True)
+        self._apply_mode_visibility()
+
+    def _apply_mode_visibility(self):
+        """Show/hide left-panel groups based on current mode; rename tree headings."""
+        mode = self.mode_var.get()
+        for group, _pred in self._left_sections:
+            group.pack_forget()
+        for group, pred in self._left_sections:
+            if pred(mode):
+                group.pack(fill="x")
+        self._update_tree_headings(mode)
+
+    def _update_tree_headings(self, mode: str):
+        """Rename the tree's two visible columns to match the current mode."""
+        if not hasattr(self, "tree"):
+            return
+        if mode == "currency":
+            self.tree.heading("airline", text="Currency")
+            self.tree.heading("route", text="Rate \u2192 BDT")
+        elif mode == "tax":
+            self.tree.heading("airline", text="Airline")
+            self.tree.heading("route", text="Airport")
+        else:  # fare, penalty, quickpaste
+            self.tree.heading("airline", text="Airline")
+            self.tree.heading("route", text="Route")
 
     # ── Quick-paste wizard (GUI-native, step-by-step clipboard collection) ────
 
