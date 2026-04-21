@@ -192,7 +192,9 @@ MAX_PAGES_UNSALEABLE = 5  # Maximum pages for unsaleable fares (FU*)
 
 # Retry configuration
 MAX_RETRIES_COMMAND = 3  # Maximum retry attempts for failed commands
-MAX_FS_DATE_STEPS = 37  # Maximum date offsets to try for FS command
+MAX_FS_DATE_STEPS = 32  # Cap FS retries: start+1 (30MAY, 32MAY) then bail. Prevents
+# hammering clipboard-copy 6+ times when an airline has no FS availability; the
+# single retry still rescues carriers whose first-choice date lacks inventory.
 
 # Data validation thresholds
 MIN_TERMINAL_TEXT_LENGTH = 50  # Minimum chars for valid terminal response

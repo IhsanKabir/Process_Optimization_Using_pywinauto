@@ -3,6 +3,7 @@ import shutil
 from pathlib import Path
 import pytest
 from main import (
+    _build_searchable_tax_airports,
     _build_explicit_route_commands,
     _command_matches_route,
     _extract_tax_airport_queries,
@@ -195,10 +196,45 @@ def test_resolve_tax_airport_query_rejects_ambiguous_country_name():
         _resolve_tax_airport_query("uae", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG)
 
 
+def test_resolve_tax_airport_query_matches_global_airport_code():
+    searchable = _build_searchable_tax_airports(
+        {"city_names": {}, "tax_airports": {}, "airport_country_codes": {}}
+    )
+
+    code, info, matched_alias = _resolve_tax_airport_query("SYD", searchable, TEST_TAX_CONFIG)
+
+    assert code == "SYD"
+    assert info["country"] == "AU"
+    assert matched_alias == "SYD"
+
+
+def test_resolve_tax_airport_query_matches_unique_global_airport_name():
+    searchable = _build_searchable_tax_airports(
+        {"city_names": {}, "tax_airports": {}, "airport_country_codes": {}}
+    )
+
+    code, info, matched_alias = _resolve_tax_airport_query(
+        "Kingsford Smith", searchable, TEST_TAX_CONFIG
+    )
+
+    assert code == "SYD"
+    assert info["country"] == "AU"
+    assert matched_alias == "Sydney Kingsford Smith International Airport"
+
+
+def test_resolve_tax_airport_query_rejects_ambiguous_global_city_name():
+    searchable = _build_searchable_tax_airports(
+        {"city_names": {}, "tax_airports": {}, "airport_country_codes": {}}
+    )
+
+    with pytest.raises(ValidationError, match="matches multiple airports"):
+        _resolve_tax_airport_query("Sydney", searchable, TEST_TAX_CONFIG)
+
+
 def test_route_like_tax_alias_fails_when_first_airport_is_not_configured():
     first_airport = _extract_tax_airport_queries(route_query="XXX-MCT")[0]
 
-    with pytest.raises(ValidationError, match="not found in configured tax airports"):
+    with pytest.raises(ValidationError, match="not found"):
         _resolve_tax_airport_query(
             first_airport,
             {
@@ -239,6 +275,16 @@ def test_select_tax_airports_for_run_accepts_legacy_route_alias():
     assert metadata["requested_queries"] == ["DAC"]
 
 
+def test_select_tax_airports_for_run_accepts_global_route_alias():
+    args = SimpleNamespace(airport=None, route="SYD-DAC", limit=0)
+
+    selected, metadata = _select_tax_airports_for_run(TEST_TAX_CONFIG, args)
+
+    assert list(selected.keys()) == ["SYD"]
+    assert selected["SYD"]["country"] == "AU"
+    assert metadata["requested_queries"] == ["SYD"]
+
+
 def test_select_tax_airports_for_run_accepts_multiple_explicit_airports():
     args = SimpleNamespace(airport="KUL,Muscat", route=None, limit=0)
 
@@ -257,6 +303,22 @@ def test_select_tax_airports_for_run_deduplicates_same_airport():
     assert list(selected.keys()) == ["KUL"]
     assert metadata["resolved_codes"] == ["KUL"]
     assert len(metadata["resolutions"]) == 1
+
+
+def test_select_tax_airports_for_run_allows_global_airport_without_configured_defaults():
+    config = {
+        **TEST_TAX_CONFIG,
+        "city_names": {},
+        "tax_airports": {},
+        "airport_country_codes": {},
+    }
+    args = SimpleNamespace(airport="SYD", route=None, limit=0)
+
+    selected, metadata = _select_tax_airports_for_run(config, args)
+
+    assert list(selected.keys()) == ["SYD"]
+    assert selected["SYD"]["country"] == "AU"
+    assert metadata["resolved_codes"] == ["SYD"]
 
 
 def test_select_tax_airports_for_run_uses_configured_routes_when_no_explicit_query(

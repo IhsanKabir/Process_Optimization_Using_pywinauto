@@ -134,7 +134,7 @@ TravelportAuto.exe [flags]
 | `--penalty` | | Run Rule 16 penalty extraction |
 | `--quick-paste` | | Manual mode: paste GDS output yourself |
 | `--route ROUTE` | `--route DAC-MCT` | For fare/penalty runs, first uses configured commands for this route and falls back to generated FD commands when needed. In `--tax` mode, kept as a backward-compatible airport alias. |
-| `--airport AIRPORT` | `--airport KUL,MCT` | In `--tax` mode, run one or more configured airport codes or airport names |
+| `--airport AIRPORT` | `--airport KUL,SYD` | In `--tax` mode, run one or more airport codes or airport names. Blank keeps the configured tax-airport list |
 | `--one-direction` | | With `--route`, match only the exact direction typed |
 | `--airline CODE` | `--airline BG` or `--airline BG,BS` | Only run commands for these airline(s) |
 | `--limit N` | `--limit 5` | Stop after N commands (useful for testing) |
@@ -170,17 +170,20 @@ TravelportAuto.exe --auto
 
 Runs FTAX commands for the configured airports listed under `tax_airports` in `config.json`. Extracts current, upcoming, and expired tax rates with effective dates.
 
-To target specific airports, use one or more airport codes or airport names. This can include airports outside the default `tax_airports` run list as long as the app knows their country code:
+To target specific airports, use one or more airport codes or airport names. When you leave the field blank, the app uses the configured `tax_airports` list. When you enter airport values, the app resolves those explicit airports directly, including airports outside the default config list:
 
 ```bat
 TravelportAuto.exe --auto --tax --airport KUL
+TravelportAuto.exe --auto --tax --airport SYD
 TravelportAuto.exe --auto --tax --airport DAC
 TravelportAuto.exe --auto --tax --airport KUL,MCT
 TravelportAuto.exe --auto --tax --airport "Kuala Lumpur"
-TravelportAuto.exe --auto --tax --airport "Kuala Lumpur, Muscat"
+TravelportAuto.exe --auto --tax --airport "Sydney Kingsford Smith International Airport"
 ```
 
 `--tax --route KUL-DAC` is still accepted for backward compatibility and will use the first airport (`KUL`).
+
+For best results with airports outside your config, prefer the 3-letter airport code such as `SYD`. City names can be ambiguous and may require the full airport name.
 
 Output: **tax_report_YYYY-MM-DD_HHMM.xlsx**
 
