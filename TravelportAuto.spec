@@ -6,6 +6,8 @@ import sys
 
 import _tkinter
 
+from PyInstaller.utils.hooks import collect_data_files
+
 
 def _collect_tree(root: Path, dest_root: str, exclude_names=None, exclude_suffixes=None):
     exclude_names = set(exclude_names or [])
@@ -51,6 +53,11 @@ _datas += _collect_tree(_TCL_DIR, '_tcl_data', exclude_names={'demos'}, exclude_
 _datas += _collect_tree(_TK_DIR, '_tk_data', exclude_names={'demos'}, exclude_suffixes={'.lib'})
 _datas += _collect_tree(_TCL_MODULE_DIR, f"tcl{_TCL_MAJOR}")
 
+# airportsdata ships its IATA/ICAO JSON tables inside the package dir; without
+# collect_data_files they're not bundled, and the global FTAX airport directory
+# silently comes back empty in the frozen exe (venv/tests don't catch this).
+_datas += collect_data_files('airportsdata')
+
 
 a = Analysis(
     ['gui.py'],
@@ -68,6 +75,7 @@ a = Analysis(
         'mouseinfo', 'pygetwindow', 'pymsgbox', 'pyrect', 'pyscreeze',
         'pytweening',
         'openpyxl', 'tqdm',
+        'airportsdata',
         'ctypes', 'ctypes.wintypes', 'webbrowser', 'subprocess', 'hashlib',
         'json', 'logging', 'queue', 're', 'shutil', 'threading',
         'urllib.request', 'urllib.error',

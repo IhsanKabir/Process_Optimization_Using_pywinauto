@@ -207,6 +207,9 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
         automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237)
     )
     monkeypatch.setattr(
+        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+    )
+    monkeypatch.setattr(
         automation, "_wait_for_response", lambda *args, **kwargs: "INTERIM"
     )
 
@@ -230,6 +233,133 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
 
     assert "FARE USD955.00" in result
     assert "I" not in sent_keys
+
+
+def test_click_d_button_rejects_loose_keyword_screen_and_tries_next_offset(monkeypatch):
+    automation = SmartpointAutomation()
+    sent_keys = []
+    move_calls = []
+
+    fs_text = """
+PRICING OPTION 1
+1   QR    639  N  09MAY DAC DOH   0305  0615
+             «BOOK»             +TQ                                                     D  R  +1
+>
+"""
+    bad_detail_text = """
+FARE BASIS DETAILS
+RULE TEXT
+TAX MAY APPLY
+"""
+    settled_tax_text = """
+TOTAL JOURNEY TIME
+FS-1 ADT
+REFUNDABLE: YES
+FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
+"""
+    response_texts = iter(["INTERIM_BAD", "RESET_PAGE", "INTERIM_GOOD"])
+    settled_texts = iter([bad_detail_text, fs_text, settled_tax_text])
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(
+        automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237)
+    )
+    monkeypatch.setattr(
+        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+    )
+    monkeypatch.setattr(
+        automation, "_wait_for_response", lambda *args, **kwargs: next(response_texts)
+    )
+    monkeypatch.setattr(
+        automation,
+        "_wait_for_stable_screen",
+        lambda *args, **kwargs: next(settled_texts),
+    )
+
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "moveTo",
+        lambda x, y, duration=None: move_calls.append((x, y)),
+    )
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "typewrite",
+        lambda text, interval=None: sent_keys.append(text),
+    )
+
+    result = automation.click_d_button(0, fs_text)
+
+    assert "FARE USD955.00" in result
+    assert "I" in sent_keys
+    assert len(move_calls) >= 2
+
+
+def test_click_d_button_keeps_trying_when_screen_returns_to_pricing_options(monkeypatch):
+    automation = SmartpointAutomation()
+    sent_keys = []
+    move_calls = []
+
+    fs_text = """
+PRICING OPTION 1
+1   BS    325  E  20MAY DAC CAN   2210  0350 #  WE   738      EBDCNO
+             «BOOK»             +TQ                                                     D  R  +0
+>
+"""
+    repriced_text = """
+>
+
+TTL OF 1   PRICING OPTIONS AND 1     ITINERARY OPTIONS RETURNED
+
+ PRICING OPTION 1                  TOTAL AMOUNT             28870 BDT
+ADT
+1   BS    325  E  20MAY DAC CAN   2210  0350 #  WE   738      EBDCNO
+             «BOOK»             +TQ                                                     D  R  +0
+"""
+    settled_tax_text = """
+TOTAL JOURNEY TIME
+FS-1 ADT
+REFUNDABLE: YES
+FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
+"""
+    response_texts = iter(["INTERIM_BAD", "INTERIM_GOOD"])
+    settled_texts = iter([repriced_text, settled_tax_text])
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(
+        automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237)
+    )
+    monkeypatch.setattr(
+        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+    )
+    monkeypatch.setattr(
+        automation, "_wait_for_response", lambda *args, **kwargs: next(response_texts)
+    )
+    monkeypatch.setattr(
+        automation,
+        "_wait_for_stable_screen",
+        lambda *args, **kwargs: next(settled_texts),
+    )
+
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "moveTo",
+        lambda x, y, duration=None: move_calls.append((x, y)),
+    )
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "typewrite",
+        lambda text, interval=None: sent_keys.append(text),
+    )
+
+    result = automation.click_d_button(0, fs_text)
+
+    assert "FARE USD955.00" in result
+    assert "I" not in sent_keys
+    assert len(move_calls) >= 2
 
 
 def test_click_fare_amount_for_penalty_prefers_exact_unsaleable_line(monkeypatch):
@@ -323,9 +453,9 @@ def test_copy_terminal_text_skips_hotkeys_when_window_not_foreground(monkeypatch
     automation.window = _Window()
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
     monkeypatch.setattr(automation, "_is_window_foreground", lambda: False)
+    monkeypatch.setattr(automation, "_safe_focus_click", lambda x, y: None)
     monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
     monkeypatch.setattr(spa.pyperclip, "paste", lambda: "")
-    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         automation,
         "_send_clipboard_shortcuts",
@@ -383,17 +513,15 @@ def test_copy_terminal_text_uses_terminal_focus_point(monkeypatch):
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
     monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (444, 222))
     monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(
+        automation, "_safe_focus_click", lambda x, y: clicks.append((x, y))
+    )
     monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
     monkeypatch.setattr(spa.pyperclip, "paste", lambda: "CAPTURED")
     monkeypatch.setattr(
         automation,
         "_send_clipboard_shortcuts",
         lambda: None,
-    )
-    monkeypatch.setattr(
-        spa.pyautogui,
-        "click",
-        lambda *args, **kwargs: clicks.append((kwargs.get("x"), kwargs.get("y"))),
     )
     monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
     monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
@@ -462,6 +590,7 @@ def test_copy_terminal_text_stops_after_one_slower_retry(monkeypatch):
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
     monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (444, 222))
     monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(automation, "_safe_focus_click", lambda x, y: None)
     monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
     monkeypatch.setattr(spa.pyperclip, "paste", lambda: next(pasted))
     monkeypatch.setattr(
@@ -469,7 +598,6 @@ def test_copy_terminal_text_stops_after_one_slower_retry(monkeypatch):
         "_send_clipboard_shortcuts",
         lambda: sent_shortcuts.append("copy"),
     )
-    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
     monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
     monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
 
@@ -493,17 +621,15 @@ def test_copy_terminal_text_uses_heavy_fallback_after_two_empty_attempts(monkeyp
     )
     monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (444, 222))
     monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(
+        automation, "_safe_focus_click", lambda x, y: clicks.append((x, y))
+    )
     monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
     monkeypatch.setattr(spa.pyperclip, "paste", lambda: next(pasted))
     monkeypatch.setattr(
         automation,
         "_send_clipboard_shortcuts",
         lambda: sent_shortcuts.append("copy"),
-    )
-    monkeypatch.setattr(
-        spa.pyautogui,
-        "click",
-        lambda *args, **kwargs: clicks.append((kwargs.get("x"), kwargs.get("y"))),
     )
     monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
     monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
@@ -529,9 +655,9 @@ def test_copy_terminal_text_converts_keyboard_interrupt_to_runtime_error(monkeyp
     automation.window = _Window()
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
     monkeypatch.setattr(automation, "_is_window_foreground", lambda: True)
+    monkeypatch.setattr(automation, "_safe_focus_click", lambda x, y: None)
     monkeypatch.setattr(spa.pyperclip, "copy", lambda text: None)
     monkeypatch.setattr(spa.pyperclip, "paste", lambda: "")
-    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         automation,
         "_send_clipboard_shortcuts",
@@ -544,6 +670,73 @@ def test_copy_terminal_text_converts_keyboard_interrupt_to_runtime_error(monkeyp
         assert False, "Expected RuntimeError"
     except RuntimeError as exc:
         assert "Ctrl+C likely reached the console" in str(exc)
+
+
+def test_get_terminal_focus_point_derives_missing_bounds_from_dimensions(monkeypatch):
+    automation = SmartpointAutomation()
+
+    class _Rect:
+        left = 100
+        top = 50
+
+        @staticmethod
+        def width():
+            return 40
+
+        @staticmethod
+        def height():
+            return 30
+
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _Rect())
+
+    assert automation._get_terminal_focus_point() == (150, 80)
+
+
+def test_click_currency_link_retries_after_first_miss(monkeypatch):
+    automation = SmartpointAutomation()
+    moved = []
+    fd_text = "HEADER\nBDT CURRENCY FARES EXISTS\nEND"
+    loaded_text = "UPDATED SCREEN " + ("X" * 120)
+
+    class _Rect:
+        left = 100
+        top = 50
+        right = 500
+        bottom = 250
+
+        def width(self):
+            return self.right - self.left
+
+        def height(self):
+            return self.bottom - self.top
+
+    pasted = iter([fd_text, loaded_text])
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _Rect())
+    monkeypatch.setattr(
+        automation,
+        "_wait_for_stable_screen",
+        lambda initial_text=None, **kwargs: initial_text,
+    )
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: next(pasted))
+    monkeypatch.setattr(automation, "_has_dropdown_activated", lambda text: False)
+    monkeypatch.setattr(
+        automation,
+        "_has_currency_redirect",
+        lambda text: "CURRENCY FARES EXISTS" in text,
+    )
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "moveTo",
+        lambda x, y, duration=None: moved.append((x, y)),
+    )
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    assert automation.click_currency_link(fd_text) == loaded_text
+    assert len(moved) == 2
 
 
 def test_send_clipboard_shortcuts_uses_pywinauto_send_keys(monkeypatch):

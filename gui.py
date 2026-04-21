@@ -9,6 +9,14 @@ Entry point for PyInstaller build (console=False in spec).
 Run directly:  python gui.py
 """
 
+# Must be called before any window is created so pyautogui and UIAutomation
+# both use physical pixel coordinates on DPI-scaled displays.
+try:
+    import ctypes as _ctypes
+    _ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    pass
+
 import argparse
 import json
 import logging
@@ -956,6 +964,16 @@ class TravelportGUI:
         )
         self.feedback_btn.pack(side="left", padx=4)
 
+        self.recalibrate_btn = ttk.Button(
+            bar, text="⚙  Recalibrate", command=self._recalibrate_display, width=15
+        )
+        self.recalibrate_btn.pack(side="left", padx=4)
+        _Tooltip(
+            self.recalibrate_btn,
+            "Reset click calibration for this display.\n"
+            "Run this after changing screen resolution or DPI scaling.",
+        )
+
         self.status_label = tk.Label(
             bar, text="Ready", bg="#dde3e8", fg="#555", font=("Segoe UI", 9)
         )
@@ -1256,7 +1274,7 @@ class TravelportGUI:
         if mode == "tax":
             self._primary_filter_label_var.set("Airport:")
             self._primary_filter_help_var.set(
-                "e.g. KUL,MCT or Kuala Lumpur,Muscat or KUL-DAC (uses KUL)  (blank = all)"
+                "Code, name, country or route (origin used), e.g. DAC, Dhaka, BD or DAC-MCT  (blank = all)"
             )
             self._airline_help_var.set("Ignored in Future Tax mode")
             self._airline_label.configure(fg="#999")
@@ -1720,6 +1738,21 @@ class TravelportGUI:
         else:
             messagebox.showinfo("No Report", "Report file not found.")
 
+    def _recalibrate_display(self):
+        """Reset click calibration to DPI-auto values for this display."""
+        try:
+            import calibration as _cal_mod
+            data = _cal_mod.reset_calibration()
+            lh = data["line_height"]
+            dpi = data.get("dpi", "?")
+            messagebox.showinfo(
+                "Recalibrated",
+                f"Click calibration reset.\n\nLine height: {lh} px  (DPI: {dpi})\n\n"
+                "Restart the app for the new values to take effect on the next run.",
+            )
+        except Exception as exc:
+            messagebox.showerror("Recalibrate Failed", str(exc))
+
     def _open_feedback_dialog(self):
         if self._feedback_dialog and self._feedback_dialog.winfo_exists():
             self._feedback_dialog.lift()
@@ -1899,18 +1932,21 @@ class TravelportGUI:
             limit = 0
         is_quickpaste = mode == "quickpaste"
         is_currency = mode == "currency"
+        is_tax = mode == "tax"
+        primary_filter = self.route_var.get().strip() or None
+        airline_filter = self.airline_var.get().strip() or None
         return argparse.Namespace(
             auto=(not is_quickpaste),
-            tax=(mode == "tax"),
+            tax=is_tax,
             penalty=(mode == "penalty"),
             quick_paste=is_quickpaste,
             currency_report=is_currency,
             load_previous_rates=getattr(self, "_prev_rates_path", None) if is_currency else None,
             previous_date=getattr(self, "_prev_rates_date", None) if is_currency else None,
-            route=self.route_var.get().strip() or None if mode != "tax" else None,
-            airport=self.route_var.get().strip() or None if mode == "tax" else None,
+            route=None if is_tax else primary_filter,
+            airport=primary_filter if is_tax else None,
             one_direction=False,
-            airline=self.airline_var.get().strip() or None if mode != "tax" else None,
+            airline=None if is_tax else airline_filter,
             limit=limit,
             only_fd=self.only_fd_var.get(),
             only_yq=self.only_yq_var.get(),
@@ -2050,12 +2086,6 @@ class TravelportGUI:
 
 def launch():
     root = tk.Tk()
-    try:
-        from ctypes import windll
-
-        windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        pass
     try:
         TravelportGUI(root)
         root.mainloop()

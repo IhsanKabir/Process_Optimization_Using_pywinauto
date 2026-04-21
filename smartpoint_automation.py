@@ -24,6 +24,7 @@ except Exception:
     _real_pyperclip = None
 
 import constants
+import calibration as _calibration_mod
 from constants import (
     # Terminal rendering
     LINE_HEIGHT,
@@ -202,8 +203,15 @@ class SmartpointAutomation:
         self._cached_terminal_rect = None  # Cache for SmartRichTextBox rect
         self._last_focus_time = 0.0  # Timestamp of last successful focus()
         self._last_terminal_text = ""  # Cache for deduplicating reads
+        self._cal = _calibration_mod.load_calibration()
+        self._line_height = self._cal["line_height"]
+        self._content_top_padding = self._cal.get("content_top_padding", CONTENT_TOP_PADDING)
         self.logger.debug("Using Smartpoint input backend: %s", _INPUT_BACKEND)
         self.logger.debug("Using Smartpoint clipboard backend: %s", _CLIPBOARD_BACKEND)
+        self.logger.debug(
+            "Display calibration: line_height=%d, source=%s",
+            self._line_height, self._cal.get("source", "?")
+        )
 
     def _raise_if_stopped(self) -> None:
         """Abort long-running automation steps promptly after a Stop request."""
@@ -501,20 +509,62 @@ class SmartpointAutomation:
         if rect is None:
             return SAFE_CLICK_X_OFFSET, SAFE_CLICK_Y_OFFSET
 
+        left = int(getattr(rect, "left", 0))
+        top = int(getattr(rect, "top", 0))
+        right = getattr(rect, "right", None)
+        bottom = getattr(rect, "bottom", None)
+
         try:
-            width = rect.width()
-            height = rect.height()
+            width = int(rect.width())
         except Exception:
-            left = getattr(rect, "left", 0)
-            top = getattr(rect, "top", 0)
-            right = getattr(rect, "right", left + SAFE_CLICK_X_OFFSET + 10)
-            bottom = getattr(rect, "bottom", top + SAFE_CLICK_Y_OFFSET + 10)
-            width = max(0, right - left)
-            height = max(0, bottom - top)
+            width = None
+        try:
+            height = int(rect.height())
+        except Exception:
+            height = None
+
+        if right is None:
+            right = left + max(width or 0, SAFE_CLICK_X_OFFSET + 10)
+        else:
+            right = int(right)
+        if bottom is None:
+            bottom = top + max(height or 0, SAFE_CLICK_Y_OFFSET + 10)
+        else:
+            bottom = int(bottom)
+
+        width = max(0, right - left)
+        height = max(0, bottom - top)
 
         x_offset = max(10, min(SAFE_CLICK_X_OFFSET, max(10, width - 10)))
         y_offset = max(10, min(SAFE_CLICK_Y_OFFSET, max(10, height - 10)))
-        return rect.left + x_offset, rect.top + y_offset
+        x = left + x_offset
+        y = top + y_offset
+
+        # Guard against pyautogui fail-safe corners. Clamp to at least 5px
+        # inside the rect itself so the point is never at a screen edge.
+        x_min = left + 5
+        y_min = top + 5
+        x_max = right - 5
+        y_max = bottom - 5
+        if x_max < x_min:
+            x_min = x_max = left + width // 2
+        if y_max < y_min:
+            y_min = y_max = top + height // 2
+        clamped_x = max(x_min, min(x, x_max))
+        clamped_y = max(y_min, min(y, y_max))
+        if (clamped_x, clamped_y) != (x, y):
+            self.logger.debug(
+                f"      [FOCUS] Clamping focus point ({x}, {y}) -> "
+                f"({clamped_x}, {clamped_y}) to avoid fail-safe corner."
+            )
+        return clamped_x, clamped_y
+
+    def _safe_focus_click(self, x: int, y: int) -> None:
+        """Click via pywinauto (no pyautogui fail-safe) for terminal focus-only clicks."""
+        try:
+            _pw_mouse.click(button="left", coords=(int(x), int(y)))
+        except Exception as exc:
+            self.logger.debug(f"      [FOCUS] _safe_focus_click failed: {exc}")
 
     def _send_clipboard_shortcuts(self) -> None:
         """Send Ctrl+A / Ctrl+C using pywinauto, not pyautogui."""
@@ -656,75 +706,92 @@ class SmartpointAutomation:
         if not self.window:
             return ""
 
-        # Get window coordinates — click in a SAFE area (top-left)
-        try:
-            rect = self.window.rectangle()
-            safe_x = (
-                rect.left + SAFE_CLICK_X_OFFSET
-            )  # Far left — no interactive links here
-            safe_y = (
-                rect.top + SAFE_CLICK_Y_OFFSET
-            )  # Near top — above any FS result content
-        except Exception:
-            safe_x = SAFE_CLICK_X_OFFSET
-            safe_y = SAFE_CLICK_Y_OFFSET
-
         safe_x, safe_y = self._get_terminal_focus_point()
 
-        # Click to focus the terminal area (safe position)
-        pyautogui.click(x=safe_x, y=safe_y)
-        self._sleep(constants.CLICK_DELAY)
+        # Use pywinauto for all focus-only clicks so pyautogui's fail-safe
+        # cannot trigger when the window is near a screen corner.
+        _failsafe_exc = getattr(_real_pyautogui, "FailSafeException", None)
 
-        if not self._is_window_foreground():
-            self.logger.warning(
-                "      [FOCUS] Smartpoint is not foreground before clipboard hotkeys; retrying focus."
-            )
-            self.focus(force=True)
-            pyautogui.click(x=safe_x, y=safe_y)
+        def _focus_click(x: int, y: int) -> None:
+            self._safe_focus_click(x, y)
+
+        try:
+            # Click to focus the terminal area (safe position)
+            _focus_click(safe_x, safe_y)
             self._sleep(constants.CLICK_DELAY)
 
-        if not self._is_window_foreground():
-            self.logger.warning(
-                "      [FOCUS] Skipping clipboard copy because Smartpoint is still not foreground."
-            )
-            return ""
+            if not self._is_window_foreground():
+                self.logger.warning(
+                    "      [FOCUS] Smartpoint is not foreground before clipboard hotkeys; retrying focus."
+                )
+                self.focus(force=True)
+                _focus_click(safe_x, safe_y)
+                self._sleep(constants.CLICK_DELAY)
 
-        def _copy_once(wait_after_copy: float = 0.0) -> str:
-            try:
-                self._send_clipboard_shortcuts()
-            except KeyboardInterrupt as exc:
-                raise RuntimeError(
-                    "Clipboard hotkeys were interrupted. Smartpoint may not have had focus and Ctrl+C likely reached the console."
-                ) from exc
-            if wait_after_copy > 0:
-                self._sleep(wait_after_copy)
-            return pyperclip.paste() or ""
+            if not self._is_window_foreground():
+                self.logger.warning(
+                    "      [FOCUS] Skipping clipboard copy because Smartpoint is still not foreground."
+                )
+                return ""
 
-        # 1. Normal copy attempt
-        text = _copy_once()
+            def _copy_once(wait_after_copy: float = 0.0) -> str:
+                try:
+                    self._send_clipboard_shortcuts()
+                except KeyboardInterrupt as exc:
+                    raise RuntimeError(
+                        "Clipboard hotkeys were interrupted. Smartpoint may not have had focus and Ctrl+C likely reached the console."
+                    ) from exc
+                if wait_after_copy > 0:
+                    self._sleep(wait_after_copy)
+                return pyperclip.paste() or ""
 
-        # 2. One slower retry if the clipboard was still empty
-        if not text.strip():
-            self._sleep(max(0.15, constants.COPY_DELAY * 2))
+            # 1. Normal copy attempt
             text = _copy_once()
 
-        # 3. Heavier fallback: refocus, reclick terminal pane, then try once more
-        if not text.strip():
-            self.logger.debug(
-                "      [COPY] Clipboard empty after two attempts; using heavy fallback."
-            )
-            pyperclip.copy("")
-            self.focus(force=True)
-            safe_x, safe_y = self._get_terminal_focus_point()
-            pyautogui.click(x=safe_x, y=safe_y)
-            self._sleep(max(constants.CLICK_DELAY, 0.1))
+            # 2. One slower retry if the clipboard was still empty
+            if not text.strip():
+                self._sleep(max(0.15, constants.COPY_DELAY * 2))
+                text = _copy_once()
 
-            if self._is_window_foreground():
-                text = _copy_once(wait_after_copy=max(0.15, constants.COPY_DELAY * 2))
-            else:
-                self.logger.warning(
-                    "      [FOCUS] Heavy clipboard fallback could not confirm foreground."
+            # 3. Heavier fallback: refocus, reclick terminal pane, then try once more
+            if not text.strip():
+                self.logger.debug(
+                    "      [COPY] Clipboard empty after two attempts; using heavy fallback."
                 )
+                pyperclip.copy("")
+                self.focus(force=True)
+                safe_x, safe_y = self._get_terminal_focus_point()
+                _focus_click(safe_x, safe_y)
+                self._sleep(max(constants.CLICK_DELAY, 0.1))
+
+                if self._is_window_foreground():
+                    text = _copy_once(wait_after_copy=max(0.15, constants.COPY_DELAY * 2))
+                else:
+                    self.logger.warning(
+                        "      [FOCUS] Heavy clipboard fallback could not confirm foreground."
+                    )
+
+        except Exception as exc:
+            if _failsafe_exc and isinstance(exc, _failsafe_exc):
+                self.logger.warning(
+                    "      [FOCUS] PyAutoGUI fail-safe triggered during focus click — "
+                    "retrying via window centre."
+                )
+                try:
+                    self.focus(force=True)
+                    safe_x, safe_y = self._get_terminal_focus_point()
+                    self._safe_focus_click(safe_x, safe_y)
+                    self._sleep(constants.CLICK_DELAY)
+                    self._send_clipboard_shortcuts()
+                    self._sleep(max(0.15, constants.COPY_DELAY * 2))
+                    text = pyperclip.paste() or ""
+                except Exception as retry_exc:
+                    self.logger.warning(
+                        f"      [FOCUS] Fail-safe retry also failed: {retry_exc}. Returning empty."
+                    )
+                    text = ""
+            else:
+                raise
 
         # Click once to deselect
         pyautogui.press("escape")
@@ -1710,16 +1777,11 @@ class SmartpointAutomation:
         # Use the SmartRichTextBox rect, NOT the window rect
         rect = self._get_terminal_rect()
 
-        # Fixed line height for Smartpoint terminal font
-        # Empirically measured: probe y=237, terminal top=82, D on line 7
-        # 82 + 5 + 7.5*20 = 237  LINE_HEIGHT=20, padding=5
-        # LINE_HEIGHT is imported from constants
-
         # Content starts ~5px below the terminal pane top edge
-        content_top = rect.top + CONTENT_TOP_PADDING
+        content_top = rect.top + self._content_top_padding
 
-        # Y: center of the target line
-        pixel_y = int(content_top + (target_line_idx + 0.5) * LINE_HEIGHT)
+        # Y: center of the target line (uses calibrated line height)
+        pixel_y = int(content_top + (target_line_idx + 0.5) * self._line_height)
 
         # X: from character column if available, otherwise from ratio
         if char_idx is not None:
@@ -1875,6 +1937,30 @@ class SmartpointAutomation:
         self.logger.warning(f"      [CLICK] All offsets tried, screen unchanged.")
         return self._copy_terminal_text()
 
+    # ── Landmark helpers (Phase B) ────────────────────────────────────────────
+
+    _RE_D_BUTTON_COL = re.compile(r"\bD\b")
+
+    def _find_d_char_column(self, line: str) -> int | None:
+        """Return column of the D button on a +TQ/BOOK line, or None."""
+        # The D button sits in the right ~30 % of the line.
+        min_col = max(0, len(line) * 7 // 10)
+        matches = list(self._RE_D_BUTTON_COL.finditer(line))
+        for m in reversed(matches):
+            if m.start() >= min_col:
+                return m.start()
+        # Fallback: rightmost D in right half
+        for m in reversed(matches):
+            if m.start() >= len(line) // 2:
+                return m.start()
+        return None
+
+    @staticmethod
+    def _find_link_char_column(line: str, pattern: re.Pattern) -> int | None:
+        """Return the start column of a hyperlink regex match in a terminal line."""
+        m = pattern.search(line)
+        return m.start() if m else None
+
     def click_d_button(self, option_index: int, fs_text: str) -> str:
         """
         Click the 'D' (Details) button for a specific Pricing Option in FS results.
@@ -1929,18 +2015,36 @@ class SmartpointAutomation:
 
             target_line = d_button_lines[option_index]
 
-        # Use empirically measured x_ratio for D button position.
-        # Clipboard char positions don't map 1:1 to pixels (measured 0.907 vs actual 0.856).
-        # The D button is consistently at ~85.5% of terminal width.
-        D_X_RATIO = D_BUTTON_X_RATIO
-        base_x, base_y = self._text_line_to_pixel(
-            fs_text, target_line, x_ratio=D_X_RATIO
+        # Phase B: resolve the exact column of the D character on the target line.
+        # Fall back to the empirical ratio only when char detection fails.
+        ratio_x, base_y = self._text_line_to_pixel(
+            fs_text, target_line, x_ratio=D_BUTTON_X_RATIO
         )
-
-        self.logger.info(
-            f"      [D-CLICK] Option {option_index+1}: line {target_line}, "
-            f"click at ({base_x}, {base_y})"
-        )
+        d_char_col = self._find_d_char_column(lines[target_line])
+        if d_char_col is not None:
+            char_x, _ = self._text_line_to_pixel(
+                fs_text, target_line, char_idx=d_char_col
+            )
+            clean_lines = [line.strip("\r") for line in lines if line.strip()]
+            terminal_width_chars = max((len(line) for line in clean_lines), default=0)
+            if terminal_width_chars > 0:
+                char_width = self._get_terminal_rect().width() / terminal_width_chars
+                d_left_bias = max(12, min(28, int(round(char_width * 4.0))))
+            else:
+                d_left_bias = 18
+            char_biased_x = char_x - d_left_bias
+            base_x = min(char_biased_x, ratio_x)
+            self.logger.info(
+                f"      [D-CLICK] Option {option_index+1}: line {target_line}, "
+                f"D at col {d_char_col} -> char_x={char_x}, ratio_x={ratio_x}, "
+                f"using x={base_x} [left-bias={d_left_bias}px]"
+            )
+        else:
+            base_x = ratio_x
+            self.logger.info(
+                f"      [D-CLICK] Option {option_index+1}: line {target_line}, "
+                f"D col not found — using ratio {D_BUTTON_X_RATIO} -> ({base_x}, {base_y})"
+            )
 
         # Clear selection
         pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
@@ -1980,18 +2084,40 @@ class SmartpointAutomation:
             )
 
             if result.strip() != text_before.strip():
-                upper = result.upper()
-                if looks_like_fs_tax_breakdown(result) or any(
-                    kw in upper
-                    for kw in ["EQU", "TAXES", "TAX", "YQ", "FARE COMPONENT", "BASIS"]
-                ):
+                if looks_like_fs_tax_breakdown(result):
                     self.logger.info(
                         f"      [D-CLICK] Tax breakdown at offset=({x_off},{y_off})"
                     )
+                    # Phase C: record successful Y offset for self-correction
+                    if y_off != 0:
+                        self._cal = _calibration_mod.record_click_delta(self._cal, y_off)
+                        self._line_height = self._cal["line_height"]
+                        _calibration_mod.save_calibration(self._cal)
                     return result
                 else:
+                    upper = result.upper()
+                    looks_like_pricing_screen = (
+                        "PRICING OPTION" in upper
+                        and "TOTAL AMOUNT" in upper
+                        and ("BOOK" in upper or "+TQ" in upper)
+                    )
+                    if looks_like_pricing_screen:
+                        self.logger.debug(
+                            "      [D-CLICK] Screen changed but still looks like pricing options. "
+                            "Trying the next offset without hard reset..."
+                        )
+                        text_before = result
+                        pyautogui.press(
+                            "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
+                        )
+                        time.sleep(constants.ESCAPE_CLEAR_DELAY)
+                        continue
                     self.logger.debug(
-                        "      [D-CLICK] Screen changed but no tax/fare data after settle. Sending 'I' to reset..."
+                        "      [D-CLICK] Screen changed but strict tax parser rejected it. "
+                        f"First 160 chars: {result[:160]!r}"
+                    )
+                    self.logger.debug(
+                        "      [D-CLICK] Sending 'I' to reset and trying the next offset..."
                     )
                     pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
                     pyautogui.press("enter")
@@ -2055,8 +2181,8 @@ class SmartpointAutomation:
             return None
 
         rect = self._get_terminal_rect()
-        content_top = rect.top + CONTENT_TOP_PADDING
-        click_y = int(content_top + (target_line_idx + 0.5) * LINE_HEIGHT)
+        content_top = rect.top + self._content_top_padding
+        click_y = int(content_top + (target_line_idx + 0.5) * self._line_height)
 
         self.logger.info(
             f"      [CURRENCY] Target: line {target_line_idx}, y={click_y}, "
@@ -2066,19 +2192,31 @@ class SmartpointAutomation:
         # Wait for terminal to finish rendering before clicking
         stable_text = self._wait_for_stable_screen(initial_text=fd_text)
 
-        # Click at multiple X positions on the LEFT side of the terminal
-        # The text "BDT  CURRENCY  FARES  EXISTS" occupies roughly 5%-40% of terminal width
-        # Also try Y offsets (10px) in case LINE_HEIGHT varies on different displays
-        x_ratios = [0.15, 0.10, 0.20, 0.25, 0.05, 0.30, 0.35]
-        y_offsets = [0, -10, 10]
+        # Phase B: anchor X to the actual char position of the link text.
+        # Fall back to ratio fan-out when char detection fails.
+        target_line_text = lines[target_line_idx]
+        link_col = self._find_link_char_column(target_line_text, _RE_CURRENCY_FARES)
+        if link_col is not None:
+            base_x, _ = self._text_line_to_pixel(fd_text, target_line_idx, char_idx=link_col)
+            x_positions = [base_x, base_x - 20, base_x + 20, base_x - 40, base_x + 40]
+            self.logger.info(
+                f"      [CURRENCY] Link at col {link_col} -> base_x={base_x}"
+            )
+        else:
+            x_positions = [
+                int(rect.left + rect.width() * r)
+                for r in [0.15, 0.10, 0.20, 0.25, 0.05, 0.30, 0.35]
+            ]
+            self.logger.debug("      [CURRENCY] Char col not found — using ratio fallback")
+
+        y_offsets = [0, -self._line_height // 2, self._line_height // 2]
 
         text_before = fd_text
         for y_off in y_offsets:
-            for x_ratio in x_ratios:
-                click_x = int(rect.left + rect.width() * x_ratio)
+            for click_x in x_positions:
                 actual_y = click_y + y_off
                 self.logger.debug(
-                    f"      [CURRENCY] Trying x={x_ratio:.2f}, y_off={y_off} -> ({click_x}, {actual_y})"
+                    f"      [CURRENCY] Trying x={click_x}, y_off={y_off} -> ({click_x}, {actual_y})"
                 )
 
                 pyautogui.moveTo(
@@ -2110,8 +2248,13 @@ class SmartpointAutomation:
                 # Check if screen changed AND redirect is gone
                 if result and not self._has_currency_redirect(result):
                     self.logger.info(
-                        f"      [CURRENCY] Click succeeded at x={x_ratio:.2f}, y_off={y_off}"
+                        f"      [CURRENCY] Click succeeded at x={click_x}, y_off={y_off}"
                     )
+                    # Phase C: record Y offset delta for self-correction
+                    if y_off != 0:
+                        self._cal = _calibration_mod.record_click_delta(self._cal, y_off)
+                        self._line_height = self._cal["line_height"]
+                        _calibration_mod.save_calibration(self._cal)
 
                     # Poll until fare data fully loads (adaptive, not fixed sleep)
                     if len(result.strip()) <= 100:
@@ -2136,7 +2279,7 @@ class SmartpointAutomation:
 
                 # Screen didn't change meaningfully, try next position
                 self.logger.debug(
-                    f"      [CURRENCY] No change at x={x_ratio:.2f}, y_off={y_off}"
+                    f"      [CURRENCY] No change at x={click_x}, y_off={y_off}"
                 )
 
             # After trying all x_ratios for this y_offset, log progress
@@ -2164,7 +2307,7 @@ class SmartpointAutomation:
             return False
 
         rect = self._get_terminal_rect()
-        total_lines_capacity = (rect.height() - 10) // LINE_HEIGHT
+        total_lines_capacity = (rect.height() - 10) // self._line_height
 
         # KEY FIX: Scrub trailing empty phantom lines so counting from the bottom is exact!
         clean_text = terminal_text.rstrip("\r\n")
@@ -2203,36 +2346,52 @@ class SmartpointAutomation:
                     base_y = int(
                         rect.bottom
                         - BOTTOM_MARGIN
-                        - (lines_from_bottom + 0.5) * LINE_HEIGHT
+                        - (lines_from_bottom + 0.5) * self._line_height
                     )
 
-                    # Offset X by ~32px (0.04 of 800) to perfectly center on the 'M' core, avoiding airline codes!
-                    base_x, _ = self._text_line_to_pixel(
-                        clean_text, i, x_ratio=MORE_LINK_X_RATIO
-                    )
+                    # Phase B: anchor X to actual char position of the More link.
+                    more_col = self._find_link_char_column(lines[i], _RE_MORE_PROMPT)
+                    if more_col is not None:
+                        base_x, _ = self._text_line_to_pixel(clean_text, i, char_idx=more_col)
+                    else:
+                        base_x, _ = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
                 else:
-                    base_x, base_y = self._text_line_to_pixel(
-                        clean_text, i, x_ratio=MORE_LINK_X_RATIO
-                    )
+                    more_col = self._find_link_char_column(lines[i], _RE_MORE_PROMPT)
+                    if more_col is not None:
+                        base_x, base_y = self._text_line_to_pixel(clean_text, i, char_idx=more_col)
+                    else:
+                        base_x, base_y = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
 
-                # Start Retry/Tolerance Logic
-                # Use 2D offsets to handle both horizontal and vertical positioning errors
-                # This prevents accidental clicks on adjacent elements like "/12M" or "M" dropdowns
-                offsets = [
+                # Phase C+: seed the fan-out from the learned Y bias so every fresh
+                # session starts at the known-good offset instead of re-discovering
+                # it. Round the stored correction to the nearest 10 px (matches the
+                # native step of the fan-out below) and dedupe.
+                base_offsets = [
                     (0, 0),
                     (0, -10),
-                    (0, 10),  # Vertical only
+                    (0, 10),
                     (-5, 0),
-                    (5, 0),  # Horizontal only (small shifts)
+                    (5, 0),
                     (0, -20),
-                    (0, 20),  # More vertical
+                    (0, 20),
                     (-5, -10),
-                    (5, -10),  # Diagonal combinations
+                    (5, -10),
                     (-5, 10),
                     (5, 10),
                     (0, -30),
-                    (0, 30),  # Even more vertical
+                    (0, 30),
                 ]
+                learned_bias = int(round(self._cal.get("delta_correction", 0) / 10.0)) * 10
+                if learned_bias:
+                    primed = [(x, y + learned_bias) for (x, y) in base_offsets]
+                    seen = set()
+                    offsets = []
+                    for off in primed + base_offsets:
+                        if off not in seen:
+                            seen.add(off)
+                            offsets.append(off)
+                else:
+                    offsets = base_offsets
                 text_before = terminal_text
 
                 for x_off, y_off in offsets:
@@ -2270,6 +2429,11 @@ class SmartpointAutomation:
                         self.logger.info(
                             "      [CLICK] 'More' link clicked successfully!"
                         )
+                        # Phase C: record Y offset delta for self-correction
+                        if y_off != 0:
+                            self._cal = _calibration_mod.record_click_delta(self._cal, y_off)
+                            self._line_height = self._cal["line_height"]
+                            _calibration_mod.save_calibration(self._cal)
                         return True
 
                 self.logger.warning(
@@ -2278,6 +2442,16 @@ class SmartpointAutomation:
                 return False
 
         return False
+
+    def recalibrate(self) -> dict:
+        """Reset calibration to DPI-auto values and reload into this instance."""
+        self._cal = _calibration_mod.reset_calibration()
+        self._line_height = self._cal["line_height"]
+        self._content_top_padding = self._cal.get("content_top_padding", CONTENT_TOP_PADDING)
+        self.logger.info(
+            f"[CAL] Recalibrated: line_height={self._line_height}, source={self._cal.get('source')}"
+        )
+        return self._cal
 
     def return_to_tax_list(self, country_code: str):
         """Re-send FTAX-{CC} to return to the tax type list page."""

@@ -9,6 +9,14 @@ Usage:
     python main.py --output report.xlsx # Custom output path
 """
 
+# Must be first — before any UI or automation imports — so physical pixel
+# coordinates are used consistently by both pyautogui and UIAutomation.
+try:
+    import ctypes as _ctypes
+    _ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    pass
+
 import argparse
 import json
 import logging
@@ -21,6 +29,12 @@ import constants
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from collections import OrderedDict
+from functools import lru_cache
+
+try:
+    import airportsdata
+except ImportError:
+    airportsdata = None
 
 try:
     from tqdm import tqdm
@@ -53,6 +67,7 @@ from exceptions import ConfigurationError, ValidationError
 from validators import (
     validate_config,
     validate_airline_code,
+    validate_airport_code,
     validate_limit,
     validate_route,
     sanitize_command,
@@ -879,6 +894,9 @@ def _tax_airport_display_name(airport_code: str, airport_info: dict, config: dic
     city_name = str(config.get("city_names", {}).get(airport_code, "") or "").strip()
     if city_name:
         return city_name
+    city = str(airport_info.get("city", "") or "").strip()
+    if city:
+        return city
     info_name = str(airport_info.get("name", "") or "").strip()
     if info_name:
         return info_name
@@ -892,6 +910,7 @@ def _tax_airport_name_aliases(
     aliases: list[str] = []
     for alias in (
         config.get("city_names", {}).get(airport_code),
+        airport_info.get("city"),
         airport_info.get("name"),
     ):
         text = str(alias or "").strip()
@@ -903,6 +922,40 @@ def _tax_airport_name_aliases(
             continue
         aliases.append(text)
     return aliases
+
+
+@lru_cache(maxsize=1)
+def _load_global_airport_directory() -> dict[str, dict]:
+    """Load a global IATA airport directory for explicit Future Tax searches."""
+    if airportsdata is None:
+        return {}
+
+    searchable: dict[str, dict] = {}
+    for airport_code, airport_info in airportsdata.load("IATA").items():
+        normalized_code = str(airport_code or "").upper().strip()
+        try:
+            normalized_code = validate_airport_code(normalized_code)
+        except ValidationError:
+            continue
+
+        country_code = str(airport_info.get("country", "") or "").upper().strip()
+        if not country_code:
+            continue
+
+        entry = {
+            "country": country_code,
+            "_source": "global",
+        }
+        city_name = str(airport_info.get("city", "") or "").strip()
+        if city_name:
+            entry["city"] = city_name
+        airport_name = str(airport_info.get("name", "") or "").strip()
+        if airport_name:
+            entry["name"] = airport_name
+
+        searchable[normalized_code] = entry
+
+    return searchable
 
 
 def _configured_airport_country_codes(config: dict) -> dict[str, str]:
@@ -921,22 +974,40 @@ def _build_searchable_tax_airports(config: dict) -> dict[str, dict]:
     """Return airports that can be used for explicit Future Tax lookups."""
     searchable = {
         airport_code: dict(airport_info)
-        for airport_code, airport_info in config.get("tax_airports", {}).items()
+        for airport_code, airport_info in _load_global_airport_directory().items()
     }
 
     for airport_code, country_code in _configured_airport_country_codes(config).items():
-        if airport_code not in searchable:
-            searchable[airport_code] = {"country": country_code}
+        existing = dict(searchable.get(airport_code, {}))
+        existing["country"] = country_code
+        if not existing.get("_source"):
+            existing["_source"] = "config"
+        searchable[airport_code] = existing
+
+    for airport_code, city_name in config.get("city_names", {}).items():
+        normalized_code = str(airport_code).upper()
+        if normalized_code not in searchable:
+            continue
+        text = str(city_name or "").strip()
+        if text:
+            searchable[normalized_code]["city"] = text
+
+    for airport_code, airport_info in config.get("tax_airports", {}).items():
+        existing = dict(searchable.get(airport_code, {}))
+        existing.update(dict(airport_info))
+        existing["_source"] = "config"
+        searchable[airport_code] = existing
 
     return searchable
 
 
 def _format_tax_airport_candidates(
-    airport_codes: list[str], tax_airports: dict, config: dict
+    airport_codes: list[str], tax_airports: dict, config: dict, max_candidates: int = 12
 ) -> str:
     """Return a compact list of configured tax-airport choices."""
     labels = []
-    for airport_code in airport_codes:
+    shown_codes = airport_codes[:max_candidates]
+    for airport_code in shown_codes:
         airport_info = tax_airports.get(airport_code, {})
         display_name = _tax_airport_display_name(airport_code, airport_info, config)
         extra_name = str(airport_info.get("name", "") or "").strip()
@@ -944,7 +1015,17 @@ def _format_tax_airport_candidates(
             labels.append(f"{airport_code} ({display_name} / {extra_name})")
         else:
             labels.append(f"{airport_code} ({display_name})")
+    if len(airport_codes) > max_candidates:
+        labels.append(f"... ({len(airport_codes) - max_candidates} more)")
     return ", ".join(labels)
+
+
+def _has_global_tax_airport_search(tax_airports: dict) -> bool:
+    """Return True when the explicit tax resolver includes the global airport directory."""
+    return any(
+        str(airport_info.get("_source", "")).casefold() == "global"
+        for airport_info in tax_airports.values()
+    )
 
 
 def _resolve_tax_airport_query(
@@ -956,6 +1037,9 @@ def _resolve_tax_airport_query(
         raise ValidationError("airport", query, "cannot be empty")
 
     query_key = query_text.casefold()
+    search_scope = (
+        "airports" if _has_global_tax_airport_search(tax_airports) else "configured tax airports"
+    )
 
     for airport_code, airport_info in tax_airports.items():
         if airport_code.casefold() == query_key:
@@ -990,7 +1074,7 @@ def _resolve_tax_airport_query(
         raise ValidationError(
             "airport",
             query,
-            "matches multiple configured tax airports: "
+            f"matches multiple {search_scope}: "
             + _format_tax_airport_candidates(matched_codes, tax_airports, config),
         )
 
@@ -1003,8 +1087,15 @@ def _resolve_tax_airport_query(
         raise ValidationError(
             "airport",
             query,
-            "matches multiple configured tax airports: "
+            f"matches multiple {search_scope}: "
             + _format_tax_airport_candidates(matched_codes, tax_airports, config),
+        )
+
+    if _has_global_tax_airport_search(tax_airports):
+        raise ValidationError(
+            "airport",
+            query,
+            "not found in known airports. Try a 3-letter airport code like SYD or a more specific airport or city name.",
         )
 
     raise ValidationError(
@@ -1060,9 +1151,6 @@ def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
         "skipped_by_route_filter": 0,
     }
 
-    if not tax_airports:
-        return tax_airports, metadata
-
     requested_queries = _extract_tax_airport_queries(
         getattr(args, "airport", None), getattr(args, "route", None)
     )
@@ -1100,6 +1188,9 @@ def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
             }
         )
         return selected_tax_airports, metadata
+
+    if not tax_airports:
+        return tax_airports, metadata
 
     commands_file = os.path.join(SCRIPT_DIR, config.get("commands_file", "commands.txt"))
     tax_airports, skipped = _filter_tax_airports_by_configured_routes(
@@ -1331,7 +1422,7 @@ def main(prebuilt_args=None, stop_event=None):
     arg_parser.add_argument(
         "--airport",
         type=str,
-        help="In --tax mode, run one or more configured airport codes or airport names, comma-separated (e.g. KUL,MCT or Kuala Lumpur,Muscat)",
+        help="In --tax mode, run one or more airport codes or airport names, comma-separated (e.g. KUL,SYD or Kuala Lumpur,Muscat). Blank keeps the configured tax-airport list.",
     )
     arg_parser.add_argument(
         "-1d",
@@ -1605,15 +1696,14 @@ def main(prebuilt_args=None, stop_event=None):
         sys.exit(1)
 
     if args.tax:
-        tax_airports = config.get("tax_airports", {})
-        if not tax_airports:
-            logger.error("  No 'tax_airports' defined in config.")
-            sys.exit(1)
-
         try:
             tax_airports, tax_selection = _select_tax_airports_for_run(config, args)
         except ValidationError as e:
             logger.error(f"  {e}")
+            sys.exit(1)
+
+        if not tax_airports and not tax_selection["requested_queries"]:
+            logger.error("  No 'tax_airports' defined in config.")
             sys.exit(1)
 
         if tax_selection["resolutions"]:
@@ -1635,7 +1725,10 @@ def main(prebuilt_args=None, stop_event=None):
 
         if args.limit > 0 and not tax_selection["resolutions"]:
             logger.info(f"  [TESTING] Limited to first {args.limit} airports")
-        logger.info(f"  {len(tax_airports)} tax airports loaded from config")
+        if tax_selection["resolutions"]:
+            logger.info(f"  {len(tax_airports)} tax airport(s) selected for this run")
+        else:
+            logger.info(f"  {len(tax_airports)} tax airports loaded from config")
     else:
         import urllib.request as _ur
         from parser import load_commands_from_text
@@ -1721,9 +1814,14 @@ def main(prebuilt_args=None, stop_event=None):
 
         explicit_routes: list[str] = []
         explicit_airlines: list[str] = []
-        if args.route and not commands:
+        if args.route and (not commands or args.airline):
+            # Two cases:
+            #   1. No commands matched at all → generate the full explicit set (original fallback).
+            #   2. Both --route and --airline are given but commands.txt only covers some of the
+            #      (route, airline) pairs → generate the missing pairs so the user's airline
+            #      list is fully honored. Previously these were silently dropped.
             try:
-                commands, explicit_routes, explicit_airlines = _build_explicit_route_commands(
+                generated, explicit_routes, explicit_airlines = _build_explicit_route_commands(
                     args.route,
                     args.airline,
                     config,
@@ -1733,7 +1831,11 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.error(f"  {e}")
                 sys.exit(1)
 
-            if commands:
+            existing_cmds = {c["command"].upper() for c in commands}
+            missing = [g for g in generated if g["command"].upper() not in existing_cmds]
+
+            if not commands and generated:
+                commands = generated
                 direction_scope = (
                     "exact direction only" if args.one_direction else "both directions"
                 )
@@ -1747,10 +1849,16 @@ def main(prebuilt_args=None, stop_event=None):
                     f"Generated {len(commands)} command(s) for route(s) {', '.join(explicit_routes)} "
                     f"using {airline_scope} ({direction_scope})"
                 )
+            elif missing and args.airline:
+                commands = commands + missing
+                logger.info(
+                    f"  [FILL] Generated {len(missing)} command(s) for (route, airline) pairs "
+                    f"missing from commands.txt: {', '.join(m['command'] for m in missing)}"
+                )
 
-                if args.limit > 0:
-                    commands = commands[: args.limit]
-                    logger.info(f"  [TESTING] Limited to first {args.limit} commands")
+            if commands and args.limit > 0:
+                commands = commands[: args.limit]
+                logger.info(f"  [TESTING] Limited to first {args.limit} commands")
 
         if not commands:
             if args.route:
