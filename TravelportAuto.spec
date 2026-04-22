@@ -59,6 +59,10 @@ _datas += _collect_tree(_TCL_MODULE_DIR, f"tcl{_TCL_MAJOR}")
 _datas += collect_data_files('airportsdata')
 
 
+_BUILD_MODE = os.environ.get("TPA_PYINSTALLER_MODE", "onedir").strip().lower()
+_ONEFILE = _BUILD_MODE in {"onefile", "single", "singlefile"}
+
+
 a = Analysis(
     ['gui.py'],
     pathex=[],
@@ -90,19 +94,13 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
+_exe_kwargs = dict(
     name='TravelportAuto',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir='.',
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -111,3 +109,33 @@ exe = EXE(
     entitlements_file=None,
     manifest="TravelportAuto.manifest",
 )
+
+if _ONEFILE:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        runtime_tmpdir=None,
+        **_exe_kwargs,
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        **_exe_kwargs,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='TravelportAuto',
+    )

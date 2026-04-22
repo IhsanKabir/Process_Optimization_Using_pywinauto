@@ -9,7 +9,9 @@ from main import (
     _extract_tax_airport_queries,
     _ensure_commands_template,
     _fd_output_has_fares,
+    _fd_output_is_no_fares,
     _find_pure_airline_option_in_fs_page,
+    _fs_output_is_no_results,
     _normalize_database_url,
     _parse_requested_routes,
     _resolve_tax_airport_query,
@@ -393,6 +395,19 @@ def test_fd_output_has_fares_requires_actual_fare_rows():
     assert _fd_output_has_fares("") is False
     assert _fd_output_has_fares("NO FARES FOUND") is False
     assert _fd_output_has_fares("DACMCT\n  1  BG  100.00   YOW      Y\nEND") is True
+
+
+def test_fd_output_is_no_fares_matches_smartpoint_terminal_message():
+    assert _fd_output_is_no_fares("NO FARES FOUND FOR INPUT REQUEST") is True
+    assert _fd_output_is_no_fares("NO FARES FOUND") is False
+    assert _fd_output_is_no_fares("DACMCT\n  1  BG  100.00   YOW      Y\nEND") is False
+
+
+def test_fs_output_is_no_results_matches_terminal_errors():
+    assert _fs_output_is_no_results("NO FARES FOUND FOR INPUT REQUEST") is True
+    assert _fs_output_is_no_results("CHECK ACTION CODE") is True
+    assert _fs_output_is_no_results("INVALID") is True
+    assert _fs_output_is_no_results("PRICING OPTION 1\n1   BG  721  H") is False
 
 
 def test_should_run_fs_extraction_skips_when_fd_has_no_fares():

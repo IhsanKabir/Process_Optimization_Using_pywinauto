@@ -1072,13 +1072,36 @@ class SmartpointAutomation:
             self.logger.debug(
                 "      [DEBUG] 'UNSALEABLE FARES' detected. Sending FU* command..."
             )
-            fu_text_before = self._copy_terminal_text()
-            pyautogui.typewrite("FU*", interval=constants.KEYBOARD_INTERVAL)
-            pyautogui.press("enter")
-            # SPEED: Adaptive polling
-            fu_first = self._wait_for_response(
-                fu_text_before, timeout=constants.COMMAND_WAIT_LONG + 0.5
-            )
+            try:
+                fu_text_before = self._copy_terminal_text()
+                pyautogui.typewrite("FU*", interval=constants.KEYBOARD_INTERVAL)
+                pyautogui.press("enter")
+                # SPEED: Adaptive polling
+                fu_first = self._wait_for_response(
+                    fu_text_before, timeout=constants.COMMAND_WAIT_LONG + 0.5
+                )
+            except StopRequested:
+                self.logger.info(
+                    "      [STOP] Stop requested during FU* expansion; keeping captured FD page."
+                )
+                return full_text
+            except Exception as exc:
+                self.logger.warning(
+                    f"      [WARNING] FU* expansion failed ({exc}); keeping captured FD page."
+                )
+                return full_text
+
+            if (
+                not fu_first.strip()
+                or self._has_invalid(fu_first)
+                or fu_first.strip() == fu_text_before.strip()
+            ):
+                self.logger.warning(
+                    "      [WARNING] FU* did not return usable unsaleable fare data; "
+                    "keeping captured FD page."
+                )
+                return full_text
+
             fu_pages = [fu_first]
             fu_page = 1
             while fu_page < MAX_PAGES_UNSALEABLE:
@@ -1977,8 +2000,34 @@ class SmartpointAutomation:
 
         lines = fs_text.split("\n")
 
-        # Strategy: Find lines containing BOOK or +TQ " these markers are
-        # always on the same line as the D button. Using "D  R" is unreliable
+        # First anchor to the selected PRICING OPTION block. The unique-airline
+        # itinerary is often option 1, but can appear in the middle of the page.
+        option_headers = [
+            idx for idx, line in enumerate(lines) if _RE_PRICING_OPTION.search(line)
+        ]
+
+        target_line = None
+        if option_index < len(option_headers):
+            block_start = option_headers[option_index]
+            block_end = (
+                option_headers[option_index + 1]
+                if option_index + 1 < len(option_headers)
+                else len(lines)
+            )
+            for idx in range(block_start, block_end):
+                line = lines[idx]
+                if "+TQ" in line or "BOOK" in line or "\xabBOOK\xbb" in line:
+                    target_line = idx
+                    break
+
+            if target_line is not None:
+                self.logger.info(
+                    f"      [D-CLICK] Option {option_index+1}: block lines "
+                    f"{block_start}-{block_end - 1}, D row={target_line}"
+                )
+
+        # Fallback: Find lines containing BOOK or +TQ. These markers are
+        # normally on the same line as the D button. Using "D  R" is unreliable
         # because the clipboard sometimes splits D and R across lines.
         d_button_lines = []
         for idx, line in enumerate(lines):
@@ -1989,15 +2038,11 @@ class SmartpointAutomation:
             f"      [D-CLICK] Found {len(d_button_lines)} BOOK/+TQ lines: {d_button_lines}"
         )
 
-        if not d_button_lines:
-            # Fallback: search for lines near PRICING OPTION headers
+        if target_line is None and not d_button_lines:
+            # Final fallback: search near PRICING OPTION headers.
             self.logger.warning(
                 "      [D-CLICK] No 'D  R' pattern found. Trying PRICING OPTION fallback..."
             )
-            option_headers = []
-            for idx, line in enumerate(lines):
-                if _RE_PRICING_OPTION.search(line):
-                    option_headers.append(idx)
 
             if option_index < len(option_headers):
                 target_line = option_headers[option_index] + 4
@@ -2006,7 +2051,7 @@ class SmartpointAutomation:
                     f"      [D-CLICK] Cannot locate D button for option {option_index}"
                 )
                 return ""
-        else:
+        elif target_line is None:
             if option_index >= len(d_button_lines):
                 self.logger.error(
                     f"      [D-CLICK] Only {len(d_button_lines)} D buttons, need index {option_index}"
@@ -2298,8 +2343,11 @@ class SmartpointAutomation:
 
     def click_more_prompt_link(self, terminal_text: str) -> bool:
         """
-        Dynamically finds and clicks 'More Flights' by anchoring to the screen bottom.
-        Leaves top-down math isolated for other buttons.
+        Dynamically finds and clicks 'More Flights/Fares' in the current layout.
+
+        The prompt can appear in different visual positions after currency
+        redirects, fare-basis popups, or normal FD pagination.  Re-read after
+        scrolling so the click target is based on the visible prompt location.
         """
 
 
@@ -2307,140 +2355,183 @@ class SmartpointAutomation:
             return False
 
         rect = self._get_terminal_rect()
-        total_lines_capacity = (rect.height() - 10) // self._line_height
+        total_lines_capacity = max(1, (rect.height() - 10) // self._line_height)
 
-        # KEY FIX: Scrub trailing empty phantom lines so counting from the bottom is exact!
-        clean_text = terminal_text.rstrip("\r\n")
-        lines = clean_text.split("\n")
+        def _find_prompt(text: str):
+            clean = (text or "").rstrip("\r\n")
+            lines = clean.split("\n") if clean else []
+            for line_idx in range(len(lines) - 1, -1, -1):
+                if _RE_MORE_PROMPT.search(lines[line_idx]):
+                    return clean, lines, line_idx
+            return None
 
-        # Search from bottom up
-        for i in range(len(lines) - 1, -1, -1):
-            line = lines[i]
-            match = _RE_MORE_PROMPT.search(line)
+        def _line_base(clean: str, lines: list[str], line_idx: int):
+            more_col = self._find_link_char_column(lines[line_idx], _RE_MORE_PROMPT)
+            if more_col is not None:
+                base_x, base_y = self._text_line_to_pixel(
+                    clean, line_idx, char_idx=more_col
+                )
+            else:
+                base_x, base_y = self._text_line_to_pixel(
+                    clean, line_idx, x_ratio=MORE_LINK_X_RATIO
+                )
+            if rect.top <= base_y <= rect.bottom:
+                return base_x, base_y
+            return None
 
-            if match:
+        def _bottom_base(clean: str, lines: list[str], line_idx: int):
+            lines_from_bottom = len(lines) - 1 - line_idx
+            if lines_from_bottom >= total_lines_capacity:
+                return None
+            more_col = self._find_link_char_column(lines[line_idx], _RE_MORE_PROMPT)
+            if more_col is not None:
+                base_x, _ = self._text_line_to_pixel(
+                    clean, line_idx, char_idx=more_col
+                )
+            else:
+                base_x, _ = self._text_line_to_pixel(
+                    clean, line_idx, x_ratio=MORE_LINK_X_RATIO
+                )
+            base_y = int(
+                rect.bottom
+                - BOTTOM_MARGIN
+                - (lines_from_bottom + 0.5) * self._line_height
+            )
+            if rect.top <= base_y <= rect.bottom:
+                return base_x, base_y
+            return None
+
+        target = _find_prompt(terminal_text)
+        if not target:
+            return False
+
+        pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
+        time.sleep(constants.ESCAPE_CLEAR_DELAY)
+
+        candidates = []
+        seen = set()
+
+        def _add_candidate(base, text_before: str, label: str):
+            if not base:
+                return
+            base_x, base_y = base
+            key = (int(base_x), int(base_y), label)
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append((base_x, base_y, text_before, label))
+
+        clean_text, lines, line_idx = target
+        _add_candidate(_line_base(clean_text, lines, line_idx), terminal_text, "visible")
+
+        if len(lines) > total_lines_capacity:
+            self.logger.debug(
+                "      [CLICK] More prompt may be off-screen; scrolling and re-reading layout..."
+            )
+            # Dismiss any lingering dropdown/modal state before scrolling.
+            pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
+            time.sleep(constants.ESCAPE_CLEAR_DELAY)
+            # Focus the terminal WITHOUT clicking a fare row. The center of the
+            # terminal is always an interactive row — clicking it opens a
+            # fare-detail dropdown (MAX/MIN STAY) and PageDown then navigates
+            # the dropdown instead of the terminal.  _get_terminal_focus_point
+            # returns a safe corner (~50px,30px inside the rect).
+            safe_x, safe_y = self._get_terminal_focus_point()
+            self._safe_focus_click(safe_x, safe_y)
+            time.sleep(constants.COPY_DELAY)
+            pyautogui.press(
+                "pagedown", presses=4, interval=constants.KEYBOARD_INTERVAL
+            )
+            time.sleep(constants.PAGEDOWN_SCROLL_DELAY)
+
+            scrolled_text = self._copy_terminal_text()
+            # Recover if PageDown still managed to open a dropdown (rare
+            # after the safe-corner click, but cheap insurance).
+            if self._has_dropdown_activated(scrolled_text):
+                self.logger.debug(
+                    "      [CLICK] Dropdown detected after scroll — dismissing and re-reading."
+                )
                 pyautogui.press(
                     "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
                 )
                 time.sleep(constants.ESCAPE_CLEAR_DELAY)
-
-                # IMPORTANT: Scroll down if the text is overflowing
-                if len(lines) > total_lines_capacity:
-                    self.logger.debug(
-                        "      [CLICK] Scrolling terminal to bottom before clicking..."
-                    )
-                    pyautogui.click(
-                        rect.left + rect.width() // 2, rect.top + rect.height() // 2
-                    )
-                    time.sleep(constants.COPY_DELAY)
-                    pyautogui.press(
-                        "pagedown", presses=4, interval=constants.KEYBOARD_INTERVAL
-                    )
-                    time.sleep(constants.PAGEDOWN_SCROLL_DELAY)
-
-                    # Target isolated calculation from the visual bottom
-                    # Empirical Test: Smartpoint's bottom frame padding sits exactly at 0px.
-                    # The text renders completely flush against the lowest border of the active text area.
-                    # BOTTOM_MARGIN is imported from constants
-                    lines_from_bottom = len(lines) - 1 - i
-                    base_y = int(
-                        rect.bottom
-                        - BOTTOM_MARGIN
-                        - (lines_from_bottom + 0.5) * self._line_height
-                    )
-
-                    # Phase B: anchor X to actual char position of the More link.
-                    more_col = self._find_link_char_column(lines[i], _RE_MORE_PROMPT)
-                    if more_col is not None:
-                        base_x, _ = self._text_line_to_pixel(clean_text, i, char_idx=more_col)
-                    else:
-                        base_x, _ = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
-                else:
-                    more_col = self._find_link_char_column(lines[i], _RE_MORE_PROMPT)
-                    if more_col is not None:
-                        base_x, base_y = self._text_line_to_pixel(clean_text, i, char_idx=more_col)
-                    else:
-                        base_x, base_y = self._text_line_to_pixel(clean_text, i, x_ratio=MORE_LINK_X_RATIO)
-
-                # Phase C+: seed the fan-out from the learned Y bias so every fresh
-                # session starts at the known-good offset instead of re-discovering
-                # it. Round the stored correction to the nearest 10 px (matches the
-                # native step of the fan-out below) and dedupe.
-                base_offsets = [
-                    (0, 0),
-                    (0, -10),
-                    (0, 10),
-                    (-5, 0),
-                    (5, 0),
-                    (0, -20),
-                    (0, 20),
-                    (-5, -10),
-                    (5, -10),
-                    (-5, 10),
-                    (5, 10),
-                    (0, -30),
-                    (0, 30),
-                ]
-                learned_bias = int(round(self._cal.get("delta_correction", 0) / 10.0)) * 10
-                if learned_bias:
-                    primed = [(x, y + learned_bias) for (x, y) in base_offsets]
-                    seen = set()
-                    offsets = []
-                    for off in primed + base_offsets:
-                        if off not in seen:
-                            seen.add(off)
-                            offsets.append(off)
-                else:
-                    offsets = base_offsets
-                text_before = terminal_text
-
-                for x_off, y_off in offsets:
-                    click_x = base_x + x_off
-                    click_y = base_y + y_off
-                    self.logger.debug(
-                        f"      [CLICK] Trying 'More' link at ({click_x}, {click_y}) [offset=({x_off},{y_off})]"
-                    )
-
-                    pyautogui.moveTo(
-                        click_x, click_y, duration=constants.MOUSE_MOVE_DURATION
-                    )
-                    pyautogui.click()
-                    time.sleep(constants.COMMAND_WAIT_LONG)
-
-                    result = self._copy_terminal_text()
-
-                    # Check if we accidentally activated a dropdown (MAXIMUM STAY, etc.)
-                    if self._has_dropdown_activated(result):
-                        self.logger.debug(
-                            "      [CLICK] Dropdown detected - capturing text before closing..."
-                        )
-                        # IMPORTANT: Capture the dropdown text (may contain fare basis details)
-                        dropdown_text = result
-                        # Close the dropdown
-                        pyautogui.press(
-                            "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
-                        )
-                        time.sleep(constants.ESCAPE_CLEAR_DELAY)
-                        # Even though we got a dropdown, we should still check if we got the More link
-                        # For now, let's continue trying since dropdown means we didn't hit More link
-                        continue
-
-                    if result.strip() != text_before.strip():
-                        self.logger.info(
-                            "      [CLICK] 'More' link clicked successfully!"
-                        )
-                        # Phase C: record Y offset delta for self-correction
-                        if y_off != 0:
-                            self._cal = _calibration_mod.record_click_delta(self._cal, y_off)
-                            self._line_height = self._cal["line_height"]
-                            _calibration_mod.save_calibration(self._cal)
-                        return True
-
-                self.logger.warning(
-                    "      [CLICK] Exhausted all offset attempts to click 'More' link."
+                scrolled_text = self._copy_terminal_text()
+            scrolled_target = _find_prompt(scrolled_text)
+            if scrolled_target:
+                scrolled_clean, scrolled_lines, scrolled_idx = scrolled_target
+                _add_candidate(
+                    _line_base(scrolled_clean, scrolled_lines, scrolled_idx),
+                    scrolled_text,
+                    "scrolled-visible",
                 )
-                return False
+                _add_candidate(
+                    _bottom_base(scrolled_clean, scrolled_lines, scrolled_idx),
+                    scrolled_text,
+                    "scrolled-bottom",
+                )
 
+            _add_candidate(_bottom_base(clean_text, lines, line_idx), terminal_text, "bottom")
+
+        if not candidates:
+            self.logger.warning(
+                "      [CLICK] Found More prompt text, but no visible click target was in bounds."
+            )
+            return False
+
+        offsets = [
+            (0, 0),
+            (0, -10),
+            (0, 10),
+            (-5, 0),
+            (5, 0),
+            (0, -20),
+            (0, 20),
+            (-5, -10),
+            (5, -10),
+            (-5, 10),
+            (5, 10),
+            (0, -30),
+            (0, 30),
+        ]
+
+        for base_x, base_y, text_before, label in candidates:
+            self.logger.debug(
+                f"      [CLICK] More target '{label}' -> ({base_x}, {base_y})"
+            )
+            for x_off, y_off in offsets:
+                click_x = base_x + x_off
+                click_y = base_y + y_off
+                self.logger.debug(
+                    f"      [CLICK] Trying 'More' link at ({click_x}, {click_y}) [offset=({x_off},{y_off})]"
+                )
+
+                pyautogui.moveTo(
+                    click_x, click_y, duration=constants.MOUSE_MOVE_DURATION
+                )
+                pyautogui.click()
+                time.sleep(constants.COMMAND_WAIT_LONG)
+
+                result = self._copy_terminal_text()
+
+                if self._has_dropdown_activated(result):
+                    self.logger.debug(
+                        "      [CLICK] Dropdown detected - closing and trying next target..."
+                    )
+                    pyautogui.press(
+                        "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
+                    )
+                    time.sleep(constants.ESCAPE_CLEAR_DELAY)
+                    continue
+
+                if result.strip() != text_before.strip():
+                    self.logger.info(
+                        f"      [CLICK] 'More' link clicked successfully via {label} target!"
+                    )
+                    return True
+
+        self.logger.warning(
+            "      [CLICK] Exhausted all offset attempts to click 'More' link."
+        )
         return False
 
     def recalibrate(self) -> dict:

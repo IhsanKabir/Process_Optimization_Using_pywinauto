@@ -73,11 +73,15 @@ def parse_fzs_output(
         dst_amt = float(match.group(3))
         dst_cur = match.group(4)
 
+        # Preserve the terminal's full precision. Travelport emits rates like
+        # "1QAR EQUALS 33.760812 BDT"; rounding to 4 decimals here loses the
+        # trailing digits the user needs. The currency report formats display
+        # precision on its own (see currency_report.py number_format).
         if src_cur == from_currency and dst_cur == to_currency and src_amt > 0:
-            result["rate"] = round(dst_amt / src_amt, 4)
+            result["rate"] = dst_amt / src_amt
             return result
         if src_cur == to_currency and dst_cur == from_currency and dst_amt > 0:
-            result["rate"] = round(src_amt / dst_amt, 4)
+            result["rate"] = src_amt / dst_amt
             return result
 
     logger.warning(
