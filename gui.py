@@ -62,6 +62,23 @@ class _StdoutRedirect:
         return True
 
 
+ESC_HOLD_TO_STOP_SECONDS = 0.8
+
+
+def _escape_hold_state(
+    is_pressed: bool,
+    now: float,
+    pressed_since: float | None,
+    hold_seconds: float = ESC_HOLD_TO_STOP_SECONDS,
+) -> tuple[float | None, bool]:
+    """Track whether ESC has been held long enough to request a stop."""
+    if not is_pressed:
+        return None, False
+    if pressed_since is None:
+        return now, False
+    return pressed_since, (now - pressed_since) >= hold_seconds
+
+
 # ── Tooltip helper ────────────────────────────────────────────────────────────
 
 
@@ -2013,7 +2030,7 @@ class TravelportGUI:
         ).pack(pady=(0, 6))
         tk.Button(
             ov,
-            text="■  Stop  (ESC)",
+            text="■  Stop  (hold ESC)",
             bg="#b73632",
             fg="white",
             font=("Segoe UI", 9, "bold"),
@@ -2039,8 +2056,14 @@ class TravelportGUI:
             import ctypes
             VK_ESCAPE = 0x1B
             get_key = ctypes.windll.user32.GetAsyncKeyState
+            pressed_since = None
             while self._global_esc_active:
-                if get_key(VK_ESCAPE) & 0x8000:
+                pressed_since, should_stop = _escape_hold_state(
+                    bool(get_key(VK_ESCAPE) & 0x8000),
+                    time.monotonic(),
+                    pressed_since,
+                )
+                if should_stop:
                     self.root.after(0, self._stop)
                     break
                 time.sleep(0.1)

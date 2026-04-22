@@ -1,5 +1,6 @@
 import threading
 
+import calibration
 import smartpoint_automation as spa
 from smartpoint_automation import SmartpointAutomation
 from tax_breakdown_parser import (
@@ -74,6 +75,65 @@ def test_has_more_prompt_ignores_end_signal():
     assert automation._has_more_prompt(text) is False
 
 
+def test_record_click_delta_does_not_mutate_global_line_height():
+    cal = {
+        "line_height": 20,
+        "dpi": 96,
+        "source": "dpi_auto",
+        "click_deltas": [],
+        "delta_correction": 0,
+    }
+
+    for _ in range(10):
+        cal = calibration.record_click_delta(cal, -20)
+
+    assert cal["line_height"] == 20
+    assert cal["source"] == "dpi_auto"
+
+
+def test_click_more_prompt_link_rereads_layout_after_scroll(monkeypatch):
+    automation = SmartpointAutomation()
+    long_text = "\n".join(["ROW"] * 30 + ["          More Flights"])
+    scrolled_text = "HEADER\n  More Flights\n>"
+    next_page_text = "NEXT PAGE\nEND"
+    copied_texts = iter([scrolled_text, next_page_text])
+    moves = []
+    presses = []
+
+    class _Rect:
+        left = 100
+        top = 100
+        right = 500
+        bottom = 300
+
+        def width(self):
+            return self.right - self.left
+
+        def height(self):
+            return self.bottom - self.top
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _Rect())
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: next(copied_texts))
+    monkeypatch.setattr(automation, "_has_dropdown_activated", lambda text: False)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "moveTo",
+        lambda x, y, duration=None: moves.append((x, y)),
+    )
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "press",
+        lambda key, *args, **kwargs: presses.append((key, kwargs.get("presses", 1))),
+    )
+    monkeypatch.setattr(spa.time, "sleep", lambda *args, **kwargs: None)
+
+    assert automation.click_more_prompt_link(long_text) is True
+    assert ("pagedown", 4) in presses
+    assert moves[0][1] == 135
+
+
 def test_run_command_waits_for_settled_end_before_sending_md(monkeypatch):
     automation = SmartpointAutomation()
     sent_commands = []
@@ -134,6 +194,42 @@ def test_run_command_skips_extra_settle_when_initial_text_already_has_end(monkey
     assert result == "PAGE 1\nEND"
     assert settle_calls == []
     assert "MD" not in sent_commands
+
+
+def test_run_command_keeps_base_page_when_fu_expansion_is_unchanged(monkeypatch):
+    automation = SmartpointAutomation()
+    sent_commands = []
+    base_page = (
+        "MCTDAC\nUNSALEABLE FARES MAY EXIST\n  1  BG  360.00R  KBD6M    K\nEND"
+    )
+    responses = iter([base_page, base_page])
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: base_page)
+    monkeypatch.setattr(
+        automation, "_wait_for_response", lambda *args, **kwargs: next(responses)
+    )
+    monkeypatch.setattr(
+        automation,
+        "_wait_for_stable_screen",
+        lambda *args, **kwargs: "SHOULD NOT RUN",
+    )
+    monkeypatch.setattr(automation, "_has_invalid", lambda text: False)
+    monkeypatch.setattr(automation, "_has_currency_redirect", lambda text: None)
+    monkeypatch.setattr(automation, "click_more_prompt_link", lambda text: False)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "typewrite",
+        lambda text, interval=None: sent_commands.append(text),
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+
+    result = automation.run_command("FDMCTDAC/BG", max_pages=3)
+
+    assert result == base_page
+    assert "FU*" in sent_commands
+    assert "MD" not in sent_commands
+    assert "--- UNSALEABLE FARES BREAK ---" not in result
 
 
 def test_looks_like_fs_tax_breakdown_accepts_bg_style_detail():
@@ -233,6 +329,56 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
 
     assert "FARE USD955.00" in result
     assert "I" not in sent_keys
+
+
+def test_click_d_button_anchors_to_selected_pricing_option_block(monkeypatch):
+    automation = SmartpointAutomation()
+    pixel_calls = []
+
+    fs_text = "\n".join(
+        [
+            "HEADER WITH BOOK +TQ                                                     D  R",
+            "PRICING OPTION 1",
+            "1   BS    325  E  20MAY DAC CAN   2210  0350 #  WE   738",
+            "             Â«BOOKÂ»             +TQ                                                     D  R  +0",
+            "PRICING OPTION 2",
+            "1   QR    639  N  09MAY DAC DOH   0305  0615",
+            "             Â«BOOKÂ»             +TQ                                                     D  R  +0",
+            ">",
+        ]
+    )
+    settled_tax_text = """
+TOTAL JOURNEY TIME
+FS-2 ADT
+REFUNDABLE: YES
+FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
+"""
+
+    def fake_text_line_to_pixel(text, line_idx, char_idx=None, x_ratio=0.5):
+        pixel_calls.append((line_idx, char_idx, x_ratio))
+        return (933, 200 + line_idx * 20)
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_text_line_to_pixel", fake_text_line_to_pixel)
+    monkeypatch.setattr(
+        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+    )
+    monkeypatch.setattr(
+        automation, "_wait_for_response", lambda *args, **kwargs: "INTERIM"
+    )
+    monkeypatch.setattr(
+        automation,
+        "_wait_for_stable_screen",
+        lambda *args, **kwargs: settled_tax_text,
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda *args, **kwargs: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
+
+    result = automation.click_d_button(1, fs_text)
+
+    assert "FARE USD955.00" in result
+    assert pixel_calls[0][0] == 6
 
 
 def test_click_d_button_rejects_loose_keyword_screen_and_tries_next_offset(monkeypatch):

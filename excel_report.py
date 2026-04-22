@@ -18,6 +18,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
+from origin_sensitive_taxes import compute_rt_tax_total
+
 # ── Styles ──────────────────────────────────────────────
 THIN_BORDER = Border(
     left=Side(style="thin"),
@@ -1815,17 +1817,21 @@ def _write_individual_tables_sheet(
             yq_ow = yq_total
             tax_ow = total_tax_val
 
-            inbound_tax_total = 0
+            inbound_taxes: dict = {}
+            outbound_origin = ""
             parts = route_key.split("_", 1)
             if len(parts) == 2 and "-" in parts[1]:
                 origin, dest = parts[1].split("-", 1)
+                outbound_origin = origin
                 inbound_key = f"{parts[0]}_{dest}-{origin}"
                 inbound_info = all_route_data.get(inbound_key, {})
-                inbound_taxes = inbound_info.get("fs_taxes", {})
-                inbound_tax_total = inbound_taxes.get("total_taxes", 0)
+                inbound_taxes = inbound_info.get("fs_taxes", {}) or {}
 
             yq_rt = yq_ow * 2
-            tax_rt = tax_ow + inbound_tax_total
+            # Compensate for origin-sensitive taxes (notably India K3) that
+            # appear in isolated one-way scrapes but shouldn't apply to the
+            # actual RT journey.
+            tax_rt = compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
             yq_ow_usd = (yq_ow / exchange_rate) if exchange_rate else 0
             yq_rt_usd = (yq_rt / exchange_rate) if exchange_rate else 0
 
@@ -2025,8 +2031,11 @@ def _write_tax_breakdown_sheet(
             )
             row += 1
 
-            # Currency & Exchange Rate info
+            # Currency & Exchange Rate info. The amounts in fs_taxes are already
+            # in the equivalent currency (BDT) exactly as Travelport renders them;
+            # we show Base/Rate here purely as reference metadata.
             base_cur = fs_taxes.get("base_currency", currency)
+            equ_cur = fs_taxes.get("equ_currency") or "BDT"
             exch_rate = fs_taxes.get("exchange_rate", 0)
 
             info_font = Font(name="Calibri", size=9, italic=True)
@@ -2048,20 +2057,19 @@ def _write_tax_breakdown_sheet(
                 ws,
                 row,
                 col_offset + 1,
-                f"Amount ({base_cur or 'USD'})",
+                f"Amount ({equ_cur})",
                 TAX_HEADER_FONT,
                 TAX_HEADER_FILL,
                 alignment=Alignment(horizontal="right"),
             )
             row += 1
 
-            # Convert amounts from equivalent to base currency
-            _to_base = (lambda v: round(v / exch_rate, 2)) if exch_rate else (lambda v: v)
-
-            # Charges section (YQ, YR, Q)
-            yq = _to_base(fs_taxes.get("yq_charge", 0))
-            yr = _to_base(fs_taxes.get("yr_charge", 0))
-            q = _to_base(fs_taxes.get("q_charge", 0))
+            # Keep the values as scraped — they're already in equ_cur (BDT).
+            # Do NOT divide by exch_rate here; the raw terminal value is what
+            # the user wants to see in this sheet.
+            yq = float(fs_taxes.get("yq_charge", 0) or 0)
+            yr = float(fs_taxes.get("yr_charge", 0) or 0)
+            q = float(fs_taxes.get("q_charge", 0) or 0)
 
             for label, val in [
                 ("YQ", yq),
@@ -2107,17 +2115,17 @@ def _write_tax_breakdown_sheet(
                     c1 = ws.cell(row=row, column=col_offset, value=code)
                     c1.font = TAX_LABEL_FONT
                     c1.border = THIN_BORDER
-                    c2 = ws.cell(row=row, column=col_offset + 1, value=_to_base(float(amt)))
+                    c2 = ws.cell(row=row, column=col_offset + 1, value=float(amt))
                     c2.font = TAX_LABEL_FONT
                     c2.border = THIN_BORDER
                     c2.number_format = "#,##0.00"
                     c2.alignment = Alignment(horizontal="right")
                     row += 1
 
-            # Totals
+            # Totals — raw BDT values as scraped, no conversion.
             row += 1  # Blank separator
-            total_taxes = _to_base(fs_taxes.get("total_taxes", 0))
-            total_amount = _to_base(fs_taxes.get("total_amount", 0))
+            total_taxes = float(fs_taxes.get("total_taxes", 0) or 0)
+            total_amount = float(fs_taxes.get("total_amount", 0) or 0)
 
             for label, val in [
                 ("Total Taxes", total_taxes),

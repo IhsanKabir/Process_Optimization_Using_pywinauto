@@ -151,14 +151,15 @@ Part C — One-shot retry on `FailSafeException`
 - The entire focus+copy block in `_copy_terminal_text` is wrapped in `try/except`. If a `FailSafeException` still reaches it, it logs a warning, re-fetches the rect, retries once via `_safe_focus_click`, and returns `""` on second failure instead of crashing the run.
 
 **History:**
-```
+
+```text
 pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to a corner of the screen.
   File "smartpoint_automation.py", line 1459, in run_ftax_command
   File "smartpoint_automation.py", line 790, in _wait_for_response
   File "smartpoint_automation.py", line 675, in _copy_terminal_text
 ```
 
-
+---
 
 ## Current session — shipped items (not deferred)
 
@@ -191,6 +192,44 @@ These are done and live on `main` so the next reader knows not to re-open them:
   the exe manifest already sets `PerMonitorV2`, so the baseline is in physical pixels
   and correct across scales. Also moved `SetProcessDpiAwareness(2)` to the very top
   of `gui.py` and `main.py` (before any window creation) for source-level runs.
+- **Scroll-to-find-More-Fares dropdown crash:** `click_more_prompt_link` was focusing
+  the terminal for the pre-scroll refocus with `pyautogui.click(rect_center)`. The
+  center of the terminal is always an interactive fare row, so it opened the
+  `MAXIMUM STAY` / `MINIMUM STAY` dropdown and the subsequent `PageDown` scrolled
+  the dropdown instead of the terminal, leaving the run stuck. Affected DAC-DOH QR,
+  WY, and MCT routes. Replaced with a defensive `ESC ESC` → `_safe_focus_click(
+  _get_terminal_focus_point())` (safe corner ~50 px, 30 px inside the rect) →
+  `PageDown`, plus a post-scroll `_has_dropdown_activated` check with ESC recovery.
+  See `smartpoint_automation.py:2427-2471`.
+- **FS two-window date fallback:** replaced the single `MAX_FS_DATE_STEPS=32` cap
+  (which only tried 2 offsets — 30 and 32 days out) with a two-window schedule:
+  7 consecutive days starting at `FS_DATE_OFFSET_START=30` (≈1 month), then 7 more
+  starting at `FS_DATE_FALLBACK_OFFSET=90` (≈3 months). `FS_DATE_STEP=1` for
+  consecutive days, `FS_DATE_WINDOW_DAYS=7`. Rescues airlines whose first-month
+  inventory has dried up or who only fly seasonally. See `constants.py:195-208`,
+  `main.py:2450-2467`. Tests: `tests/test_fs_date_schedule.py`.
+- **FZS precision preservation:** `fzs_parser.parse_fzs_output` was `round(..., 4)`-ing
+  the extracted rate, so `1 QAR EQUALS 33.760812 BDT` became `33.7608` downstream.
+  The currency report's cell format is already `"0.000000"` (6 decimals), so the
+  rounding was purely lossy. Removed the `round` on both forward and inverse
+  directions. Tests: `tests/test_fzs_parser.py` (4 tests pinning the precision
+  contract).
+- **India K3 origin-sensitive tax correction:** `tax_rt` for round-trip gross fares
+  was naïvely summing outbound + inbound FS taxes. For routes like DAC-CCU-DAC
+  this over-counted by K3 (~421 BDT) because the isolated inbound one-way scrape
+  (CCU→DAC) bills K3 as if it were a standalone India-origin journey — it isn't
+  when folded into an RT that starts in DAC. New helper module
+  `origin_sensitive_taxes.py` exposes `compute_rt_tax_total(outbound_origin,
+  outbound_fs_taxes, inbound_fs_taxes)` which strips `tax_breakdown["K3"]` from
+  both legs when the outbound origin isn't an Indian IATA airport (determined via
+  `airportsdata.load("IATA")` filtered by `country == "IN"`, cached with
+  `lru_cache`). Extensible via `ORIGIN_SENSITIVE_TAX_CODES = {"K3": "IN"}` if
+  other origin-sensitive codes surface. Wired in at `excel_report.py:1818-1832`.
+  Tests: `tests/test_origin_sensitive_taxes.py` (14 tests including parametrized
+  India airports, case insensitivity, empty/None legs, malformed breakdown).
+  Known unknown: domestic India RTs like DEL-BOM-DEL — both scrapes have K3 and
+  the current logic keeps both. Needs confirmation from a real scrape whether
+  Indian domestic RTs legitimately pay K3 twice.
 
 ---
 

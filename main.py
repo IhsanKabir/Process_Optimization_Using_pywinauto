@@ -76,7 +76,13 @@ from validators import (
 )
 from credential_manager import CredentialManager
 from checkpoint_manager import CheckpointManager
-from constants import MAX_RETRIES_COMMAND, MAX_FS_DATE_STEPS, FS_DATE_OFFSET_START, FS_DATE_STEP
+from constants import (
+    MAX_RETRIES_COMMAND,
+    FS_DATE_OFFSET_START,
+    FS_DATE_STEP,
+    FS_DATE_WINDOW_DAYS,
+    FS_DATE_FALLBACK_OFFSET,
+)
 
 try:
     from database import DatabaseManager
@@ -1216,6 +1222,25 @@ def _fd_output_has_fares(raw_text: str) -> bool:
     return bool(parsed.get("fares"))
 
 
+def _fd_output_is_no_fares(raw_text: str) -> bool:
+    """Return True when Smartpoint definitively says the FD request has no fares."""
+    upper = (raw_text or "").upper()
+    return "NO FARES FOUND" in upper and "INPUT REQUEST" in upper
+
+
+def _fs_output_is_no_results(raw_text: str) -> bool:
+    """Return True when FS checkout has returned a final no-result/error screen."""
+    upper = (raw_text or "").upper()
+    return any(
+        marker in upper
+        for marker in (
+            "NO FARES FOUND",
+            "CHECK ACTION CODE",
+            "INVALID",
+        )
+    )
+
+
 def _should_run_fs_extraction(args, fd_terminal_text: str) -> bool:
     """Skip FS when normal FD extraction produced no fare rows."""
     if getattr(args, "only_fd", False):
@@ -2346,12 +2371,19 @@ def main(prebuilt_args=None, stop_event=None):
 
                 terminal_text = ""
                 file_key = generate_file_key(cmd)
+                fd_no_fares = False
 
                 # -- FD EXTRACTION --
                 if not args.only_yq and not args.only_currency:
                     for attempt in range(1, MAX_RETRIES + 1):
                         try:
                             terminal_text = automation.run_command(cmd["command"])
+                            if _fd_output_is_no_fares(terminal_text):
+                                fd_no_fares = True
+                                logger.info(
+                                    "    [SKIP] Smartpoint returned no fares; not retrying this FD command."
+                                )
+                                break
                             if terminal_text and len(terminal_text.strip()) > 50:
                                 break
                             logger.warning(
@@ -2380,6 +2412,10 @@ def main(prebuilt_args=None, stop_event=None):
                             logger.debug(f"    Backup saved: {backup_path}")
                         except Exception as e:
                             logger.warning(f"    Could not save backup: {e}")
+                    elif fd_no_fares:
+                        logger.info(
+                            f"    [SKIP] No fare rows available for {cmd['command']}."
+                        )
                     else:
                         failed_commands.append(cmd["command"])
                         logger.error(
@@ -2412,10 +2448,23 @@ def main(prebuilt_args=None, stop_event=None):
                         airline = base_cmd.split("/")[1][:2]
 
                         fs_expanded = ""
-                        fs_date_offset = FS_DATE_OFFSET_START
-                        max_fs_date_steps = MAX_FS_DATE_STEPS
+                        # Two-window fallback: 7 consecutive days ~1 month out,
+                        # then 7 more ~3 months out if the first window yields
+                        # no pure-airline option.
+                        fs_date_offsets: list[int] = []
+                        for window_start in (
+                            FS_DATE_OFFSET_START,
+                            FS_DATE_FALLBACK_OFFSET,
+                        ):
+                            fs_date_offsets.extend(
+                                range(
+                                    window_start,
+                                    window_start + FS_DATE_WINDOW_DAYS,
+                                    FS_DATE_STEP,
+                                )
+                            )
 
-                        while fs_date_offset <= max_fs_date_steps:
+                        for fs_date_offset in fs_date_offsets:
                             date_str = (
                                 (datetime.now() + timedelta(days=fs_date_offset))
                                 .strftime("%d%b")
@@ -2428,10 +2477,14 @@ def main(prebuilt_args=None, stop_event=None):
                             fs_result = automation.run_fs_command(
                                 src, dst, date_str, airline
                             )
+                            fs_no_results = _fs_output_is_no_results(fs_result)
 
                             # Freshness check: poll until the terminal shows the
                             # expected date, rather than sleeping a fixed 1.5s.
-                            if date_str.upper() not in fs_result.upper():
+                            if (
+                                not fs_no_results
+                                and date_str.upper() not in fs_result.upper()
+                            ):
                                 logger.warning(
                                     f"      [!] Screen hasn't updated to {date_str} yet, polling..."
                                 )
@@ -2441,6 +2494,11 @@ def main(prebuilt_args=None, stop_event=None):
                                     min_wait=0.2,
                                     poll_interval=0.15,
                                     stability_checks=1,
+                                )
+                                fs_no_results = _fs_output_is_no_results(fs_result)
+                            elif fs_no_results:
+                                logger.warning(
+                                    f"      [!] FS returned no usable result for {date_str}; not polling this screen."
                                 )
 
                             # Log raw results for diagnostics
@@ -2478,7 +2536,10 @@ def main(prebuilt_args=None, stop_event=None):
                                     fs_result = current_fs_page
                                     break
 
-                                if not rechecked_current_fs_page:
+                                if (
+                                    not rechecked_current_fs_page
+                                    and not _fs_output_is_no_results(current_fs_page)
+                                ):
                                     settled_fs_page = (
                                         automation._wait_for_stable_screen(
                                             max_polls=4, interval=0.25
@@ -2496,14 +2557,7 @@ def main(prebuilt_args=None, stop_event=None):
                                         continue
 
                                 if option_count == 0:
-                                    if current_fs_page and any(
-                                        kw in current_fs_page.upper()
-                                        for kw in [
-                                            "NO FARES FOUND",
-                                            "CHECK ACTION CODE",
-                                            "INVALID",
-                                        ]
-                                    ):
+                                    if _fs_output_is_no_results(current_fs_page):
                                         logger.warning(
                                             f"      [!] No valid FS results for {date_str}. Trying next date..."
                                         )
@@ -2558,7 +2612,6 @@ def main(prebuilt_args=None, stop_event=None):
                                 rechecked_current_fs_page = False
 
                             if target_option_index is None:
-                                fs_date_offset += FS_DATE_STEP
                                 _time.sleep(0.5)
                                 continue
 
@@ -2578,7 +2631,7 @@ def main(prebuilt_args=None, stop_event=None):
                                     f"      [!] D-click did not return expected tax data."
                                 )
                                 fs_expanded = ""
-                            break  # Exit the date-stepping while loop
+                            break  # Exit the date-stepping for loop
 
                         if fs_expanded and len(fs_expanded.strip()) > 50:
                             raw_fs_texts[file_key] = fs_expanded
@@ -2705,9 +2758,14 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info("=" * 60)
 
             if _stop and _stop.is_set():
-                return _stop_run(
-                    "  [STOP] Stop requested - skipping parsing and report generation."
-                )
+                if raw_texts:
+                    logger.info(
+                        "  [STOP] Stop requested - generating partial report from captured fare data."
+                    )
+                else:
+                    return _stop_run(
+                        "  [STOP] Stop requested - no captured fare data to report."
+                    )
 
         else:
             logger.info("[2/4] MANUAL MODE: Loading raw GDS data from disk...")

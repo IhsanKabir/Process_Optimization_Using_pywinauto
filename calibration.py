@@ -78,6 +78,20 @@ def load_calibration() -> dict:
             with open(CALIBRATION_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict) and "line_height" in data:
+                dpi = get_system_dpi()
+                baseline_lh = compute_line_height(dpi)
+                saved_lh = int(data.get("line_height") or baseline_lh)
+                if saved_lh != baseline_lh:
+                    logger.warning(
+                        f"[CAL] Ignoring saved line_height={saved_lh}; "
+                        f"resetting to stable baseline {baseline_lh}."
+                    )
+                    data["line_height"] = baseline_lh
+                    data["dpi"] = dpi
+                    data["source"] = "dpi_auto"
+                    data["click_deltas"] = []
+                    data["delta_correction"] = 0
+                    _write(data)
                 logger.debug(
                     f"[CAL] Loaded calibration from {CALIBRATION_PATH}: "
                     f"line_height={data['line_height']}, "
@@ -127,8 +141,7 @@ def reset_calibration() -> dict:
 
 def record_click_delta(calibration: dict, y_offset_used: int) -> dict:
     """
-    Record the Y offset that produced a successful click and update the rolling
-    correction factor.  Positive offset means LINE_HEIGHT was under-estimated.
+    Record the Y offset that produced a successful click for diagnostics.
 
     Returns the updated calibration dict (caller should save it).
     """
@@ -137,28 +150,10 @@ def record_click_delta(calibration: dict, y_offset_used: int) -> dict:
     if len(deltas) > _MAX_DELTA_HISTORY:
         deltas = deltas[-_MAX_DELTA_HISTORY:]
 
-    # Compute rolling average correction and nudge line_height by ±1 if needed
-    if len(deltas) >= 5:
-        avg = sum(deltas) / len(deltas)
-        old_lh = calibration["line_height"]
-        # Nudge by 1 px when average delta consistently exceeds half a pixel
-        if avg > 0.5:
-            calibration["line_height"] = min(old_lh + 1, _BASE_LINE_HEIGHT * 3)
-            calibration["source"] = "learned"
-            logger.debug(
-                f"[CAL] Nudging line_height {old_lh} → {calibration['line_height']} "
-                f"(avg delta={avg:.2f})"
-            )
-        elif avg < -0.5:
-            calibration["line_height"] = max(old_lh - 1, _BASE_LINE_HEIGHT // 2)
-            calibration["source"] = "learned"
-            logger.debug(
-                f"[CAL] Nudging line_height {old_lh} → {calibration['line_height']} "
-                f"(avg delta={avg:.2f})"
-            )
-
     calibration["click_deltas"] = deltas
     calibration["delta_correction"] = sum(deltas) / len(deltas) if deltas else 0
+    calibration["line_height"] = compute_line_height(calibration.get("dpi"))
+    calibration["source"] = "dpi_auto"
     return calibration
 
 

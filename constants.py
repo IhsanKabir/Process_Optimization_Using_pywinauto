@@ -192,16 +192,19 @@ MAX_PAGES_UNSALEABLE = 5  # Maximum pages for unsaleable fares (FU*)
 
 # Retry configuration
 MAX_RETRIES_COMMAND = 3  # Maximum retry attempts for failed commands
-MAX_FS_DATE_STEPS = 32  # Cap FS retries: start+1 (30MAY, 32MAY) then bail. Prevents
-# hammering clipboard-copy 6+ times when an airline has no FS availability; the
-# single retry still rescues carriers whose first-choice date lacks inventory.
 
 # Data validation thresholds
 MIN_TERMINAL_TEXT_LENGTH = 50  # Minimum chars for valid terminal response
 
 # FS (Flight Shopping) configuration
-FS_DATE_OFFSET_START = 30  # Start checking from roughly 1 month in the future
-FS_DATE_STEP = 2  # Days to jump when a date fails (fast: skip alternate days)
+# Two-window schedule: try 7 consecutive days starting ~1 month out; if none
+# of those yield a pure-airline option, jump to ~3 months out and try another
+# 7 days. Consecutive days (STEP=1) cover weekly carrier patterns; the second
+# window rescues routes with seasonal gaps.
+FS_DATE_OFFSET_START = 30  # First window start (~1 month in the future)
+FS_DATE_STEP = 1  # Days between attempts within a window
+FS_DATE_WINDOW_DAYS = 7  # Attempts per window
+FS_DATE_FALLBACK_OFFSET = 90  # Second window start (~3 months in the future)
 FS_EXPANSION_KEYWORDS = [
     "EQU",
     "TAXES",

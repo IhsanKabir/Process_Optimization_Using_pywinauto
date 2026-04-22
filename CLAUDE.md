@@ -81,12 +81,17 @@ Single pipeline: **drive terminal → scrape clipboard → parse → report**. E
 - `tax_report.py`, `penalty_report.py`, `currency_report.py` — mode-specific Excel layouts.
 - `change_detector.py` — diff against the prior archived snapshot; drives color-coding in the report.
 - `checkpoint_manager.py` — resume partially-completed runs after a crash or ESC.
+- `origin_sensitive_taxes.py` — `compute_rt_tax_total(outbound_origin, out_fs, in_fs)` helper used by `excel_report.py` when computing round-trip gross fares. Strips origin-sensitive IATA tax codes (currently just India's `K3`) from the naïve `tax_ow + tax_in` sum when the outbound origin isn't in the tax's required country. Extensible via `ORIGIN_SENSITIVE_TAX_CODES = {"K3": "IN"}`. Depends on `airportsdata.load("IATA")` to resolve the country's IATA set (cached per country via `lru_cache`).
 
 ### Config, validation, credentials
 
 - `config.json` (gitignored) + `config_schema.json` (JSON Schema) loaded through `config_manager.py`. `APP_ENV=dev|prod` picks `config.{env}.json`.
 - `validators.py` — every user-facing string (airline, route, airport, limit) goes through a `validate_*` call before being used in commands. `validate_airport_code` is what the new global-airport-directory resolver relies on.
 - `credential_manager.py` — Smartpoint login via env vars (`SMARTPOINT_USERNAME`, `SMARTPOINT_PASSWORD`, `SMARTPOINT_PCC`) or `.env`. Never hardcoded.
+
+### FS date schedule
+
+- The FS (Flight Shopping) loop in `main.py` tries each airline across a pre-built list of day offsets from today. The schedule is defined by four constants in `constants.py`: `FS_DATE_OFFSET_START=30`, `FS_DATE_FALLBACK_OFFSET=90`, `FS_DATE_WINDOW_DAYS=7`, `FS_DATE_STEP=1`. Expanded: 7 consecutive days starting ~1 month out, then 7 more starting ~3 months out. Don't reintroduce the old `MAX_FS_DATE_STEPS` cap — it masked airlines whose inventory had dried up in the first month. Tests: `tests/test_fs_date_schedule.py`.
 
 ### Tax airport resolution
 
