@@ -23,6 +23,10 @@ def _runtime_dir() -> Path:
 
 DEFAULT_AGENT_CONFIG_PATH = _runtime_dir() / "agent_config.json"
 
+DEFAULT_API_BASE_URL = (
+    "https://aero-pulse-api-591603094460.asia-south1.run.app/travelport-agent"
+)
+
 
 @dataclass(frozen=True)
 class AgentConfig:
@@ -51,8 +55,10 @@ def load_agent_config(config_path: str | os.PathLike | None = None) -> AgentConf
         with open(path, "r", encoding="utf-8") as f:
             payload = json.load(f)
 
-    api_base_url = os.environ.get("TRAVELPORT_AGENT_API_BASE_URL") or payload.get(
-        "api_base_url", ""
+    api_base_url = (
+        os.environ.get("TRAVELPORT_AGENT_API_BASE_URL")
+        or payload.get("api_base_url", "")
+        or DEFAULT_API_BASE_URL
     )
     device_id = os.environ.get("TRAVELPORT_AGENT_DEVICE_ID") or payload.get(
         "device_id", ""
