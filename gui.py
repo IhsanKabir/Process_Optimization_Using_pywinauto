@@ -453,6 +453,7 @@ class TravelportGUI:
         self.root.bind_all("<Escape>", lambda *_: self._stop())
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll()
+        self.root.after(3000, self._drain_feedback_queue_async)
         # Check for updates silently in the background
         threading.Thread(target=self._bg_update_check, daemon=True).start()
 
@@ -1018,6 +1019,35 @@ class TravelportGUI:
         stream = _StdoutRedirect(self.log_queue)
         sys.stdout = stream
         sys.stderr = stream
+
+    def _drain_feedback_queue_async(self):
+        """Drain the offline feedback queue in a background thread at startup."""
+        def _worker():
+            try:
+                import urllib.request
+
+                from agent_config import load_agent_config
+                from feedback_queue import drain_feedback_queue
+
+                agent = load_agent_config()
+
+                def _raw_submit(payload):
+                    body = __import__("json").dumps(payload).encode("utf-8")
+                    req = urllib.request.Request(
+                        f"{agent.api_base_url.rstrip('/')}/feedback",
+                        data=body,
+                        method="POST",
+                        headers={"Content-Type": "application/json"},
+                    )
+                    if agent.device_token:
+                        req.add_header("Authorization", f"Bearer {agent.device_token}")
+                    urllib.request.urlopen(req, timeout=15)
+
+                drain_feedback_queue(_raw_submit)
+            except Exception:
+                pass  # Drain is best-effort; never surface errors at startup
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _show_post_update_notice(self):
         notice = _build_update_notice(self.VERSION, _read_update_state())
@@ -1913,7 +1943,7 @@ class TravelportGUI:
         context: dict[str, str],
     ):
         try:
-            from feedback_client import submit_feedback
+            from feedback_client import FeedbackQueuedForRetry, submit_feedback
 
             result = submit_feedback(
                 category=category,
@@ -1923,14 +1953,26 @@ class TravelportGUI:
                 context=context,
             )
             self.log_queue.put(("feedback_done", {"ok": True, "result": result}))
+        except FeedbackQueuedForRetry as exc:
+            self.log_queue.put(("feedback_done", {"ok": False, "queued": True, "error": str(exc)}))
         except Exception as exc:
-            self.log_queue.put(("feedback_done", {"ok": False, "error": str(exc)}))
+            self.log_queue.put(("feedback_done", {"ok": False, "queued": False, "error": str(exc)}))
 
     def _on_feedback_done(self, payload: dict):
         if payload.get("ok"):
             self._close_feedback_dialog()
             messagebox.showinfo(
                 "Feedback Sent", "Your feedback was sent successfully to admin."
+            )
+            return
+
+        if payload.get("queued"):
+            # Network or server error — feedback saved offline; close dialog
+            self._close_feedback_dialog()
+            messagebox.showinfo(
+                "Saved for Later",
+                "Could not reach the server right now.\n"
+                "Your feedback has been saved and will be sent automatically on next launch.",
             )
             return
 

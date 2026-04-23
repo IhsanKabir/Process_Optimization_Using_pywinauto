@@ -1,22 +1,50 @@
 """
 feedback_client.py - Submit end-user feedback to the website/admin backend.
+
+Failure handling:
+  - URLError / timeout   → queued for retry on next launch (network issue)
+  - HTTPError 4xx        → rejected without retry; server message surfaced to user
+  - HTTPError 5xx        → queued for retry; user warned of server error
 """
 
 from __future__ import annotations
 
 import json
 import platform
+import re
 import socket
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
-from agent_config import DEFAULT_AGENT_CONFIG_PATH, AgentConfig, load_agent_config
+from agent_config import AgentConfig, load_agent_config
+
+_PII_KEY_PATTERN = re.compile(
+    r"pass(word)?|pwd|token|secret|key|auth|cred", re.IGNORECASE
+)
+_PATH_PATTERN = re.compile(r"[A-Za-z]:\\|/home/|/Users/")
+
+
+def _scrub_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of context with PII-bearing values replaced by [REDACTED]."""
+    scrubbed: dict[str, Any] = {}
+    for k, v in context.items():
+        if _PII_KEY_PATTERN.search(str(k)):
+            scrubbed[k] = "[REDACTED]"
+        elif isinstance(v, str) and _PATH_PATTERN.search(v):
+            scrubbed[k] = "[REDACTED]"
+        else:
+            scrubbed[k] = v
+    return scrubbed
 
 
 class FeedbackSubmissionError(RuntimeError):
     """Raised when feedback cannot be delivered to the backend."""
+
+
+class FeedbackQueuedForRetry(Exception):
+    """Raised when the payload was queued locally and will retry on next launch."""
 
 
 def build_feedback_payload(
@@ -51,7 +79,7 @@ def build_feedback_payload(
         "os_version": platform.platform(),
         "source": "desktop_gui",
         "submitted_at_utc": datetime.now(timezone.utc).isoformat(),
-        "context": context or {},
+        "context": _scrub_context(context or {}),
     }
 
 
@@ -64,14 +92,15 @@ def submit_feedback(
     context: dict[str, Any] | None = None,
     config: AgentConfig | None = None,
 ) -> dict[str, Any]:
-    """Send feedback to the configured backend feedback endpoint."""
+    """Send feedback to the configured backend feedback endpoint.
+
+    Raises:
+        FeedbackSubmissionError: Validation error or unrecoverable 4xx from server.
+        FeedbackQueuedForRetry: Network error or 5xx — payload saved to offline queue.
+    """
+    from feedback_queue import enqueue_feedback
+
     agent = config or load_agent_config()
-    if not agent.api_base_url:
-        raise FeedbackSubmissionError(
-            "Feedback delivery is not configured on this machine yet. "
-            f"Set TRAVELPORT_AGENT_API_BASE_URL or add api_base_url to "
-            f"{DEFAULT_AGENT_CONFIG_PATH}."
-        )
 
     payload = build_feedback_payload(
         category=category,
@@ -95,29 +124,26 @@ def submit_feedback(
     if agent.device_token:
         request.add_header("Authorization", f"Bearer {agent.device_token}")
 
-    import time as _time
-
-    last_exc: Exception | None = None
-    for _attempt in range(2):  # 1 initial + 1 retry
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                raw = response.read().decode("utf-8", errors="replace").strip()
-            last_exc = None
-            break
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace").strip()
-            raise FeedbackSubmissionError(
-                f"Server rejected the feedback ({exc.code}). {detail[:200]}"
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read().decode("utf-8", errors="replace").strip()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        if exc.code >= 500:
+            enqueue_feedback(payload)
+            raise FeedbackQueuedForRetry(
+                f"Server error ({exc.code}). Your feedback was saved and will be "
+                "resent on next launch."
             ) from exc
-        except urllib.error.URLError as exc:
-            last_exc = exc
-            if _attempt == 0:
-                _time.sleep(2)  # Brief pause before retry
-
-    if last_exc is not None:
         raise FeedbackSubmissionError(
-            f"Could not send feedback to admin: {last_exc.reason}"
-        ) from last_exc
+            f"Server rejected the feedback ({exc.code}). {detail[:200]}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        enqueue_feedback(payload)
+        raise FeedbackQueuedForRetry(
+            "Could not reach the server. Your feedback was saved and will be "
+            "resent on next launch."
+        ) from exc
 
     if not raw:
         return {"ok": True}
