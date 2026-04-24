@@ -1968,8 +1968,12 @@ class TravelportGUI:
             if not token:
                 self.log_queue.put(("auth_done", {"ok": False, "error": "No session token in response."}))
                 return
-            from auth_manager import save_token
-            save_token(token)
+            from auth_manager import KeyringUnavailableError, save_token
+            try:
+                save_token(token)
+            except KeyringUnavailableError as kr_exc:
+                self.log_queue.put(("auth_done", {"ok": False, "error": str(kr_exc)}))
+                return
             self.log_queue.put(("auth_done", {"ok": True, "user": user}))
         except _ue.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace").strip()
