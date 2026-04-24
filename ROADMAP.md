@@ -344,7 +344,7 @@ These are done and live on `main` so the next reader knows not to re-open them:
   - 29 new tests across `test_feedback_client.py` and `test_feedback_queue.py` covering
     all failure branches, PII scrubbing, default URL resolution, and queue lifecycle.
 
-- **Item 1 (feedback channel, public repo — step 1.1):**
+- **Item 1 (feedback channel, public repo — steps 1.1, 1.9, 1.10):**
   - `apps/api/app/routers/travelport_feedback.py` and
     `apps/api/app/repositories/travelport_feedback.py` copied from the orphaned
     `aviation_web_integration/` subtree to the airline_scraper_full_clone's live `master`
@@ -352,6 +352,15 @@ These are done and live on `main` so the next reader knows not to re-open them:
   - Router registered in `apps/api/app/main.py` with `prefix="/travelport-agent"`.
   - `POST /travelport-agent/feedback` and `GET /travelport-agent/feedback` now exist on master.
     Next step: merge to master and let `deploy-api-cloud-run.yml` build it into the live API.
+  - **Rate limiting (1.9):** In-process sliding-window limiter added to
+    `travelport_feedback.py` — 10 POST requests/min/IP, no external dependency.
+    Uses `X-Forwarded-For` for real IP behind Cloud Run's load balancer. Returns 429
+    with a descriptive message when exceeded.
+  - **Observability (1.10):** `deploy/gcp/create_feedback_5xx_alert.sh` added —
+    one-shot `gcloud` script that creates a Cloud Monitoring MQL alert firing when
+    `aero-pulse-api` emits any 5xx on the feedback endpoint over a 5-minute window.
+    Idempotent (skips if policy already exists), creates an email notification channel,
+    and prints the console URL. Run once after the Cloud Run deploy merges.
 
 - **Item 6 (downloads page):**
   - `apps/web/app/downloads/page.tsx` converted from a static hardcoded array to an async
