@@ -26,17 +26,26 @@ _PII_KEY_PATTERN = re.compile(
 _PATH_PATTERN = re.compile(r"[A-Za-z]:\\|/home/|/Users/")
 
 
+def _scrub_value(key: str, value: Any) -> Any:
+    """Recursively scrub a single key/value pair."""
+    if _PII_KEY_PATTERN.search(str(key)):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {k: _scrub_value(k, v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_value(key, item) for item in value]
+    if isinstance(value, str) and _PATH_PATTERN.search(value):
+        return "[REDACTED]"
+    return value
+
+
 def _scrub_context(context: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of context with PII-bearing values replaced by [REDACTED]."""
-    scrubbed: dict[str, Any] = {}
-    for k, v in context.items():
-        if _PII_KEY_PATTERN.search(str(k)):
-            scrubbed[k] = "[REDACTED]"
-        elif isinstance(v, str) and _PATH_PATTERN.search(v):
-            scrubbed[k] = "[REDACTED]"
-        else:
-            scrubbed[k] = v
-    return scrubbed
+    """Return a copy of context with PII-bearing values replaced by [REDACTED].
+
+    Recurses into nested dicts and lists so sub-keys like
+    context["session"]["token"] are also redacted.
+    """
+    return {k: _scrub_value(k, v) for k, v in context.items()}
 
 
 class FeedbackSubmissionError(RuntimeError):

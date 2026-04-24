@@ -14,11 +14,26 @@ _SERVICE = "TravelportAuto"
 _USERNAME = "session_token"
 
 
+class KeyringUnavailableError(RuntimeError):
+    """Raised by save_token when the system keyring cannot persist the token."""
+
+
 def save_token(token: str) -> None:
-    """Persist *token* to the system keyring."""
+    """Persist *token* to the system keyring.
+
+    Raises KeyringUnavailableError if the credential store is inaccessible so
+    the caller (GUI login flow) can surface the failure to the user rather than
+    silently falling back to unauthenticated requests.
+    """
     import keyring
 
-    keyring.set_password(_SERVICE, _USERNAME, token)
+    try:
+        keyring.set_password(_SERVICE, _USERNAME, token)
+    except Exception as exc:
+        raise KeyringUnavailableError(
+            "Could not save your session to the Windows Credential Manager. "
+            "You may need to sign in again next launch."
+        ) from exc
 
 
 def get_token() -> str | None:

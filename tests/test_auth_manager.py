@@ -96,3 +96,24 @@ def test_service_and_username_constants_are_stable():
 
     assert auth_manager._SERVICE == "TravelportAuto"
     assert auth_manager._USERNAME == "session_token"
+
+
+def test_save_token_raises_keyring_unavailable_on_failure():
+    """save_token must raise KeyringUnavailableError (not swallow) when keyring errors."""
+    import sys
+    import types
+
+    broken = types.SimpleNamespace(
+        get_password=lambda *a: None,
+        set_password=lambda *a: (_ for _ in ()).throw(RuntimeError("credential store locked")),
+        delete_password=lambda *a: None,
+        errors=types.SimpleNamespace(PasswordDeleteError=Exception),
+    )
+    sys.modules["keyring"] = broken  # type: ignore[assignment]
+
+    from auth_manager import KeyringUnavailableError, save_token
+
+    with pytest.raises(KeyringUnavailableError):
+        save_token("some-token")
+
+    sys.modules.pop("keyring", None)

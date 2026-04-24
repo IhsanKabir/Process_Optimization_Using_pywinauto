@@ -97,6 +97,26 @@ def test_scrub_context_safe_values_pass_through():
     assert _scrub_context(ctx) == ctx
 
 
+def test_scrub_context_redacts_nested_pii_key():
+    """A PII key inside a nested dict must be redacted, not passed through."""
+    result = _scrub_context({"session": {"token": "abc", "user": "bob"}})
+    assert result["session"]["token"] == "[REDACTED]"
+    assert result["session"]["user"] == "bob"
+
+
+def test_scrub_context_redacts_nested_path_value():
+    """A Windows path inside a nested dict must be redacted."""
+    result = _scrub_context({"run_info": {"output_dir": r"C:\Users\alice\reports"}})
+    assert result["run_info"]["output_dir"] == "[REDACTED]"
+
+
+def test_scrub_context_redacts_pii_key_in_list():
+    """PII key applies to all elements of a list value."""
+    result = _scrub_context({"tokens": ["tok1", "tok2"]})
+    # key "tokens" matches the PII pattern → entire value redacted
+    assert result["tokens"] == "[REDACTED]"
+
+
 # ── Default URL resolution ─────────────────────────────────────────────────────
 
 def test_default_api_base_url_used_when_env_and_json_are_empty(monkeypatch):
