@@ -83,6 +83,19 @@ def build_feedback_payload(
     }
 
 
+def _resolve_session_token() -> str | None:
+    """Return the user session token from keyring → env var, or None."""
+    try:
+        from auth_manager import get_token
+        token = get_token()
+        if token:
+            return token
+    except Exception:
+        pass
+    import os
+    return os.environ.get("TRAVELPORT_USER_TOKEN") or None
+
+
 def submit_feedback(
     *,
     category: str,
@@ -91,8 +104,13 @@ def submit_feedback(
     app_version: str,
     context: dict[str, Any] | None = None,
     config: AgentConfig | None = None,
+    user_session_token: str | None = None,
 ) -> dict[str, Any]:
     """Send feedback to the configured backend feedback endpoint.
+
+    Auth preference: user session token (keyring / env / explicit arg) >
+    device token (agent_config). Device-id is always included in the payload
+    for telemetry continuity regardless of which auth method is used.
 
     Raises:
         FeedbackSubmissionError: Validation error or unrecoverable 4xx from server.
@@ -111,6 +129,8 @@ def submit_feedback(
         config=agent,
     )
 
+    session_token = user_session_token or _resolve_session_token()
+
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         f"{agent.api_base_url.rstrip('/')}/feedback",
@@ -121,7 +141,9 @@ def submit_feedback(
             "User-Agent": f"TravelportAuto/{app_version or 'unknown'}",
         },
     )
-    if agent.device_token:
+    if session_token:
+        request.add_header("X-User-Session", session_token)
+    elif agent.device_token:
         request.add_header("Authorization", f"Bearer {agent.device_token}")
 
     try:

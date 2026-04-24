@@ -1541,6 +1541,12 @@ def main(prebuilt_args=None, stop_event=None):
         default=None,
         help="Effective date (YYYY-MM-DD) for --load-previous-rates; defaults to yesterday",
     )
+    arg_parser.add_argument(
+        "--user-token",
+        type=str,
+        default=None,
+        help="Session token for the web dashboard account (overrides keyring and TRAVELPORT_USER_TOKEN env var)",
+    )
 
     if prebuilt_args is not None:
         # Called from GUI with a ready-made Namespace - skip argparse entirely
