@@ -295,6 +295,37 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Item 2 (login / user identity — steps 2.1–2.3, 2.5–2.6, 2.8):**
+  - New `auth_manager.py`: wraps `keyring` library (Windows Credential Locker in exe,
+    system default in dev). Functions: `save_token`, `get_token`, `clear_token`,
+    `is_signed_in`. Service name `"TravelportAuto"` / username `"session_token"` are
+    stable — changing them would log out all users.
+  - `TravelportAuto.spec` — added `keyring`, `keyring.backends.Windows`,
+    `win32ctypes`, `win32ctypes.pywin32.pywintypes` to `hiddenimports` so the Windows
+    Credential Locker backend is bundled in the exe and tokens persist across runs.
+  - `AUTH_API_ROOT` constant added to `agent_config.py` pointing at the live Cloud Run
+    API root (used by GUI for `/api/v1/user-auth/*` calls).
+  - GUI changes:
+    - "Sign In" button in the bottom bar; replaces with "Account ▾" when signed in.
+    - Clicking "Account ▾" pops a menu showing the email and a "Sign out" option.
+    - Login dialog: email + password fields, `<Return>` to submit, inline error display.
+    - On successful login the session token is stored in keyring; the user email is
+      shown as `● email` in the right side of the bottom bar.
+    - On sign-out: keyring cleared, label hidden, button reset to "Sign In".
+    - Startup: 1.5 s after launch, a background thread reads the stored token and calls
+      `GET /api/v1/user-auth/me` to confirm it's still valid. If valid, the user label
+      appears silently with no dialog.
+  - `main.py` — `--user-token` CLI flag for headless runs that need an authenticated
+    identity. Precedence: `--user-token` > keyring > `TRAVELPORT_USER_TOKEN` env var.
+  - `feedback_client.py` — `submit_feedback` now accepts an optional
+    `user_session_token` kwarg and a new `_resolve_session_token()` helper. When a
+    user session is available (explicit arg > keyring > env var), feedback is sent with
+    `X-User-Session: <token>`; device token falls back to `Authorization: Bearer` only
+    when no user session exists. `device_id` stays in the payload regardless.
+  - 14 new tests across `test_auth_manager.py` and `test_feedback_auth.py` covering
+    keyring roundtrip, clear/is_signed_in, constant stability, and all token-precedence
+    branches (explicit > keyring > env > device). 258 total tests passing.
+
 - **Item 1 (feedback channel, desktop side — steps 1.3–1.8, 1.11):**
   - `DEFAULT_API_BASE_URL` baked into `agent_config.py` so fresh installs with no env/JSON
     automatically target the live Cloud Run API. Env/JSON overrides still respected.

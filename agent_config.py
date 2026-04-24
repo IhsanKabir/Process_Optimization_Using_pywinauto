@@ -27,6 +27,9 @@ DEFAULT_API_BASE_URL = (
     "https://aero-pulse-api-591603094460.asia-south1.run.app/travelport-agent"
 )
 
+# Root of the live API — used for user-auth endpoints (/api/v1/user-auth/*)
+AUTH_API_ROOT = "https://aero-pulse-api-591603094460.asia-south1.run.app"
+
 
 @dataclass(frozen=True)
 class AgentConfig:

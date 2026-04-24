@@ -433,6 +433,10 @@ class TravelportGUI:
         self._feedback_category_var = tk.StringVar(value="bug")
         self._feedback_subject_var = tk.StringVar()
         self._feedback_message_text = None
+        self._login_dialog: tk.Toplevel | None = None
+        self._login_submit_btn = None
+        self._login_status_var = tk.StringVar(value="")
+        self._user_info: dict | None = None
         self._overlay_eta_var = tk.StringVar(value="")
         self._row_states: dict[str, str] = {}
         self._completed_routes = 0
@@ -454,6 +458,7 @@ class TravelportGUI:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll()
         self.root.after(3000, self._drain_feedback_queue_async)
+        self.root.after(1500, self._check_auth_startup)
         # Check for updates silently in the background
         threading.Thread(target=self._bg_update_check, daemon=True).start()
 
@@ -982,6 +987,11 @@ class TravelportGUI:
         )
         self.feedback_btn.pack(side="left", padx=4)
 
+        self.account_btn = ttk.Button(
+            bar, text="Sign In", command=self._on_account_btn, width=12
+        )
+        self.account_btn.pack(side="left", padx=4)
+
         self.recalibrate_btn = ttk.Button(
             bar, text="⚙  Recalibrate", command=self._recalibrate_display, width=15
         )
@@ -991,6 +1001,11 @@ class TravelportGUI:
             "Reset click calibration for this display.\n"
             "Run this after changing screen resolution or DPI scaling.",
         )
+
+        self._user_label = tk.Label(
+            bar, text="", bg="#dde3e8", fg="#357a38", font=("Segoe UI", 9)
+        )
+        self._user_label.pack(side="right", padx=8)
 
         self.status_label = tk.Label(
             bar, text="Ready", bg="#dde3e8", fg="#555", font=("Segoe UI", 9)
@@ -1074,6 +1089,8 @@ class TravelportGUI:
                     self._on_done(payload)
                 elif kind == "feedback_done":
                     self._on_feedback_done(payload)
+                elif kind == "auth_done":
+                    self._on_auth_done(payload)
                 elif kind == "update_available":
                     self._on_update_available(payload)
                 elif kind == "update_restart":
@@ -1799,6 +1816,180 @@ class TravelportGUI:
             )
         except Exception as exc:
             messagebox.showerror("Recalibrate Failed", str(exc))
+
+    # ── Account / login ───────────────────────────────────────────────────────
+
+    def _refresh_user_label(self) -> None:
+        if self._user_info:
+            email = self._user_info.get("email", "")
+            display = email or self._user_info.get("full_name", "Signed in")
+            self._user_label.configure(text=f"● {display}", fg="#357a38")
+            self.account_btn.configure(text="Account ▾")
+        else:
+            self._user_label.configure(text="")
+            self.account_btn.configure(text="Sign In")
+
+    def _on_account_btn(self) -> None:
+        if self._user_info:
+            menu = tk.Menu(self.root, tearoff=False)
+            email = self._user_info.get("email", "")
+            if email:
+                menu.add_command(label=email, state="disabled")
+                menu.add_separator()
+            menu.add_command(label="Sign out", command=self._sign_out)
+            try:
+                x = self.account_btn.winfo_rootx()
+                y = self.account_btn.winfo_rooty() + self.account_btn.winfo_height()
+                menu.tk_popup(x, y)
+            finally:
+                menu.grab_release()
+        else:
+            self._open_login_dialog()
+
+    def _sign_out(self) -> None:
+        from auth_manager import clear_token
+        clear_token()
+        self._user_info = None
+        self._refresh_user_label()
+
+    def _check_auth_startup(self) -> None:
+        """Background: read stored token; call /me to confirm it's still valid."""
+        def _worker():
+            try:
+                from auth_manager import get_token
+                token = get_token()
+                if not token:
+                    return
+                from agent_config import AUTH_API_ROOT
+                import json as _json
+                import urllib.request as _req
+                request = _req.Request(
+                    f"{AUTH_API_ROOT}/api/v1/user-auth/me",
+                    headers={"X-User-Session": token},
+                )
+                with _req.urlopen(request, timeout=10) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+                user = data.get("user") or data
+                self.log_queue.put(("auth_done", {"ok": True, "user": user}))
+            except Exception:
+                pass  # Silently ignore — user just stays unsigned in
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _open_login_dialog(self) -> None:
+        if self._login_dialog and self._login_dialog.winfo_exists():
+            self._login_dialog.lift()
+            self._login_dialog.focus_force()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Sign in to TravelportAuto")
+        dialog.geometry("380x280")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.protocol("WM_DELETE_WINDOW", self._close_login_dialog)
+        self._login_dialog = dialog
+        self._login_status_var.set("")
+
+        body = tk.Frame(dialog, padx=24, pady=20)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body, text="Email", anchor="w", font=("Segoe UI", 9)).pack(fill="x")
+        self._login_email_var = tk.StringVar()
+        ttk.Entry(body, textvariable=self._login_email_var).pack(fill="x", pady=(2, 10))
+
+        tk.Label(body, text="Password", anchor="w", font=("Segoe UI", 9)).pack(fill="x")
+        self._login_password_var = tk.StringVar()
+        ttk.Entry(body, textvariable=self._login_password_var, show="●").pack(fill="x", pady=(2, 8))
+
+        tk.Label(
+            body, textvariable=self._login_status_var,
+            fg="#c0392b", wraplength=320, justify="left", font=("Segoe UI", 9)
+        ).pack(fill="x", pady=(0, 8))
+
+        footer = tk.Frame(dialog, padx=24, pady=10)
+        footer.pack(fill="x")
+        ttk.Button(footer, text="Cancel", command=self._close_login_dialog).pack(side="left")
+        self._login_submit_btn = ttk.Button(footer, text="Sign In", command=self._submit_login)
+        self._login_submit_btn.pack(side="right")
+
+        self._login_email_var.set("")
+        self._login_password_var.set("")
+        dialog.bind("<Return>", lambda *_: self._submit_login())
+        ttk.Entry(body)  # focus will go to email entry naturally via tab order
+
+    def _close_login_dialog(self) -> None:
+        if self._login_dialog and self._login_dialog.winfo_exists():
+            self._login_dialog.grab_release()
+            self._login_dialog.destroy()
+        self._login_dialog = None
+        self._login_submit_btn = None
+        self._login_status_var.set("")
+
+    def _submit_login(self) -> None:
+        if not hasattr(self, "_login_email_var"):
+            return
+        email = self._login_email_var.get().strip()
+        password = self._login_password_var.get()
+        if not email:
+            self._login_status_var.set("Please enter your email address.")
+            return
+        if not password:
+            self._login_status_var.set("Please enter your password.")
+            return
+        if self._login_submit_btn:
+            self._login_submit_btn.configure(state="disabled")
+        self._login_status_var.set("Signing in…")
+        threading.Thread(
+            target=self._login_worker,
+            args=(email, password),
+            daemon=True,
+        ).start()
+
+    def _login_worker(self, email: str, password: str) -> None:
+        import json as _json
+        import urllib.error as _ue
+        import urllib.request as _req
+
+        try:
+            from agent_config import AUTH_API_ROOT
+            body = _json.dumps({"email": email, "password": password}).encode("utf-8")
+            request = _req.Request(
+                f"{AUTH_API_ROOT}/api/v1/user-auth/login",
+                data=body,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with _req.urlopen(request, timeout=15) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+            token = data.get("session_token", "")
+            user = data.get("user") or {}
+            if not token:
+                self.log_queue.put(("auth_done", {"ok": False, "error": "No session token in response."}))
+                return
+            from auth_manager import save_token
+            save_token(token)
+            self.log_queue.put(("auth_done", {"ok": True, "user": user}))
+        except _ue.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+            try:
+                msg = _json.loads(detail).get("detail", detail)
+            except Exception:
+                msg = detail[:200] or f"Error {exc.code}"
+            self.log_queue.put(("auth_done", {"ok": False, "error": str(msg)}))
+        except Exception as exc:
+            self.log_queue.put(("auth_done", {"ok": False, "error": f"Could not connect: {exc}"}))
+
+    def _on_auth_done(self, payload: dict) -> None:
+        if payload.get("ok"):
+            self._user_info = payload.get("user") or {}
+            self._refresh_user_label()
+            self._close_login_dialog()
+        else:
+            if self._login_submit_btn:
+                self._login_submit_btn.configure(state="normal")
+            self._login_status_var.set(payload.get("error", "Sign in failed."))
 
     def _open_feedback_dialog(self):
         if self._feedback_dialog and self._feedback_dialog.winfo_exists():

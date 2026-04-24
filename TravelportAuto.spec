@@ -84,6 +84,9 @@ a = Analysis(
         'json', 'logging', 'queue', 're', 'shutil', 'threading',
         'urllib.request', 'urllib.error',
         'clipboard_util',
+        # keyring + Windows Credential Locker backend
+        'keyring', 'keyring.backends', 'keyring.backends.Windows',
+        'win32ctypes', 'win32ctypes.pywin32', 'win32ctypes.pywin32.pywintypes',
     ],
     hookspath=['hooks'],
     hooksconfig={},
