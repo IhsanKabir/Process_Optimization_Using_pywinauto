@@ -1417,6 +1417,11 @@ def _run_currency_report_mode(args, config, stop_event):
         f"  Previous-day basis: "
         f"{result.previous_date.isoformat() if result.previous_date else 'none (first run)'}"
     )
+    try:
+        from usage_tracker import increment as _inc
+        _inc("currency_runs")
+    except Exception:
+        pass
     return result.path
 
 
@@ -2111,6 +2116,11 @@ def main(prebuilt_args=None, stop_event=None):
             else os.path.join(REPORTS_DIR, f"penalty_report_{timestamp_full}.xlsx")
         )
         result_path = generate_penalty_report(penalty_records, output_path)
+        try:
+            from usage_tracker import increment as _inc
+            _inc("penalty_runs")
+        except Exception:
+            pass
 
         elapsed = _time.time() - start_time
         minutes = int(elapsed // 60)
@@ -2946,6 +2956,15 @@ def main(prebuilt_args=None, stop_event=None):
     # [DB] Optional persistence - keep current file/report flow unchanged
     _run_mode = "auto" if not args.tax else "tax-mode"
     _db_run_id = record_to_database(all_route_data, config, mode=_run_mode)
+    try:
+        from usage_tracker import increment as _inc
+        _route_count = len(all_route_data) if all_route_data else 1
+        if args.tax:
+            _inc("ftax_airports", _route_count)
+        else:
+            _inc("fare_routes", _route_count)
+    except Exception:
+        pass
 
     # [BQ] Push to BigQuery if configured
     if _bq_pusher and _bq_pusher.is_configured():
