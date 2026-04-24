@@ -68,6 +68,13 @@ def build_feedback_payload(
 
     agent = config or load_agent_config()
 
+    merged_context = dict(context or {})
+    try:
+        from usage_tracker import get_today_context
+        merged_context.update(get_today_context())
+    except Exception:
+        pass
+
     return {
         "category": clean_category,
         "subject": clean_subject,
@@ -79,7 +86,7 @@ def build_feedback_payload(
         "os_version": platform.platform(),
         "source": "desktop_gui",
         "submitted_at_utc": datetime.now(timezone.utc).isoformat(),
-        "context": _scrub_context(context or {}),
+        "context": _scrub_context(merged_context),
     }
 
 

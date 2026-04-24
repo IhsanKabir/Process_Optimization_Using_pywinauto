@@ -324,7 +324,7 @@ These are done and live on `main` so the next reader knows not to re-open them:
     when no user session exists. `device_id` stays in the payload regardless.
   - 14 new tests across `test_auth_manager.py` and `test_feedback_auth.py` covering
     keyring roundtrip, clear/is_signed_in, constant stability, and all token-precedence
-    branches (explicit > keyring > env > device). 258 total tests passing.
+    branches (explicit > keyring > env > device).
 
 - **Item 1 (feedback channel, desktop side — steps 1.3–1.8, 1.11):**
   - `DEFAULT_API_BASE_URL` baked into `agent_config.py` so fresh installs with no env/JSON
@@ -361,6 +361,21 @@ These are done and live on `main` so the next reader knows not to re-open them:
     `aero-pulse-api` emits any 5xx on the feedback endpoint over a 5-minute window.
     Idempotent (skips if policy already exists), creates an email notification channel,
     and prints the console URL. Run once after the Cloud Run deploy merges.
+
+- **Passive usage telemetry (demand validation for Item 3):**
+  - New `usage_tracker.py`: daily counters (`fare_routes`, `ftax_airports`,
+    `penalty_runs`, `currency_runs`) persisted in `%APPDATA%/TravelportAuto/usage_stats.json`.
+    30-day retention with auto-prune. Thread-safe (`threading.Lock`). Silently
+    swallows all I/O errors so a broken stats file never interrupts a run.
+  - `feedback_client.build_feedback_payload` now merges `get_today_context()` into
+    the `context` dict automatically — every feedback submission carries today's run
+    counts and `usage_days_active_30d` without the user doing anything.
+  - `main.py`: `increment("fare_routes", n)` / `increment("ftax_airports", n)` /
+    `increment("penalty_runs")` / `increment("currency_runs")` called at run
+    completion for each mode.
+  - 10 new tests in `test_usage_tracker.py`: roundtrip, accumulation, metric
+    isolation, invalid metric ignore, zero-context, days-active counting, pruning,
+    malformed JSON, and end-to-end feedback-payload injection. 268 total tests passing.
 
 - **Item 6 (downloads page):**
   - `apps/web/app/downloads/page.tsx` converted from a static hardcoded array to an async
