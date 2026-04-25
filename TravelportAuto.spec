@@ -87,6 +87,7 @@ a = Analysis(
         # local modules imported lazily (try/except) — list explicitly so
         # PyInstaller's static scan doesn't miss them
         'auth_manager', 'feedback_queue', 'feedback_client', 'usage_tracker',
+        'google_oauth',
         # keyring + Windows Credential Locker backend
         'keyring', 'keyring.backends', 'keyring.backends.Windows',
         'win32ctypes', 'win32ctypes.pywin32', 'win32ctypes.pywin32.pywintypes',

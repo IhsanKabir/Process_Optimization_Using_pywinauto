@@ -30,6 +30,11 @@ DEFAULT_API_BASE_URL = (
 # Root of the live API — used for user-auth endpoints (/api/v1/user-auth/*)
 AUTH_API_ROOT = "https://aero-pulse-api-591603094460.asia-south1.run.app"
 
+# Google OAuth 2.0 client ID for the desktop "Sign in with Google" flow.
+# Create a Desktop application credential at console.cloud.google.com → APIs & Services
+# → Credentials, then set this via env var or agent_config.json.
+GOOGLE_OAUTH_CLIENT_ID: str = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+
 
 @dataclass(frozen=True)
 class AgentConfig:

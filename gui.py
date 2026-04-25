@@ -435,6 +435,8 @@ class TravelportGUI:
         self._feedback_message_text = None
         self._login_dialog: tk.Toplevel | None = None
         self._login_submit_btn = None
+        self._google_btn = None
+        self._login_status_label = None
         self._login_status_var = tk.StringVar(value="")
         self._user_info: dict | None = None
         self._overlay_eta_var = tk.StringVar(value="")
@@ -1884,7 +1886,7 @@ class TravelportGUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Sign in to TravelportAuto")
-        dialog.geometry("380x280")
+        dialog.geometry("380x340")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
@@ -1895,6 +1897,24 @@ class TravelportGUI:
         body = tk.Frame(dialog, padx=24, pady=20)
         body.pack(fill="both", expand=True)
 
+        # Primary: Google sign-in
+        self._google_btn = ttk.Button(
+            body, text="Sign in with Google", command=self._start_google_oauth
+        )
+        self._google_btn.pack(fill="x", pady=(0, 12))
+
+        # Separator
+        sep = tk.Frame(body)
+        sep.pack(fill="x", pady=(0, 12))
+        tk.Frame(sep, height=1, bg="#d0d0d0").pack(
+            fill="x", side="left", expand=True, padx=(0, 8), pady=7
+        )
+        tk.Label(sep, text="or sign in with email", font=("Segoe UI", 8), fg="#808080").pack(side="left")
+        tk.Frame(sep, height=1, bg="#d0d0d0").pack(
+            fill="x", side="left", expand=True, padx=(8, 0), pady=7
+        )
+
+        # Secondary: email + password
         tk.Label(body, text="Email", anchor="w", font=("Segoe UI", 9)).pack(fill="x")
         self._login_email_var = tk.StringVar()
         ttk.Entry(body, textvariable=self._login_email_var).pack(fill="x", pady=(2, 10))
@@ -1903,10 +1923,11 @@ class TravelportGUI:
         self._login_password_var = tk.StringVar()
         ttk.Entry(body, textvariable=self._login_password_var, show="●").pack(fill="x", pady=(2, 8))
 
-        tk.Label(
+        self._login_status_label = tk.Label(
             body, textvariable=self._login_status_var,
             fg="#c0392b", wraplength=320, justify="left", font=("Segoe UI", 9)
-        ).pack(fill="x", pady=(0, 8))
+        )
+        self._login_status_label.pack(fill="x", pady=(0, 8))
 
         footer = tk.Frame(dialog, padx=24, pady=10)
         footer.pack(fill="x")
@@ -1917,7 +1938,6 @@ class TravelportGUI:
         self._login_email_var.set("")
         self._login_password_var.set("")
         dialog.bind("<Return>", lambda *_: self._submit_login())
-        ttk.Entry(body)  # focus will go to email entry naturally via tab order
 
     def _close_login_dialog(self) -> None:
         if self._login_dialog and self._login_dialog.winfo_exists():
@@ -1925,6 +1945,8 @@ class TravelportGUI:
             self._login_dialog.destroy()
         self._login_dialog = None
         self._login_submit_btn = None
+        self._google_btn = None
+        self._login_status_label = None
         self._login_status_var.set("")
 
     def _submit_login(self) -> None:
@@ -1993,7 +2015,76 @@ class TravelportGUI:
         else:
             if self._login_submit_btn:
                 self._login_submit_btn.configure(state="normal")
+            if self._google_btn:
+                self._google_btn.configure(state="normal")
+            if self._login_status_label:
+                self._login_status_label.configure(fg="#c0392b")
             self._login_status_var.set(payload.get("error", "Sign in failed."))
+
+    def _start_google_oauth(self) -> None:
+        from agent_config import GOOGLE_OAUTH_CLIENT_ID
+        if self._google_btn:
+            self._google_btn.configure(state="disabled")
+        if self._login_submit_btn:
+            self._login_submit_btn.configure(state="disabled")
+        if self._login_status_label:
+            self._login_status_label.configure(fg="#2980b9")
+        self._login_status_var.set("Opening Google sign-in in your browser…")
+        threading.Thread(
+            target=self._google_oauth_worker,
+            args=(GOOGLE_OAUTH_CLIENT_ID,),
+            daemon=True,
+        ).start()
+
+    def _google_oauth_worker(self, client_id: str) -> None:
+        import json as _json
+        import urllib.error as _ue
+        import urllib.request as _req
+        try:
+            from google_oauth import GoogleOAuthError, run_google_oauth_flow
+            from agent_config import AUTH_API_ROOT
+
+            google_user = run_google_oauth_flow(client_id)
+
+            body = _json.dumps({
+                "email": google_user.email,
+                "full_name": google_user.name,
+                "auth_provider": "google",
+                "provider_subject": google_user.sub,
+            }).encode("utf-8")
+            req = _req.Request(
+                f"{AUTH_API_ROOT}/api/v1/user-auth/oauth-login",
+                data=body,
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with _req.urlopen(req, timeout=15) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+
+            token = data.get("session_token", "")
+            user = data.get("user") or {}
+            if not token:
+                self.log_queue.put(("auth_done", {"ok": False, "error": "No session token in server response."}))
+                return
+
+            from auth_manager import KeyringUnavailableError, save_token
+            try:
+                save_token(token)
+            except KeyringUnavailableError as exc:
+                self.log_queue.put(("auth_done", {"ok": False, "error": str(exc)}))
+                return
+
+            self.log_queue.put(("auth_done", {"ok": True, "user": user}))
+
+        except _ue.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+            try:
+                msg = _json.loads(detail).get("detail", detail)
+            except Exception:
+                msg = detail[:200] or f"Server error {exc.code}"
+            self.log_queue.put(("auth_done", {"ok": False, "error": str(msg)}))
+        except Exception as exc:
+            self.log_queue.put(("auth_done", {"ok": False, "error": str(exc)}))
 
     def _open_feedback_dialog(self):
         if self._feedback_dialog and self._feedback_dialog.winfo_exists():
