@@ -41,7 +41,17 @@ def _load_google_client_id() -> str:
     except Exception:
         return ""
 
+def _load_google_client_secret() -> str:
+    if os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip():
+        return os.environ["GOOGLE_OAUTH_CLIENT_SECRET"].strip()
+    try:
+        with open(DEFAULT_AGENT_CONFIG_PATH, "r", encoding="utf-8") as _f:
+            return str(json.load(_f).get("google_oauth_client_secret", "")).strip()
+    except Exception:
+        return ""
+
 GOOGLE_OAUTH_CLIENT_ID: str = _load_google_client_id()
+GOOGLE_OAUTH_CLIENT_SECRET: str = _load_google_client_secret()
 
 
 @dataclass(frozen=True)

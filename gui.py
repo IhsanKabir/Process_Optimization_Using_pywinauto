@@ -2022,7 +2022,7 @@ class TravelportGUI:
             self._login_status_var.set(payload.get("error", "Sign in failed."))
 
     def _start_google_oauth(self) -> None:
-        from agent_config import GOOGLE_OAUTH_CLIENT_ID
+        from agent_config import GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET
         if self._google_btn:
             self._google_btn.configure(state="disabled")
         if self._login_submit_btn:
@@ -2032,11 +2032,11 @@ class TravelportGUI:
         self._login_status_var.set("Opening Google sign-in in your browser…")
         threading.Thread(
             target=self._google_oauth_worker,
-            args=(GOOGLE_OAUTH_CLIENT_ID,),
+            args=(GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET),
             daemon=True,
         ).start()
 
-    def _google_oauth_worker(self, client_id: str) -> None:
+    def _google_oauth_worker(self, client_id: str, client_secret: str) -> None:
         import json as _json
         import urllib.error as _ue
         import urllib.request as _req
@@ -2044,7 +2044,7 @@ class TravelportGUI:
             from google_oauth import GoogleOAuthError, run_google_oauth_flow
             from agent_config import AUTH_API_ROOT
 
-            google_user = run_google_oauth_flow(client_id)
+            google_user = run_google_oauth_flow(client_id, client_secret)
 
             body = _json.dumps({
                 "email": google_user.email,
