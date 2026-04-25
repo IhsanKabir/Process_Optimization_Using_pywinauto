@@ -60,12 +60,14 @@ def _exchange_code(
     redirect_uri: str,
     code_verifier: str,
     client_id: str,
+    client_secret: str,
 ) -> dict:
     body = urllib.parse.urlencode({
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": redirect_uri,
         "client_id": client_id,
+        "client_secret": client_secret,
         "code_verifier": code_verifier,
     }).encode("utf-8")
     req = urllib.request.Request(
@@ -96,7 +98,7 @@ def _get_userinfo(access_token: str) -> dict:
         raise GoogleOAuthError(f"Userinfo request failed: {exc.code}") from exc
 
 
-def run_google_oauth_flow(client_id: str) -> GoogleUser:
+def run_google_oauth_flow(client_id: str, client_secret: str) -> GoogleUser:
     """
     Runs the full PKCE OAuth flow. Blocks the calling thread until the user
     completes sign-in or the 120-second timeout expires.
@@ -107,6 +109,11 @@ def run_google_oauth_flow(client_id: str) -> GoogleUser:
         raise GoogleOAuthError(
             "Google Sign-In is not configured on this installation. "
             "Set GOOGLE_OAUTH_CLIENT_ID in your environment or agent_config.json."
+        )
+    if not client_secret:
+        raise GoogleOAuthError(
+            "Google Sign-In requires a client secret. "
+            "Set GOOGLE_OAUTH_CLIENT_SECRET in your environment or agent_config.json."
         )
 
     code_verifier = _random_string(64)
@@ -193,6 +200,7 @@ def run_google_oauth_flow(client_id: str) -> GoogleUser:
         redirect_uri=redirect_uri,
         code_verifier=code_verifier,
         client_id=client_id,
+        client_secret=client_secret,
     )
     access_token = token_data.get("access_token", "")
     if not access_token:
