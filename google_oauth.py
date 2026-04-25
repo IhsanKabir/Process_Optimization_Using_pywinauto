@@ -77,13 +77,15 @@ def _exchange_code(
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise GoogleOAuthError(
             f"Token exchange failed ({exc.code}): {detail[:200]}"
         ) from exc
+    except Exception as exc:
+        raise GoogleOAuthError(f"Token exchange timed out or failed: {exc}") from exc
 
 
 def _get_userinfo(access_token: str) -> dict:
@@ -92,10 +94,12 @@ def _get_userinfo(access_token: str) -> dict:
         headers={"Authorization": f"Bearer {access_token}"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise GoogleOAuthError(f"Userinfo request failed: {exc.code}") from exc
+    except Exception as exc:
+        raise GoogleOAuthError(f"Userinfo request timed out or failed: {exc}") from exc
 
 
 def run_google_oauth_flow(client_id: str, client_secret: str) -> GoogleUser:
