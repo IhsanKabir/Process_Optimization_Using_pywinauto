@@ -15,6 +15,7 @@ data/logs/*
 
 # Configs and Scripts (Local)
 config.json
+agent_config.json
 commands.txt
 
 # Temp & Debug Files

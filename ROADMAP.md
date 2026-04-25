@@ -58,41 +58,15 @@ or are deferred pending demand evidence. See Item 3.
 
 ---
 
-### 1. Fix the feedback channel (unblocked — no Step 0 pending)
+### 1. Fix the feedback channel
 
-**Status:** Deferred — ready to code. ~3–4 focused days.
-
-**Goal:** `POST https://aero-pulse-api-591603094460.asia-south1.run.app/travelport-agent/feedback` returns 2xx for a valid payload from a fresh desktop install with zero env vars set, and logs survive offline submission.
-
-**Step 1.0 — Pick mirror-vs-master strategy (5-minute decision, record here):**
-
-- **(a) Stop mirroring `apps/**`.** Remove that path-filter from `mirror-aviation-web.yml` (or delete the workflow). All future web/API changes land as PRs directly against the public repo's `master`. **Recommended** — the mirror does nothing useful today and causes confusion.
-- (b) Retarget mirror to open a PR against `master` on every push (replaces current force-push-to-`main`). Heavier.
-- (c) Keep mirror as docs-only; rename `aviation_web_integration/` → `docs/aviation_web_reference/` so nobody assumes it deploys.
-
-**Work:**
-
-| Step | Where | Change | Verify |
-|---|---|---|---|
-| 1.1 | Public repo `master` — PR | Copy `apps/api/app/routers/travelport_feedback.py` and `apps/api/app/repositories/travelport_feedback.py` from this repo's `aviation_web_integration/` (contents are the same on `main`). Append to `apps/api/app/main.py`: `from app.routers import travelport_feedback as travelport_feedback_router` + `app.include_router(travelport_feedback_router.router, prefix="/travelport-agent", tags=["Travelport Feedback"])`. | `deploy-api-cloud-run.yml` runs on merge; `curl -X POST .../travelport-agent/feedback -d '{"subject":"x","message":"y","category":"general"}'` returns 2xx. `GET /openapi.json` shows `/travelport-agent/feedback` in `paths`. |
-| 1.2 | Public repo `master` — BigQuery schema | Confirm the `travelport_feedback` table exists in `aeropulseintelligence:aviation_intel`. If not, add `CREATE TABLE` SQL under the existing `sql/` directory and run it. Repository code at [repositories/travelport_feedback.py](aviation_web_integration/apps/api/app/repositories/travelport_feedback.py) tells you the expected columns. | `bq ls aeropulseintelligence:aviation_intel` lists it; manual POST inserts a row. |
-| 1.3 | This repo — [agent_config.py:25-42](agent_config.py#L25-L42) | Add module-level `DEFAULT_API_BASE_URL = "https://aero-pulse-api-591603094460.asia-south1.run.app/travelport-agent"`. In `load_agent_config`, fall back to it when env + JSON resolve to empty. Keep env/JSON overrides working (needed for dev). | `AgentConfig().api_base_url` on a fresh machine with no env/JSON equals the default. |
-| 1.4 | This repo — [feedback_client.py:69-74](feedback_client.py#L69-L74) | Drop the "not configured on this machine" guard once the default exists. | Existing tests still pass; manual GUI submit from a machine with no env var succeeds. |
-| 1.5 | This repo — [feedback_client.py](feedback_client.py) | Classify failures: `URLError` / `timeout` → queue for retry; `HTTPError 4xx` → reject without retry, surface server message; `HTTPError 5xx` → queue + warn. Current retry loop treats all failures alike. | Unit tests cover each branch. |
-| 1.6 | This repo — new `feedback_queue.py` | JSON queue at `%APPDATA%\TravelportAuto\feedback_queue.json`. On URLError/5xx, append payload. Flush on app startup and after every successful submit. Cap 50 entries; drop oldest. | Round-trip test; malformed JSON does not crash startup; cap enforced. |
-| 1.7 | This repo — [gui.py:1929-1939](gui.py#L1929-L1939) | On URLError, swap "Send" button for "Saved — will retry on next launch" then close. On 4xx, keep existing inline server-message display. | Manual GUI verification with backend reachable / unreachable / returning 400. |
-| 1.8 | This repo — [feedback_client.py:22](feedback_client.py#L22) + [gui.py](gui.py) (the caller that builds `context`) | PII scrub for `context` dict before POST. Deny-list: absolute file paths, env var dumps, any key whose name contains pass / pwd / token / secret / key (case-insensitive), and Smartpoint credential patterns. Enumerate exactly what GUI puts in `context` today and pin in a test. | Test asserts the allowed `context` keys for each category and that denied values become `[REDACTED]`. |
-| 1.9 | Public repo `master` — router | Rate limit (slowapi, 10/min/IP) OR require valid `device_token` on POST. Currently the endpoint will be open on first deploy; one hostile script fills BigQuery. | Integration test: 11th anonymous request within a minute returns 429. |
-| 1.10 | Public repo `master` — observability | One Cloud Logging-based alert policy: "feedback endpoint 5xx rate > 1%/5min → email". | Alert fires on a forced-500 smoke test. |
-| 1.11 | Tests — this repo | Default base URL resolution (env set / JSON set / both empty); queue append on URLError; drop on 4xx; queue drain on startup; queue survives malformed JSON; PII scrubber pins `context` keys. | `pytest` green; coverage includes new files. |
-
-**Why deferred:** No external blocker once 1.0 is written down.
+**Status:** ✅ Fully shipped (2026-04-25).
 
 ---
 
-### 2. Login / user identity (unblocked — provider decision already made by deployed server)
+### 2. Login / user identity
 
-**Status:** Deferred — ready to code once Item 1 ships (so feedback submissions already carry the user header).
+**Status:** ✅ Fully shipped (steps 2.1–2.3, 2.4, 2.5–2.6, 2.8 — 2026-04-25).
 
 **What changed:** The old plan asked "Option A paste-token, Option B Google OAuth, or Option C Keycloak?" Moot. The deployed API already exposes email/password (`/register`, `/login`, `/me`, `/logout`) and Google OAuth (`/oauth-login`). There's also `/api/v1/access-requests`, implying a web-side approval workflow already exists.
 
@@ -157,20 +131,20 @@ or are deferred pending demand evidence. See Item 3.
 
 ---
 
-### Recommended sequence (revised 2026-04-23 after live-infra discovery)
+### Recommended sequence (revised 2026-04-25)
 
-**Step 0 (now one question, not three):** Is paid-tier demand validated?
+**Items 1 and 6 are fully shipped.** Remaining work:
 
-- **Not validated** → Items 1 + 2 only this quarter. Skip Item 3. Piggy-back usage fields on the Item 1 feedback payload to gather data passively.
-- **Validated** → Items 1 + 2 + 3, sequentially.
+**Step 0 (one question):** Is paid-tier demand validated?
 
-**Sprint 1 (~3–4 days):** Item 1. Pick mirror strategy (1.0), land router on public `master`, add `DEFAULT_API_BASE_URL`, PII scrub, offline queue, rate limit, alert.
+- **Not validated** → Item 2 only this quarter. Skip Item 3. Usage telemetry is already piggybacking on feedback payloads — let it run a quarter.
+- **Validated** → Items 2 + 3, sequentially.
 
-**Sprint 2 (~3–4 days):** Item 2. Desktop auth against `/api/v1/user-auth/*`. Feedback header switches from `device_token` to user token.
+**Items 1, 2, and 6 are fully shipped.**
 
-**Sprint 3 (only if demand validated):** Item 3 skeleton — entitlements endpoint, usage batching, run-start gating. No Stripe.
+**Sprint after (only if demand validated):** Item 3 skeleton — entitlements endpoint, usage batching, run-start gating. No Stripe.
 
-**Parallel-safe quick win:** Item 6 (auto-generated downloads page) can ship any time. It doesn't touch the desktop exe.
+**Item 1.10 done:** Alert policy `618920956491326622` is live in Cloud Monitoring.
 
 ---
 
@@ -315,6 +289,19 @@ These are done and live on `main` so the next reader knows not to re-open them:
     - Startup: 1.5 s after launch, a background thread reads the stored token and calls
       `GET /api/v1/user-auth/me` to confirm it's still valid. If valid, the user label
       appears silently with no dialog.
+  - **Item 2.4 — Sign in with Google (shipped 2026-04-25):**
+    - New `google_oauth.py`: stdlib-only PKCE flow. Generates code verifier/challenge,
+      picks a free localhost port, starts a one-shot HTTP redirect server, opens the
+      browser to Google's consent page, waits for the callback, exchanges the auth code
+      for an access token, fetches userinfo (email, name, sub) from Google.
+    - Login dialog restructured: "Sign in with Google" is the primary button. Email +
+      password moved below an "or sign in with email" separator as the secondary path.
+    - On success the worker POSTs `{email, full_name, auth_provider="google", sub}` to
+      `/api/v1/user-auth/oauth-login` and stores the returned session token in keyring.
+    - `GOOGLE_OAUTH_CLIENT_ID` constant added to `agent_config.py` — reads from env var
+      or `agent_config.json`. Requires a Desktop application OAuth 2.0 credential from
+      Google Cloud Console (APIs & Services → Credentials → Create → Desktop app).
+    - `google_oauth` added to `TravelportAuto.spec` hiddenimports.
   - `main.py` — `--user-token` CLI flag for headless runs that need an authenticated
     identity. Precedence: `--user-token` > keyring > `TRAVELPORT_USER_TOKEN` env var.
   - `feedback_client.py` — `submit_feedback` now accepts an optional
@@ -344,23 +331,29 @@ These are done and live on `main` so the next reader knows not to re-open them:
   - 29 new tests across `test_feedback_client.py` and `test_feedback_queue.py` covering
     all failure branches, PII scrubbing, default URL resolution, and queue lifecycle.
 
-- **Item 1 (feedback channel, public repo — steps 1.1, 1.9, 1.10):**
+- **Item 1 (feedback channel, public repo — steps 1.0–1.2, 1.9, 1.10) — fully live 2026-04-25:**
+  - Mirror workflow deleted (step 1.0 — option a chosen). All future API/web changes
+    go directly as PRs against the public repo's `master`.
   - `apps/api/app/routers/travelport_feedback.py` and
-    `apps/api/app/repositories/travelport_feedback.py` copied from the orphaned
-    `aviation_web_integration/` subtree to the airline_scraper_full_clone's live `master`
-    branch files.
-  - Router registered in `apps/api/app/main.py` with `prefix="/travelport-agent"`.
-  - `POST /travelport-agent/feedback` and `GET /travelport-agent/feedback` now exist on master.
-    Next step: merge to master and let `deploy-api-cloud-run.yml` build it into the live API.
-  - **Rate limiting (1.9):** In-process sliding-window limiter added to
-    `travelport_feedback.py` — 10 POST requests/min/IP, no external dependency.
-    Uses `X-Forwarded-For` for real IP behind Cloud Run's load balancer. Returns 429
-    with a descriptive message when exceeded.
-  - **Observability (1.10):** `deploy/gcp/create_feedback_5xx_alert.sh` added —
-    one-shot `gcloud` script that creates a Cloud Monitoring MQL alert firing when
-    `aero-pulse-api` emits any 5xx on the feedback endpoint over a 5-minute window.
-    Idempotent (skips if policy already exists), creates an email notification channel,
-    and prints the console URL. Run once after the Cloud Run deploy merges.
+    `apps/api/app/repositories/travelport_feedback.py` landed on `master` and deployed
+    to Cloud Run. Router registered in `main.py` with `prefix="/travelport-agent"`.
+    Import bug fixed: router originally used an absolute `from app.repositories import …`
+    which failed at Cloud Run startup; corrected to the relative `from ..repositories import …`
+    matching the pattern in `gds.py`.
+  - `POST https://aero-pulse-api-591603094460.asia-south1.run.app/travelport-agent/feedback`
+    returns HTTP 200 for a valid payload (verified 2026-04-25).
+  - **BigQuery table (1.2):** `aeropulseintelligence:aviation_intel.ops_travelport_feedback`
+    created via BigQuery Console with the 14-column schema from `repositories/travelport_feedback.py`.
+    Manual POST confirmed a row inserts successfully.
+  - **Rate limiting (1.9):** In-process sliding-window limiter — 10 POST/min/IP,
+    uses rightmost `X-Forwarded-For` entry (Cloud Run trusted ingress). Returns 429.
+  - **Observability (1.10):** Cloud Monitoring alert policy created (2026-04-25).
+    Policy ID: `projects/aeropulseintelligence/alertPolicies/618920956491326622`.
+    Fires when `aero-pulse-api` emits any 5xx responses over a 5-minute window;
+    sends email to `ihsankabir999@gmail.com`. Script in repo was rewritten from
+    MQL to `conditionThreshold` (MQL requires explicit bool column; threshold does not).
+  - Vercel CLI pinned version (`41.7.2`) bumped to `latest` in `deploy-web-vercel.yml`
+    to fix the concurrent Vercel deploy failure.
 
 - **Passive usage telemetry (demand validation for Item 3):**
   - New `usage_tracker.py`: daily counters (`fare_routes`, `ftax_airports`,
