@@ -1093,6 +1093,10 @@ class TravelportGUI:
                     self._on_feedback_done(payload)
                 elif kind == "auth_done":
                     self._on_auth_done(payload)
+                elif kind == "auth_status":
+                    if self._login_status_label:
+                        self._login_status_label.configure(fg="#2980b9")
+                    self._login_status_var.set(payload)
                 elif kind == "update_available":
                     self._on_update_available(payload)
                 elif kind == "update_restart":
@@ -2044,8 +2048,10 @@ class TravelportGUI:
             from google_oauth import GoogleOAuthError, run_google_oauth_flow
             from agent_config import AUTH_API_ROOT
 
+            self.log_queue.put(("auth_status", "Completing Google sign-in…"))
             google_user = run_google_oauth_flow(client_id, client_secret)
 
+            self.log_queue.put(("auth_status", "Creating session…"))
             body = _json.dumps({
                 "email": google_user.email,
                 "full_name": google_user.name,
@@ -2058,8 +2064,20 @@ class TravelportGUI:
                 method="POST",
                 headers={"Content-Type": "application/json"},
             )
-            with _req.urlopen(req, timeout=15) as resp:
-                data = _json.loads(resp.read().decode("utf-8"))
+            try:
+                with _req.urlopen(req, timeout=40) as resp:
+                    data = _json.loads(resp.read().decode("utf-8"))
+            except _ue.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace").strip()
+                try:
+                    msg = _json.loads(detail).get("detail", detail)
+                except Exception:
+                    msg = detail[:200] or f"Server error {exc.code}"
+                self.log_queue.put(("auth_done", {"ok": False, "error": f"Sign-in server error: {msg}"}))
+                return
+            except Exception as exc:
+                self.log_queue.put(("auth_done", {"ok": False, "error": f"Could not reach sign-in server: {exc}"}))
+                return
 
             token = data.get("session_token", "")
             user = data.get("user") or {}
