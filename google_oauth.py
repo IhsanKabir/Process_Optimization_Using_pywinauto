@@ -2,8 +2,9 @@
 google_oauth.py - Desktop PKCE Google OAuth flow for TravelportAuto sign-in.
 
 Starts a one-shot localhost HTTP server, opens the browser to Google's consent
-page, waits for the redirect callback, exchanges the auth code for an access
-token, and returns the user's {email, name, sub}.
+page, waits for the redirect callback, then sends the auth code to the
+TravelportAuto Cloud Run API which completes the token exchange using its
+server-stored client secret.  The desktop never holds the client secret.
 
 No third-party libraries required — stdlib only.
 """
@@ -23,8 +24,6 @@ import webbrowser
 from dataclasses import dataclass
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 _SCOPES = "openid email profile"
 _TIMEOUT_SEC = 120
 
@@ -34,7 +33,8 @@ class GoogleOAuthError(Exception):
 
 
 @dataclass(frozen=True)
-class GoogleUser:
+class OAuthResult:
+    session_token: str
     email: str
     name: str | None
     sub: str
@@ -55,69 +55,60 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _exchange_code(
+def _exchange_via_server(
     code: str,
-    redirect_uri: str,
     code_verifier: str,
+    redirect_uri: str,
     client_id: str,
-    client_secret: str,
+    api_base_url: str,
 ) -> dict:
-    body = urllib.parse.urlencode({
-        "grant_type": "authorization_code",
+    """Send the auth code to the API server for token exchange.
+
+    The server holds GOOGLE_CLIENT_SECRET and completes the exchange with
+    Google, then returns {user, session_token, session}.
+    """
+    endpoint = f"{api_base_url.rstrip('/')}/api/v1/user-auth/google-code-exchange"
+    body = json.dumps({
         "code": code,
+        "code_verifier": code_verifier,
         "redirect_uri": redirect_uri,
         "client_id": client_id,
-        "client_secret": client_secret,
-        "code_verifier": code_verifier,
     }).encode("utf-8")
     req = urllib.request.Request(
-        GOOGLE_TOKEN_URL,
+        endpoint,
         data=body,
         method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=40) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise GoogleOAuthError(
-            f"Token exchange failed ({exc.code}): {detail[:200]}"
-        ) from exc
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            msg = json.loads(raw).get("detail", raw)
+        except Exception:
+            msg = raw[:200] or f"HTTP {exc.code}"
+        raise GoogleOAuthError(f"Server-side code exchange failed: {msg}") from exc
     except Exception as exc:
-        raise GoogleOAuthError(f"Token exchange timed out or failed: {exc}") from exc
+        raise GoogleOAuthError(f"Code exchange request failed: {exc}") from exc
 
 
-def _get_userinfo(access_token: str) -> dict:
-    req = urllib.request.Request(
-        GOOGLE_USERINFO_URL,
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        raise GoogleOAuthError(f"Userinfo request failed: {exc.code}") from exc
-    except Exception as exc:
-        raise GoogleOAuthError(f"Userinfo request timed out or failed: {exc}") from exc
-
-
-def run_google_oauth_flow(client_id: str, client_secret: str) -> GoogleUser:
+def run_google_oauth_flow(client_id: str, api_base_url: str) -> OAuthResult:
     """
-    Runs the full PKCE OAuth flow. Blocks the calling thread until the user
+    Run the full PKCE OAuth flow.  Blocks the calling thread until the user
     completes sign-in or the 120-second timeout expires.
 
+    The desktop only handles the browser redirect; the actual token exchange
+    with Google is performed server-side using the API's GOOGLE_CLIENT_SECRET.
+
+    Returns an OAuthResult containing the session_token issued by the API.
     Raises GoogleOAuthError on any failure.
     """
     if not client_id:
         raise GoogleOAuthError(
             "Google Sign-In is not configured on this installation. "
             "Set GOOGLE_OAUTH_CLIENT_ID in your environment or agent_config.json."
-        )
-    if not client_secret:
-        raise GoogleOAuthError(
-            "Google Sign-In requires a client secret. "
-            "Set GOOGLE_OAUTH_CLIENT_SECRET in your environment or agent_config.json."
         )
 
     code_verifier = _random_string(64)
@@ -199,24 +190,22 @@ def run_google_oauth_flow(client_id: str, client_secret: str) -> GoogleUser:
     if "code" not in callback_result:
         raise GoogleOAuthError("Sign-in timed out (120 s). Please try again.")
 
-    token_data = _exchange_code(
+    data = _exchange_via_server(
         code=callback_result["code"],
-        redirect_uri=redirect_uri,
         code_verifier=code_verifier,
+        redirect_uri=redirect_uri,
         client_id=client_id,
-        client_secret=client_secret,
+        api_base_url=api_base_url,
     )
-    access_token = token_data.get("access_token", "")
-    if not access_token:
-        raise GoogleOAuthError("No access token returned from Google.")
 
-    userinfo = _get_userinfo(access_token)
-    email = userinfo.get("email", "")
-    if not email:
-        raise GoogleOAuthError("Google did not return an email address.")
+    session_token = data.get("session_token", "")
+    if not session_token:
+        raise GoogleOAuthError("No session token returned from server.")
 
-    return GoogleUser(
-        email=email,
-        name=userinfo.get("name"),
-        sub=userinfo.get("sub", ""),
+    user = data.get("user") or {}
+    return OAuthResult(
+        session_token=session_token,
+        email=user.get("email", ""),
+        name=user.get("full_name"),
+        sub=user.get("provider_subject", ""),
     )

@@ -2026,7 +2026,7 @@ class TravelportGUI:
             self._login_status_var.set(payload.get("error", "Sign in failed."))
 
     def _start_google_oauth(self) -> None:
-        from agent_config import GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET
+        from agent_config import GOOGLE_OAUTH_CLIENT_ID, AUTH_API_ROOT
         if self._google_btn:
             self._google_btn.configure(state="disabled")
         if self._login_submit_btn:
@@ -2036,71 +2036,28 @@ class TravelportGUI:
         self._login_status_var.set("Opening Google sign-in in your browser…")
         threading.Thread(
             target=self._google_oauth_worker,
-            args=(GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET),
+            args=(GOOGLE_OAUTH_CLIENT_ID, AUTH_API_ROOT),
             daemon=True,
         ).start()
 
-    def _google_oauth_worker(self, client_id: str, client_secret: str) -> None:
-        import json as _json
-        import urllib.error as _ue
-        import urllib.request as _req
+    def _google_oauth_worker(self, client_id: str, api_base_url: str) -> None:
         try:
             from google_oauth import GoogleOAuthError, run_google_oauth_flow
-            from agent_config import AUTH_API_ROOT
-
             self.log_queue.put(("auth_status", "Completing Google sign-in…"))
-            google_user = run_google_oauth_flow(client_id, client_secret)
-
-            self.log_queue.put(("auth_status", "Creating session…"))
-            body = _json.dumps({
-                "email": google_user.email,
-                "full_name": google_user.name,
-                "auth_provider": "google",
-                "provider_subject": google_user.sub,
-            }).encode("utf-8")
-            req = _req.Request(
-                f"{AUTH_API_ROOT}/api/v1/user-auth/oauth-login",
-                data=body,
-                method="POST",
-                headers={"Content-Type": "application/json"},
-            )
-            try:
-                with _req.urlopen(req, timeout=40) as resp:
-                    data = _json.loads(resp.read().decode("utf-8"))
-            except _ue.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace").strip()
-                try:
-                    msg = _json.loads(detail).get("detail", detail)
-                except Exception:
-                    msg = detail[:200] or f"Server error {exc.code}"
-                self.log_queue.put(("auth_done", {"ok": False, "error": f"Sign-in server error: {msg}"}))
-                return
-            except Exception as exc:
-                self.log_queue.put(("auth_done", {"ok": False, "error": f"Could not reach sign-in server: {exc}"}))
-                return
-
-            token = data.get("session_token", "")
-            user = data.get("user") or {}
-            if not token:
-                self.log_queue.put(("auth_done", {"ok": False, "error": "No session token in server response."}))
-                return
+            result = run_google_oauth_flow(client_id, api_base_url)
 
             from auth_manager import KeyringUnavailableError, save_token
             try:
-                save_token(token)
+                save_token(result.session_token)
             except KeyringUnavailableError as exc:
                 self.log_queue.put(("auth_done", {"ok": False, "error": str(exc)}))
                 return
 
-            self.log_queue.put(("auth_done", {"ok": True, "user": user}))
+            self.log_queue.put(("auth_done", {"ok": True, "user": {
+                "email": result.email,
+                "full_name": result.name,
+            }}))
 
-        except _ue.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace").strip()
-            try:
-                msg = _json.loads(detail).get("detail", detail)
-            except Exception:
-                msg = detail[:200] or f"Server error {exc.code}"
-            self.log_queue.put(("auth_done", {"ok": False, "error": str(msg)}))
         except Exception as exc:
             self.log_queue.put(("auth_done", {"ok": False, "error": str(exc)}))
 
@@ -2112,8 +2069,8 @@ class TravelportGUI:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Send Feedback")
-        dialog.geometry("520x430")
-        dialog.minsize(460, 360)
+        dialog.geometry("520x460")
+        dialog.minsize(460, 400)
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.configure(bg="#f2f2f2")
@@ -2122,6 +2079,26 @@ class TravelportGUI:
         self._feedback_status_var.set("")
         self._feedback_subject_var.set("")
         self._feedback_category_var.set("bug")
+
+        # Footer pinned to bottom of dialog so buttons are always visible
+        footer = tk.Frame(dialog, bg="#f2f2f2", padx=12, pady=8)
+        footer.pack(side="bottom", fill="x")
+
+        tk.Label(
+            footer,
+            text="Delivered through the configured agent backend.",
+            bg="#f2f2f2",
+            fg="#666",
+            font=("Segoe UI", 8),
+        ).pack(side="left")
+
+        ttk.Button(footer, text="Cancel", command=self._close_feedback_dialog).pack(
+            side="right", padx=(6, 0)
+        )
+        self._feedback_submit_btn = ttk.Button(
+            footer, text="Submit", command=self._submit_feedback
+        )
+        self._feedback_submit_btn.pack(side="right")
 
         body = tk.Frame(dialog, bg="#f2f2f2", padx=12, pady=12)
         body.pack(fill="both", expand=True)
@@ -2139,7 +2116,20 @@ class TravelportGUI:
             bg="#f2f2f2",
             fg="#666",
             font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(2, 12))
+        ).pack(anchor="w", pady=(2, 4))
+
+        reply_note = (
+            "Replies will be sent to your registered email."
+            if self._user_info
+            else "Sign in so we can reply to your feedback."
+        )
+        tk.Label(
+            body,
+            text=reply_note,
+            bg="#f2f2f2",
+            fg="#2980b9",
+            font=("Segoe UI", 8, "italic"),
+        ).pack(anchor="w", pady=(0, 12))
 
         tk.Label(body, text="Type", bg="#f2f2f2", font=("Segoe UI", 9)).pack(anchor="w")
         ttk.Combobox(
@@ -2163,9 +2153,9 @@ class TravelportGUI:
             body,
             wrap="word",
             font=("Segoe UI", 9),
-            height=11,
+            height=7,
         )
-        self._feedback_message_text.pack(fill="both", expand=True, pady=(0, 8))
+        self._feedback_message_text.pack(fill="both", expand=True, pady=(0, 6))
 
         tk.Label(
             body,
@@ -2175,26 +2165,7 @@ class TravelportGUI:
             font=("Segoe UI", 8),
             anchor="w",
             justify="left",
-        ).pack(fill="x", pady=(0, 8))
-
-        footer = tk.Frame(body, bg="#f2f2f2")
-        footer.pack(fill="x")
-
-        tk.Label(
-            footer,
-            text="Delivered through the configured agent backend.",
-            bg="#f2f2f2",
-            fg="#666",
-            font=("Segoe UI", 8),
-        ).pack(side="left")
-
-        ttk.Button(footer, text="Cancel", command=self._close_feedback_dialog).pack(
-            side="right", padx=(6, 0)
-        )
-        self._feedback_submit_btn = ttk.Button(
-            footer, text="Submit", command=self._submit_feedback
-        )
-        self._feedback_submit_btn.pack(side="right")
+        ).pack(fill="x")
 
         self._feedback_message_text.focus_set()
 
@@ -2231,6 +2202,8 @@ class TravelportGUI:
             "route_filter": self.route_var.get().strip(),
             "airline_filter": self.airline_var.get().strip(),
         }
+        if self._user_info:
+            context["user_email"] = self._user_info.get("email", "")
 
         self._feedback_thread = threading.Thread(
             target=self._feedback_worker,
@@ -2266,7 +2239,9 @@ class TravelportGUI:
         if payload.get("ok"):
             self._close_feedback_dialog()
             messagebox.showinfo(
-                "Feedback Sent", "Your feedback was sent successfully to admin."
+                "Feedback Sent",
+                "Your feedback was sent successfully.\n"
+                "We'll review it and reply to your registered email if needed.",
             )
             return
 
@@ -2441,11 +2416,18 @@ class TravelportGUI:
         if result_path and os.path.exists(result_path):
             self._last_report = result_path
             self.open_btn.configure(state="normal")
-            self.status_label.configure(
-                text=f"✓  {os.path.basename(result_path)}", fg="#1d8a63"
-            )
+            is_partial = "_partial" in os.path.basename(result_path)
+            if is_partial:
+                self.status_label.configure(
+                    text=f"⚠ Partial report saved — {os.path.basename(result_path)}",
+                    fg="#e67e22",
+                )
+            else:
+                self.status_label.configure(
+                    text=f"✓  {os.path.basename(result_path)}", fg="#1d8a63"
+                )
         elif self.stop_event.is_set():
-            self.status_label.configure(text="Stopped", fg="#b73632")
+            self.status_label.configure(text="Stopped — no data captured yet", fg="#b73632")
         else:
             self.status_label.configure(text="Finished", fg="#555")
 
