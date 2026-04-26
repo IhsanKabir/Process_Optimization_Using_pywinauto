@@ -107,6 +107,31 @@ if ($Mode -eq "onedir" -and $runtimeBackupRoot -and (Test-Path $runtimeBackupRoo
 
 if ($buildExitCode -ne 0) { exit $buildExitCode }
 
+# Copy agent_config.json (secrets-free) into the output directory so the zip
+# ships with it pre-populated. Only safe keys are written — the client secret
+# is intentionally excluded because it now lives on the server.
+$agentConfigSrc = Join-Path $PSScriptRoot "agent_config.json"
+if (Test-Path $agentConfigSrc) {
+    $srcJson = Get-Content $agentConfigSrc -Raw | ConvertFrom-Json
+    $safeKeys = @("google_oauth_client_id", "api_base_url")
+    $distJson = @{}
+    foreach ($key in $safeKeys) {
+        $val = $srcJson.$key
+        if ($val) { $distJson[$key] = $val }
+    }
+    $distJsonText = $distJson | ConvertTo-Json -Depth 2
+
+    if ($Mode -eq "onedir") {
+        $agentConfigDst = Join-Path $distDir "TravelportAuto\agent_config.json"
+    } else {
+        $agentConfigDst = Join-Path $distDir "agent_config.json"
+    }
+    $distJsonText | Out-File -FilePath $agentConfigDst -Encoding utf8 -Force
+    Write-Host "  Copied agent_config.json to output folder (secrets excluded)."
+} else {
+    Write-Warning "  agent_config.json not found at repo root — skipping copy. Add it before zipping."
+}
+
 Write-Host ""
 Write-Host "=========================================="
 Write-Host "Build complete! Please find your executable here:"
@@ -114,7 +139,7 @@ Write-Host $targetExe.Replace($PSScriptRoot + "\", "")
 Write-Host "=========================================="
 Write-Host ""
 Write-Host "Notes:"
-Write-Host "  - The packaged app includes the default config from the repo."
+Write-Host "  - agent_config.json is included in the output folder automatically."
 Write-Host "  - If commands.txt is missing, the app creates a starter file on first run."
 if ($Mode -eq "onedir") {
     Write-Host "  - Copy/run the whole dist\TravelportAuto folder for best performance."
