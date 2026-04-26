@@ -283,6 +283,44 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Server-side Google OAuth code exchange (2026-04-26):**
+  - **Why:** Shipping `agent_config.json` with `google_oauth_client_secret` in the zip
+    exposes the secret to anyone who downloads it. Even though Google marks Desktop
+    app secrets as "not truly secret," an extracted secret lets anyone impersonate the
+    app's OAuth branding and burn its quota.
+  - **What changed:**
+    - New API endpoint `POST /api/v1/user-auth/google-code-exchange` added to
+      `apps/api/app/main.py` (public repo commit `e9edfa6`, auto-deployed to Cloud Run).
+      Accepts `{code, code_verifier, redirect_uri, client_id}` from desktop, exchanges
+      with Google using server-stored `GOOGLE_CLIENT_SECRET`, fetches userinfo, upserts
+      user, creates session, returns `{user, session_token, session}`.
+    - `google_oauth.py` rewritten: removed `_exchange_code()` and `_get_userinfo()`
+      (direct-to-Google calls). Added `_exchange_via_server()` which POSTs the code to
+      the API. `run_google_oauth_flow(client_id, api_base_url)` no longer takes
+      `client_secret`. Returns `OAuthResult` (replaces `GoogleUser`) with
+      `session_token` already included — no second API call needed from the GUI.
+    - `agent_config.py`: removed `_load_google_client_secret()` and
+      `GOOGLE_OAUTH_CLIENT_SECRET`. Only `GOOGLE_OAUTH_CLIENT_ID` remains on the client.
+    - `gui.py`: `_start_google_oauth` imports `AUTH_API_ROOT` instead of
+      `GOOGLE_OAUTH_CLIENT_SECRET`. `_google_oauth_worker(client_id, api_base_url)`
+      collapses from ~45 lines to ~15 — no manual HTTP to `/oauth-login` needed because
+      the server endpoint returns the session token directly.
+  - **What to do before shipping v1.5.2:**
+    1. Set `GOOGLE_CLIENT_SECRET` env var on Cloud Run:
+
+       ```sh
+       gcloud run services update aero-pulse-api \
+         --region asia-south1 \
+         --set-env-vars GOOGLE_CLIENT_SECRET=<your_secret>
+       ```
+
+    2. Remove `google_oauth_client_secret` from `agent_config.json` next to the exe.
+       The zip can now be distributed without any OAuth secret.
+    3. Verify Google Sign-In end-to-end before releasing.
+  - **Result:** The zip only needs `GOOGLE_OAUTH_CLIENT_ID` (in `agent_config.json` or
+    env var). The client secret never leaves the server. Rotation = one Cloud Run env
+    var update, no re-ship required.
+
 - **Partial report on force-stop — fare mode `StopRequested` leak fixed (2026-04-26):**
   - **Root cause:** `StopRequested` (in `smartpoint_automation.py`) extends `SystemExit`,
     not `Exception`. It was raised by `_check_stop()` inside `automation.run_command()` /
@@ -473,6 +511,24 @@ These are done and live on `main` so the next reader knows not to re-open them:
     The original asset finder only matched `.exe` so the download button showed "coming
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
+
+- **v1.5.2 release (2026-04-26):**
+  - Built via `build_app.ps1` with `VERSION = "v1.5.2"`.
+  - Primary changes:
+    1. **Server-side Google OAuth code exchange** — `client_secret` never ships in the
+       zip. Desktop sends only the auth code + PKCE verifier to the new API endpoint
+       `POST /api/v1/user-auth/google-code-exchange`; server holds the secret.
+    2. **Fare-mode StopRequested fix** — "Stopped — no data captured yet" no longer
+       appears when routes were already scraped before the user pressed Stop.
+    3. **auto-bundled `agent_config.json`** — `build_app.ps1` writes a secrets-free copy
+       (only `google_oauth_client_id`) next to the exe after every build. Users no
+       longer need to copy it manually from a previous install.
+    4. **BOM-free JSON write** — `build_app.ps1` uses
+       `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))`
+       instead of `Out-File -Encoding utf8`; PowerShell 5.1 was writing a UTF-8 BOM
+       that silently broke `json.load()` in Python, causing "Google Sign-In is not
+       configured" even with `agent_config.json` present.
+  - To publish: zip `dist\TravelportAuto`, upload to GitHub Releases as `TravelportAuto.zip`.
 
 - **v1.5.1 release (2026-04-25):**
   - Built via `build_app.ps1` with `VERSION = "v1.5.1"`.
