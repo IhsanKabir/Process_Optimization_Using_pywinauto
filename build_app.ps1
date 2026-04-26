@@ -108,7 +108,7 @@ if ($Mode -eq "onedir" -and $runtimeBackupRoot -and (Test-Path $runtimeBackupRoo
 if ($buildExitCode -ne 0) { exit $buildExitCode }
 
 # Copy agent_config.json (secrets-free) into the output directory so the zip
-# ships with it pre-populated. Only safe keys are written — the client secret
+# ships with it pre-populated. Only safe keys are written - the client secret
 # is intentionally excluded because it now lives on the server.
 $agentConfigSrc = Join-Path $PSScriptRoot "agent_config.json"
 if (Test-Path $agentConfigSrc) {
@@ -126,10 +126,10 @@ if (Test-Path $agentConfigSrc) {
     } else {
         $agentConfigDst = Join-Path $distDir "agent_config.json"
     }
-    $distJsonText | Out-File -FilePath $agentConfigDst -Encoding utf8 -Force
+    [System.IO.File]::WriteAllText($agentConfigDst, $distJsonText, [System.Text.UTF8Encoding]::new($false))
     Write-Host "  Copied agent_config.json to output folder (secrets excluded)."
 } else {
-    Write-Warning "  agent_config.json not found at repo root — skipping copy. Add it before zipping."
+    Write-Warning "  agent_config.json not found at repo root - skipping copy. Add it before zipping."
 }
 
 Write-Host ""
