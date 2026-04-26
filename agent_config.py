@@ -36,7 +36,7 @@ def _load_google_client_id() -> str:
     if os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip():
         return os.environ["GOOGLE_OAUTH_CLIENT_ID"].strip()
     try:
-        with open(DEFAULT_AGENT_CONFIG_PATH, "r", encoding="utf-8") as _f:
+        with open(DEFAULT_AGENT_CONFIG_PATH, "r", encoding="utf-8-sig") as _f:
             return str(json.load(_f).get("google_oauth_client_id", "")).strip()
     except Exception:
         return ""
@@ -68,7 +68,7 @@ def load_agent_config(config_path: str | os.PathLike | None = None) -> AgentConf
     payload = {}
 
     if path.exists():
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             payload = json.load(f)
 
     api_base_url = (
