@@ -512,6 +512,25 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.4 fix (2026-04-26) — focus-independent clipboard read for locked-down PCs:**
+  - **Problem:** On work laptops where the user can't run TravelportAuto as
+    Administrator, the AttachThreadInput fix (v1.5.3) wasn't always sufficient —
+    SetForegroundWindow could still be silently blocked, causing the keystroke
+    Ctrl+A/Ctrl+C path to send keys to the wrong window (or nowhere). User
+    observation: "I haven't seen selecting all in the terminal."
+  - **Fix:** Added `_copy_via_messages()` in `smartpoint_automation.py` that uses
+    `SendMessage(EM_SETSEL, 0, -1)` + `SendMessage(WM_COPY, 0, 0)` directly to
+    the SmartRichTextBox HWND. This is **focus-independent** — works regardless
+    of whether Smartpoint is the foreground window, regardless of UAC elevation,
+    and requires no admin rights on either side.
+  - Wired in three places inside `_copy_terminal_text`:
+    1. When the focus check fails (instead of returning empty immediately).
+    2. After the heavy fallback can't confirm foreground.
+    3. As a final safety net before deselect, if every keystroke path returned
+       empty even with focus reportedly working.
+  - Falls back gracefully if the SmartRichTextBox doesn't expose a real Win32
+    HWND or doesn't respond to EM_SETSEL/WM_COPY.
+
 - **v1.5.3 fix (2026-04-26) — multi-PC focus failure:**
   - **Problem:** On PCs where Smartpoint runs elevated (Admin) and TravelportAuto does
     not, `SetForegroundWindow` was silently blocked 100% of the time by Windows UIPI.

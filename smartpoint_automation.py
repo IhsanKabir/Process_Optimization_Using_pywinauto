@@ -201,6 +201,7 @@ class SmartpointAutomation:
         self.stop_event = stop_event
         self.logger = logging.getLogger("travelport.automation")
         self._cached_terminal_rect = None  # Cache for SmartRichTextBox rect
+        self._cached_terminal_hwnd = None  # Cache for SmartRichTextBox Win32 HWND
         self._last_focus_time = 0.0  # Timestamp of last successful focus()
         self._last_terminal_text = ""  # Cache for deduplicating reads
         self._cal = _calibration_mod.load_calibration()
@@ -591,6 +592,60 @@ class SmartpointAutomation:
         _pw_kb.send_keys("^c")
         self._sleep(constants.COPY_DELAY)
 
+    def _get_terminal_hwnd(self):
+        """Return the Win32 HWND of the SmartRichTextBox terminal control.
+
+        Returns None if the control isn't a real Win32 window (e.g. a XAML
+        virtual element) or can't be located. Cached after first lookup.
+        """
+        if self._cached_terminal_hwnd:
+            return self._cached_terminal_hwnd
+        if not self.window:
+            return None
+        try:
+            for doc in self.window.descendants(control_type="Document"):
+                try:
+                    if doc.element_info.automation_id == TERMINAL_AUTOMATION_ID:
+                        h = doc.element_info.handle
+                        if h:
+                            self._cached_terminal_hwnd = int(h)
+                            return self._cached_terminal_hwnd
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return None
+
+    def _copy_via_messages(self) -> str:
+        """Focus-independent clipboard read.
+
+        Sends EM_SETSEL + WM_COPY directly to the SmartRichTextBox HWND.
+        Works regardless of whether Smartpoint has foreground focus and
+        regardless of UAC/UIPI elevation differences — needed on locked-down
+        work laptops where the user can't run TravelportAuto as Administrator.
+
+        Returns the captured text, or "" if the control couldn't be found
+        or didn't respond to the messages.
+        """
+        target_hwnd = self._get_terminal_hwnd()
+        if not target_hwnd:
+            return ""
+        try:
+            user32 = ctypes.windll.user32
+            EM_SETSEL = 0x00B1
+            WM_COPY = 0x0301
+
+            pyperclip.copy("")
+            # Select all: start=0, end=-1 means "to the very end"
+            user32.SendMessageW(target_hwnd, EM_SETSEL, 0, -1)
+            self._sleep(0.05)
+            user32.SendMessageW(target_hwnd, WM_COPY, 0, 0)
+            self._sleep(max(0.15, constants.COPY_DELAY))
+            return pyperclip.paste() or ""
+        except Exception as exc:
+            self.logger.debug(f"      [COPY] WM_COPY path failed: {exc}")
+            return ""
+
     def _get_terminal_rect(self):
         """
         Get the bounding rectangle of the main terminal text area (SmartRichTextBox).
@@ -745,8 +800,21 @@ class SmartpointAutomation:
                 self._sleep(constants.CLICK_DELAY)
 
             if not self._is_window_foreground():
+                # Focus failed — common on locked-down work laptops where
+                # SetForegroundWindow is blocked by UIPI. Fall back to
+                # focus-independent WM_COPY messaging.
                 self.logger.warning(
-                    "      [FOCUS] Skipping clipboard copy because Smartpoint is still not foreground."
+                    "      [FOCUS] Smartpoint not foreground; trying focus-independent WM_COPY path."
+                )
+                text = self._copy_via_messages()
+                if text.strip():
+                    self.logger.info(
+                        "      [COPY] Captured terminal text via WM_COPY (focus-independent path)."
+                    )
+                    self._last_terminal_text = text
+                    return text
+                self.logger.warning(
+                    "      [COPY] WM_COPY path also returned empty — clipboard remains empty."
                 )
                 return ""
 
@@ -784,8 +852,13 @@ class SmartpointAutomation:
                     text = _copy_once(wait_after_copy=max(0.15, constants.COPY_DELAY * 2))
                 else:
                     self.logger.warning(
-                        "      [FOCUS] Heavy clipboard fallback could not confirm foreground."
+                        "      [FOCUS] Heavy clipboard fallback could not confirm foreground; trying WM_COPY."
                     )
+                    text = self._copy_via_messages()
+                    if text.strip():
+                        self.logger.info(
+                            "      [COPY] Heavy fallback recovered text via WM_COPY."
+                        )
 
         except Exception as exc:
             if _failsafe_exc and isinstance(exc, _failsafe_exc):
@@ -808,6 +881,16 @@ class SmartpointAutomation:
                     text = ""
             else:
                 raise
+
+        # Final safety net: if every keystroke path returned empty, try the
+        # focus-independent WM_COPY path as a last resort.
+        if not text or not text.strip():
+            fallback = self._copy_via_messages()
+            if fallback.strip():
+                self.logger.info(
+                    "      [COPY] Final fallback recovered text via WM_COPY."
+                )
+                text = fallback
 
         # Click once to deselect
         pyautogui.press("escape")
