@@ -1941,7 +1941,11 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info(f"  [CHECKPOINT] Checkpoint mode enabled")
             logger.info(f"  [CHECKPOINT] Session: {checkpoint_mgr.session_name}")
 
-    def _stop_run(message: str, partial_data: dict | None = None):
+    def _stop_run(
+        message: str,
+        partial_data: dict | None = None,
+        partial_penalty: list | None = None,
+    ):
         logger.info(message)
         if checkpoint_mgr:
             checkpoint_mgr.save_checkpoint()
@@ -1949,16 +1953,31 @@ def main(prebuilt_args=None, stop_event=None):
                 f"  [CHECKPOINT] Final checkpoint saved: {len(checkpoint_mgr.completed_commands)} completed"
             )
 
-        # Generate partial report with whatever data was collected
+        timestamp_full = datetime.now().strftime("%Y-%m-%d_%H%M")
+
+        # Penalty partial report
+        if partial_penalty:
+            try:
+                partial_path = os.path.join(
+                    REPORTS_DIR, f"penalty_report_{timestamp_full}_partial.xlsx"
+                )
+                result = generate_penalty_report(partial_penalty, partial_path)
+                logger.info(f"  [PARTIAL] Partial penalty report saved: {result}")
+                return result
+            except Exception as exc:
+                logger.warning(f"  [PARTIAL] Could not generate partial penalty report: {exc}")
+
+        # Fare / tax partial report
         if partial_data:
             try:
-                timestamp_full = datetime.now().strftime("%Y-%m-%d_%H%M")
+                import traceback as _tb
+                logger.info(f"  [PARTIAL] Processing {len(partial_data)} route(s)...")
+                os.makedirs(REPORTS_DIR, exist_ok=True)
                 if getattr(args, "tax", False):
                     partial_path = os.path.join(
                         REPORTS_DIR, f"tax_report_{timestamp_full}_partial.xlsx"
                     )
                     from tax_report import generate_tax_report
-
                     result = generate_tax_report(partial_data, partial_path, None, config)
                 else:
                     partial_path = os.path.join(
@@ -1971,7 +1990,10 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(f"  [PARTIAL] Partial report saved: {result}")
                 return result
             except Exception as exc:
-                logger.warning(f"  [PARTIAL] Could not generate partial report: {exc}")
+                logger.warning(
+                    f"  [PARTIAL] Could not generate partial report: {exc}\n"
+                    + _tb.format_exc()
+                )
 
         return None
 
@@ -2100,13 +2122,22 @@ def main(prebuilt_args=None, stop_event=None):
                     except Exception as e:
                         logger.warning(f"    Could not save penalty backup: {e}")
 
-            automation.show_completion_signal()
+            try:
+                automation.show_completion_signal()
+            except Exception as _sig_err:
+                logger.debug(f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}")
             logger.info("")
         except StopRequested:
-            return _stop_run("  [STOP] Stop requested - penalty extraction stopped.")
+            return _stop_run(
+                "  [STOP] Stop requested - penalty extraction stopped.",
+                partial_penalty=penalty_records if penalty_records else None,
+            )
 
         if _stop and _stop.is_set():
-            return _stop_run("  [STOP] Stop requested - skipping penalty report generation.")
+            return _stop_run(
+                "  [STOP] Stop requested - skipping penalty report generation.",
+                partial_penalty=penalty_records if penalty_records else None,
+            )
 
         logger.info("[3/3] Generating penalty report...")
         timestamp_full = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -2261,7 +2292,10 @@ def main(prebuilt_args=None, stop_event=None):
                         "_country": country_code,
                     }
 
-                automation.show_completion_signal()
+                try:
+                    automation.show_completion_signal()
+                except Exception as _sig_err:
+                    logger.debug(f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}")
             except StopRequested:
                 return _stop_run("  [STOP] Stop requested - tax extraction stopped.", partial_data=tax_data if tax_data else None)
         else:
@@ -2283,7 +2317,7 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.error("  No commands found to auto-run.")
                 sys.exit(1)
 
-            from smartpoint_automation import SmartpointAutomation
+            from smartpoint_automation import SmartpointAutomation, StopRequested
 
             automation = SmartpointAutomation(stop_event=_stop)
 
@@ -2365,311 +2399,315 @@ def main(prebuilt_args=None, stop_event=None):
                 if _stop and _stop.is_set():
                     logger.info("  [STOP] Stop requested - finishing after this point.")
                     break
-                cmd_str = cmd["command"]
+                try:
+                    cmd_str = cmd["command"]
 
-                # Skip if already completed (double-check in case of concurrent runs)
-                if checkpoint_mgr and checkpoint_mgr.is_completed(cmd_str):
-                    continue
+                    # Skip if already completed (double-check in case of concurrent runs)
+                    if checkpoint_mgr and checkpoint_mgr.is_completed(cmd_str):
+                        continue
 
-                commands_attempted += 1
+                    commands_attempted += 1
 
-                # Only log if not using tqdm
-                if not use_tqdm:
-                    logger.info(f"  [{i}/{fare_total}] {cmd_str}")
-                    _log_eta(
-                        logger,
-                        fare_loop_start,
-                        i,
-                        fare_total,
-                        label="fare commands",
-                        every=5,
-                    )
-
-                terminal_text = ""
-                file_key = generate_file_key(cmd)
-                fd_no_fares = False
-
-                # -- FD EXTRACTION --
-                if not args.only_yq and not args.only_currency:
-                    for attempt in range(1, MAX_RETRIES + 1):
-                        try:
-                            terminal_text = automation.run_command(cmd["command"])
-                            if _fd_output_is_no_fares(terminal_text):
-                                fd_no_fares = True
-                                logger.info(
-                                    "    [SKIP] Smartpoint returned no fares; not retrying this FD command."
-                                )
-                                break
-                            if terminal_text and len(terminal_text.strip()) > 50:
-                                break
-                            logger.warning(
-                                f"    Attempt {attempt}: insufficient data ({len(terminal_text)} chars)"
-                            )
-                        except Exception as e:
-                            logger.warning(f"    Attempt {attempt} failed: {e}")
-
-                        if attempt < MAX_RETRIES:
-                            delay = constants.RETRY_DELAY
-                            logger.info(f"    Retrying in {delay}s...")
-                            _time.sleep(delay)
-                            automation.refresh_terminal()
-
-                    if terminal_text and len(terminal_text.strip()) > 50:
-                        raw_texts[file_key] = terminal_text
-                        logger.info(
-                            f"    [OK] Fare data captured ({len(terminal_text)} chars)"
+                    # Only log if not using tqdm
+                    if not use_tqdm:
+                        logger.info(f"  [{i}/{fare_total}] {cmd_str}")
+                        _log_eta(
+                            logger,
+                            fare_loop_start,
+                            i,
+                            fare_total,
+                            label="fare commands",
+                            every=5,
                         )
 
-                        backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
-                        os.makedirs(os.path.dirname(backup_path) or ".", exist_ok=True)
-                        try:
-                            with open(backup_path, "w", encoding="utf-8") as f:
-                                f.write(terminal_text)
-                            logger.debug(f"    Backup saved: {backup_path}")
-                        except Exception as e:
-                            logger.warning(f"    Could not save backup: {e}")
-                    elif fd_no_fares:
-                        logger.info(
-                            f"    [SKIP] No fare rows available for {cmd['command']}."
-                        )
-                    else:
-                        failed_commands.append(cmd["command"])
-                        logger.error(
-                            f"    [FAILED] FAILED after {MAX_RETRIES} attempts: {cmd['command']}"
-                        )
-                        logger.error(
-                            f"    Final data length: {len(terminal_text) if terminal_text else 0} chars"
-                        )
-                        logger.error(f"    This command will be skipped in the report")
+                    terminal_text = ""
+                    file_key = generate_file_key(cmd)
+                    fd_no_fares = False
 
-                        # Mark as failed in checkpoint
-                        if checkpoint_mgr:
-                            checkpoint_mgr.mark_failed(cmd_str)
-                else:
-                    logger.info(
-                        "    [SKIP] Skipping FD extraction (--only-yq/--only-currency)"
-                    )
-
-                # -- FS EXTRACTION --
-                if _should_run_fs_extraction(args, terminal_text):
-                    base_cmd = cmd["command"].strip()
-                    if (
-                        len(base_cmd) >= 11
-                        and base_cmd.startswith("FD")
-                        and "/" in base_cmd
-                        and len(base_cmd.split("/")[0]) == 8
-                    ):
-                        src = base_cmd[2:5]
-                        dst = base_cmd[5:8]
-                        airline = base_cmd.split("/")[1][:2]
-
-                        fs_expanded = ""
-                        # Two-window fallback: 7 consecutive days ~1 month out,
-                        # then 7 more ~3 months out if the first window yields
-                        # no pure-airline option.
-                        fs_date_offsets: list[int] = []
-                        for window_start in (
-                            FS_DATE_OFFSET_START,
-                            FS_DATE_FALLBACK_OFFSET,
-                        ):
-                            fs_date_offsets.extend(
-                                range(
-                                    window_start,
-                                    window_start + FS_DATE_WINDOW_DAYS,
-                                    FS_DATE_STEP,
-                                )
-                            )
-
-                        for fs_date_offset in fs_date_offsets:
-                            date_str = (
-                                (datetime.now() + timedelta(days=fs_date_offset))
-                                .strftime("%d%b")
-                                .upper()
-                            )
-                            logger.info(
-                                f"    [FS Checkout] Extracting tax details for {src}-{dst} on {date_str}..."
-                            )
-
-                            fs_result = automation.run_fs_command(
-                                src, dst, date_str, airline
-                            )
-                            fs_no_results = _fs_output_is_no_results(fs_result)
-
-                            # Freshness check: poll until the terminal shows the
-                            # expected date, rather than sleeping a fixed 1.5s.
-                            if (
-                                not fs_no_results
-                                and date_str.upper() not in fs_result.upper()
-                            ):
+                    # -- FD EXTRACTION --
+                    if not args.only_yq and not args.only_currency:
+                        for attempt in range(1, MAX_RETRIES + 1):
+                            try:
+                                terminal_text = automation.run_command(cmd["command"])
+                                if _fd_output_is_no_fares(terminal_text):
+                                    fd_no_fares = True
+                                    logger.info(
+                                        "    [SKIP] Smartpoint returned no fares; not retrying this FD command."
+                                    )
+                                    break
+                                if terminal_text and len(terminal_text.strip()) > 50:
+                                    break
                                 logger.warning(
-                                    f"      [!] Screen hasn't updated to {date_str} yet, polling..."
+                                    f"    Attempt {attempt}: insufficient data ({len(terminal_text)} chars)"
                                 )
-                                fs_result = automation._wait_for_response(
-                                    fs_result,
-                                    timeout=constants.RETRY_DELAY * 2,
-                                    min_wait=0.2,
-                                    poll_interval=0.15,
-                                    stability_checks=1,
+                            except Exception as e:
+                                logger.warning(f"    Attempt {attempt} failed: {e}")
+
+                            if attempt < MAX_RETRIES:
+                                delay = constants.RETRY_DELAY
+                                logger.info(f"    Retrying in {delay}s...")
+                                _time.sleep(delay)
+                                automation.refresh_terminal()
+
+                        if terminal_text and len(terminal_text.strip()) > 50:
+                            raw_texts[file_key] = terminal_text
+                            logger.info(
+                                f"    [OK] Fare data captured ({len(terminal_text)} chars)"
+                            )
+
+                            backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
+                            os.makedirs(os.path.dirname(backup_path) or ".", exist_ok=True)
+                            try:
+                                with open(backup_path, "w", encoding="utf-8") as f:
+                                    f.write(terminal_text)
+                                logger.debug(f"    Backup saved: {backup_path}")
+                            except Exception as e:
+                                logger.warning(f"    Could not save backup: {e}")
+                        elif fd_no_fares:
+                            logger.info(
+                                f"    [SKIP] No fare rows available for {cmd['command']}."
+                            )
+                        else:
+                            failed_commands.append(cmd["command"])
+                            logger.error(
+                                f"    [FAILED] FAILED after {MAX_RETRIES} attempts: {cmd['command']}"
+                            )
+                            logger.error(
+                                f"    Final data length: {len(terminal_text) if terminal_text else 0} chars"
+                            )
+                            logger.error(f"    This command will be skipped in the report")
+
+                            # Mark as failed in checkpoint
+                            if checkpoint_mgr:
+                                checkpoint_mgr.mark_failed(cmd_str)
+                    else:
+                        logger.info(
+                            "    [SKIP] Skipping FD extraction (--only-yq/--only-currency)"
+                        )
+
+                    # -- FS EXTRACTION --
+                    if _should_run_fs_extraction(args, terminal_text):
+                        base_cmd = cmd["command"].strip()
+                        if (
+                            len(base_cmd) >= 11
+                            and base_cmd.startswith("FD")
+                            and "/" in base_cmd
+                            and len(base_cmd.split("/")[0]) == 8
+                        ):
+                            src = base_cmd[2:5]
+                            dst = base_cmd[5:8]
+                            airline = base_cmd.split("/")[1][:2]
+
+                            fs_expanded = ""
+                            # Two-window fallback: 7 consecutive days ~1 month out,
+                            # then 7 more ~3 months out if the first window yields
+                            # no pure-airline option.
+                            fs_date_offsets: list[int] = []
+                            for window_start in (
+                                FS_DATE_OFFSET_START,
+                                FS_DATE_FALLBACK_OFFSET,
+                            ):
+                                fs_date_offsets.extend(
+                                    range(
+                                        window_start,
+                                        window_start + FS_DATE_WINDOW_DAYS,
+                                        FS_DATE_STEP,
+                                    )
+                                )
+
+                            for fs_date_offset in fs_date_offsets:
+                                date_str = (
+                                    (datetime.now() + timedelta(days=fs_date_offset))
+                                    .strftime("%d%b")
+                                    .upper()
+                                )
+                                logger.info(
+                                    f"    [FS Checkout] Extracting tax details for {src}-{dst} on {date_str}..."
+                                )
+
+                                fs_result = automation.run_fs_command(
+                                    src, dst, date_str, airline
                                 )
                                 fs_no_results = _fs_output_is_no_results(fs_result)
-                            elif fs_no_results:
-                                logger.warning(
-                                    f"      [!] FS returned no usable result for {date_str}; not polling this screen."
-                                )
 
-                            # Log raw results for diagnostics
-                            with open(os.path.join(LOG_DIR, "fs_debug.log"), "a", encoding="utf-8") as f:
-                                f.write(
-                                    f"\n--- {date_str} {src}-{dst} /{airline} ---\n"
-                                )
-                                f.write(fs_result)
-                                f.write("\n" + "=" * 50 + "\n")
-
-                            current_fs_page = fs_result
-                            target_option_index = None
-                            target_option_number = None
-                            fs_page_number = 1
-                            max_fs_pages = 5
-                            rechecked_current_fs_page = False
-
-                            while True:
-                                (
-                                    target_option_index,
-                                    target_option_number,
-                                    option_count,
-                                ) = _find_pure_airline_option_in_fs_page(
-                                    current_fs_page, airline
-                                )
-
-                                logger.info(
-                                    f"      [DEBUG] Parsing {option_count} options for {airline} on FS page {fs_page_number}..."
-                                )
-
-                                if target_option_index is not None:
-                                    logger.info(
-                                        f"      [OK] Pure {airline} itinerary found in Option {target_option_number} on FS page {fs_page_number}."
-                                    )
-                                    fs_result = current_fs_page
-                                    break
-
+                                # Freshness check: poll until the terminal shows the
+                                # expected date, rather than sleeping a fixed 1.5s.
                                 if (
-                                    not rechecked_current_fs_page
-                                    and not _fs_output_is_no_results(current_fs_page)
+                                    not fs_no_results
+                                    and date_str.upper() not in fs_result.upper()
                                 ):
-                                    settled_fs_page = (
-                                        automation._wait_for_stable_screen(
-                                            max_polls=4, interval=0.25
-                                        )
+                                    logger.warning(
+                                        f"      [!] Screen hasn't updated to {date_str} yet, polling..."
                                     )
-                                    rechecked_current_fs_page = True
+                                    fs_result = automation._wait_for_response(
+                                        fs_result,
+                                        timeout=constants.RETRY_DELAY * 2,
+                                        min_wait=0.2,
+                                        poll_interval=0.15,
+                                        stability_checks=1,
+                                    )
+                                    fs_no_results = _fs_output_is_no_results(fs_result)
+                                elif fs_no_results:
+                                    logger.warning(
+                                        f"      [!] FS returned no usable result for {date_str}; not polling this screen."
+                                    )
 
-                                    if _should_recheck_same_fs_page(
-                                        current_fs_page, settled_fs_page, airline
-                                    ):
+                                # Log raw results for diagnostics
+                                with open(os.path.join(LOG_DIR, "fs_debug.log"), "a", encoding="utf-8") as f:
+                                    f.write(
+                                        f"\n--- {date_str} {src}-{dst} /{airline} ---\n"
+                                    )
+                                    f.write(fs_result)
+                                    f.write("\n" + "=" * 50 + "\n")
+
+                                current_fs_page = fs_result
+                                target_option_index = None
+                                target_option_number = None
+                                fs_page_number = 1
+                                max_fs_pages = 5
+                                rechecked_current_fs_page = False
+
+                                while True:
+                                    (
+                                        target_option_index,
+                                        target_option_number,
+                                        option_count,
+                                    ) = _find_pure_airline_option_in_fs_page(
+                                        current_fs_page, airline
+                                    )
+
+                                    logger.info(
+                                        f"      [DEBUG] Parsing {option_count} options for {airline} on FS page {fs_page_number}..."
+                                    )
+
+                                    if target_option_index is not None:
                                         logger.info(
-                                            f"      [DEBUG] Rechecking FS page {fs_page_number} for {airline} after additional settle..."
+                                            f"      [OK] Pure {airline} itinerary found in Option {target_option_number} on FS page {fs_page_number}."
                                         )
-                                        current_fs_page = settled_fs_page
-                                        continue
+                                        fs_result = current_fs_page
+                                        break
 
-                                if option_count == 0:
-                                    if _fs_output_is_no_results(current_fs_page):
+                                    if (
+                                        not rechecked_current_fs_page
+                                        and not _fs_output_is_no_results(current_fs_page)
+                                    ):
+                                        settled_fs_page = (
+                                            automation._wait_for_stable_screen(
+                                                max_polls=4, interval=0.25
+                                            )
+                                        )
+                                        rechecked_current_fs_page = True
+
+                                        if _should_recheck_same_fs_page(
+                                            current_fs_page, settled_fs_page, airline
+                                        ):
+                                            logger.info(
+                                                f"      [DEBUG] Rechecking FS page {fs_page_number} for {airline} after additional settle..."
+                                            )
+                                            current_fs_page = settled_fs_page
+                                            continue
+
+                                    if option_count == 0:
+                                        if _fs_output_is_no_results(current_fs_page):
+                                            logger.warning(
+                                                f"      [!] No valid FS results for {date_str}. Trying next date..."
+                                            )
+                                            break
+
                                         logger.warning(
-                                            f"      [!] No valid FS results for {date_str}. Trying next date..."
+                                            f"      [!] Waiting for terminal content (offset {fs_date_offset})..."
                                         )
                                         break
 
-                                    logger.warning(
-                                        f"      [!] Waiting for terminal content (offset {fs_date_offset})..."
-                                    )
-                                    break
+                                    if (
+                                        fs_page_number >= max_fs_pages
+                                        or automation._has_end_signal(current_fs_page)
+                                    ):
+                                        logger.warning(
+                                            f"      [!] No pure {airline} options found on {date_str} after {fs_page_number} FS page(s)."
+                                        )
+                                        break
 
-                                if (
-                                    fs_page_number >= max_fs_pages
-                                    or automation._has_end_signal(current_fs_page)
-                                ):
-                                    logger.warning(
-                                        f"      [!] No pure {airline} options found on {date_str} after {fs_page_number} FS page(s)."
+                                    logger.info(
+                                        f"      [DEBUG] No pure {airline} option on FS page {fs_page_number}; checking next FS page on the same date..."
                                     )
-                                    break
 
-                                logger.info(
-                                    f"      [DEBUG] No pure {airline} option on FS page {fs_page_number}; checking next FS page on the same date..."
+                                    if automation.click_more_prompt_link(current_fs_page):
+                                        next_fs_page = automation._wait_for_response(
+                                            current_fs_page,
+                                            timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
+                                            min_wait=0.0,
+                                            stability_checks=1,
+                                        )
+                                        next_fs_page = automation._wait_for_stable_screen(
+                                            max_polls=3, interval=0.2
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"      [!] More Flights was not clickable on {date_str}; staying off MD and trying next date."
+                                        )
+                                        break
+
+                                    if (
+                                        not next_fs_page
+                                        or automation._has_invalid(next_fs_page)
+                                        or next_fs_page.strip() == current_fs_page.strip()
+                                    ):
+                                        logger.warning(
+                                            f"      [!] Could not advance FS pagination on {date_str}; trying next date."
+                                        )
+                                        break
+
+                                    current_fs_page = next_fs_page
+                                    fs_page_number += 1
+                                    rechecked_current_fs_page = False
+
+                                if target_option_index is None:
+                                    _time.sleep(0.5)
+                                    continue
+
+                                # Click the D button using text-to-coordinate mapping
+                                fs_expanded = automation.click_d_button(
+                                    target_option_index, fs_result
                                 )
 
-                                if automation.click_more_prompt_link(current_fs_page):
-                                    next_fs_page = automation._wait_for_response(
-                                        current_fs_page,
-                                        timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
-                                        min_wait=0.0,
-                                        stability_checks=1,
-                                    )
-                                    next_fs_page = automation._wait_for_stable_screen(
-                                        max_polls=3, interval=0.2
+                                # Validate: accept both classic fare/tax lines and airline-
+                                # specific detail screens that still parse into usable tax data.
+                                if fs_expanded and looks_like_fs_tax_breakdown(fs_expanded):
+                                    logger.info(
+                                        f"      [OK] Tax breakdown extracted via D-click"
                                     )
                                 else:
                                     logger.warning(
-                                        f"      [!] More Flights was not clickable on {date_str}; staying off MD and trying next date."
+                                        f"      [!] D-click did not return expected tax data."
                                     )
-                                    break
+                                    fs_expanded = ""
+                                break  # Exit the date-stepping for loop
 
-                                if (
-                                    not next_fs_page
-                                    or automation._has_invalid(next_fs_page)
-                                    or next_fs_page.strip() == current_fs_page.strip()
-                                ):
-                                    logger.warning(
-                                        f"      [!] Could not advance FS pagination on {date_str}; trying next date."
-                                    )
-                                    break
-
-                                current_fs_page = next_fs_page
-                                fs_page_number += 1
-                                rechecked_current_fs_page = False
-
-                            if target_option_index is None:
-                                _time.sleep(0.5)
-                                continue
-
-                            # Click the D button using text-to-coordinate mapping
-                            fs_expanded = automation.click_d_button(
-                                target_option_index, fs_result
-                            )
-
-                            # Validate: accept both classic fare/tax lines and airline-
-                            # specific detail screens that still parse into usable tax data.
-                            if fs_expanded and looks_like_fs_tax_breakdown(fs_expanded):
-                                logger.info(
-                                    f"      [OK] Tax breakdown extracted via D-click"
+                            if fs_expanded and len(fs_expanded.strip()) > 50:
+                                raw_fs_texts[file_key] = fs_expanded
+                                fs_backup_path = os.path.join(
+                                    RAW_DATA_DIR, f"{file_key}_FS.txt"
                                 )
-                            else:
-                                logger.warning(
-                                    f"      [!] D-click did not return expected tax data."
-                                )
-                                fs_expanded = ""
-                            break  # Exit the date-stepping for loop
+                                try:
+                                    with open(fs_backup_path, "w", encoding="utf-8") as f:
+                                        f.write(fs_expanded)
+                                except Exception:
+                                    pass
+                    else:
+                        logger.info(
+                            "    [SKIP] Skipping FS extraction because FD returned no fare data."
+                        )
 
-                        if fs_expanded and len(fs_expanded.strip()) > 50:
-                            raw_fs_texts[file_key] = fs_expanded
-                            fs_backup_path = os.path.join(
-                                RAW_DATA_DIR, f"{file_key}_FS.txt"
-                            )
-                            try:
-                                with open(fs_backup_path, "w", encoding="utf-8") as f:
-                                    f.write(fs_expanded)
-                            except Exception:
-                                pass
-                else:
-                    logger.info(
-                        "    [SKIP] Skipping FS extraction because FD returned no fare data."
-                    )
-
-                # Mark command as completed and save checkpoint
-                if checkpoint_mgr and cmd_str not in failed_commands:
-                    checkpoint_mgr.mark_completed(cmd_str)
-                    # Save checkpoint every 10 commands to avoid excessive I/O
-                    if len(checkpoint_mgr.completed_commands) % 10 == 0:
-                        checkpoint_mgr.save_checkpoint()
+                    # Mark command as completed and save checkpoint
+                    if checkpoint_mgr and cmd_str not in failed_commands:
+                        checkpoint_mgr.mark_completed(cmd_str)
+                        # Save checkpoint every 10 commands to avoid excessive I/O
+                        if len(checkpoint_mgr.completed_commands) % 10 == 0:
+                            checkpoint_mgr.save_checkpoint()
+                except StopRequested:
+                    logger.info("  [STOP] Stop requested mid-iteration - finishing after this point.")
+                    break
 
             # Final checkpoint save
             if checkpoint_mgr:
@@ -2748,7 +2786,10 @@ def main(prebuilt_args=None, stop_event=None):
 
                         ftax_data[acode] = {"taxes": airport_tax_details}
 
-            automation.show_completion_signal()
+            try:
+                automation.show_completion_signal()
+            except Exception as _sig_err:
+                logger.debug(f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}")
 
             # Show execution summary
             total_commands = len(commands)
@@ -2796,16 +2837,22 @@ def main(prebuilt_args=None, stop_event=None):
 
         # Parse Fares
         logger.info("[3/4] Parsing fare and tax data...")
+        # If stop was already requested before parsing, do NOT forward stop_event —
+        # extraction is done and we want to process every captured file_key so the
+        # partial report contains all the data that was scraped.  Forwarding stop_event
+        # here would cause process_route_data to break on the very first iteration and
+        # return an empty dict, producing no partial report.
+        _parse_stop = None if (_stop and _stop.is_set()) else _stop
         all_route_data = process_route_data(
             raw_texts,
             raw_fs_texts,
             config,
             enable_validation,
             show_progress=use_tqdm,
-            stop_event=_stop,
+            stop_event=_parse_stop,
         )
         if _stop and _stop.is_set():
-            return _stop_run("  [STOP] Stop requested - parsing stopped.", partial_data=all_route_data)
+            return _stop_run("  [STOP] Stop requested - saving partial report.", partial_data=all_route_data)
         if not all_route_data:
             logger.error("  No fare data could be parsed.")
             sys.exit(1)

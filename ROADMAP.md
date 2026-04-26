@@ -18,7 +18,7 @@ purpose so the current release can ship.
 **Two repos, three deploys:**
 
 | Repo / branch | Deploys to | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `IhsanKabir/Process_Optimization_Using_pywinauto` (this repo) → `main` | GitHub Releases (`TravelportAuto.exe`) | Desktop build via `build_app.ps1`. Latest live: `1.4.0` (2026-04-13). |
 | `IhsanKabir/Aviation-Inventory-Pricing-Intelligence-Using-CatBoost-LightGBM-MLP` → `master` | **Cloud Run API + Vercel web** | Live backend + web UI. This is the only branch that ships. |
 | Same repo → `main` | **Nothing. Orphaned.** | Force-push target of `.github/workflows/mirror-aviation-web.yml` in this repo. Has no runnable app; deploy workflows only trigger on `master`. |
@@ -77,7 +77,7 @@ or are deferred pending demand evidence. See Item 3.
 **Work (assumes bearer token; adapt 2.1/2.5 if it's cookies):**
 
 | Step | Where | Change |
-|---|---|---|
+| --- | --- | --- |
 | 2.1 | This repo — new `auth_manager.py` | Wrap `keyring`. Functions: `save_token(token: str)`, `get_token() -> str \| None`, `clear_token()`. Service name: `"TravelportAuto"`, username: `"user_token"`. |
 | 2.2 | This repo — [TravelportAuto.spec](TravelportAuto.spec) | Add `'keyring.backends.Windows'` and `'win32ctypes.pywin32.pywintypes'` to `hiddenimports`. **Packaging risk verified:** without these, `keyring` silently uses in-memory backend in the exe and tokens do not persist across runs. |
 | 2.3 | This repo — [gui.py](gui.py) | First-run dialog: email + password fields, button → `POST /api/v1/user-auth/login`. On success, save token to keyring. On 401, show server message. Show current user (from `/me`) in status bar. Menu: "Sign out" clears keyring. |
@@ -111,7 +111,7 @@ or are deferred pending demand evidence. See Item 3.
 **Work (license-key path recommended for a 1–100 user niche):**
 
 | Step | Where | Change |
-|---|---|---|
+| --- | --- | --- |
 | 3.1 | Public repo `master` | `licenses` table (BigQuery or whichever relational store `user-auth` already uses — check first). Columns: `user_id`, `plan`, `valid_until`, `device_limit`, `status`. |
 | 3.2 | Public repo `master` | `GET /api/v1/entitlements` — returns signed JWT (`{plan, quotas, exp=24h}`). Desktop caches until `exp`. |
 | 3.3 | Public repo `master` | `POST /api/v1/usage` — batched counter uploads from desktop. |
@@ -133,16 +133,14 @@ or are deferred pending demand evidence. See Item 3.
 
 ### Recommended sequence (revised 2026-04-25)
 
-**Items 1 and 6 are fully shipped.** Remaining work:
+**Items 1, 2, and 6 are fully shipped.**
 
 **Step 0 (one question):** Is paid-tier demand validated?
 
-- **Not validated** → Item 2 only this quarter. Skip Item 3. Usage telemetry is already piggybacking on feedback payloads — let it run a quarter.
-- **Validated** → Items 2 + 3, sequentially.
-
-**Items 1, 2, and 6 are fully shipped.**
-
-**Sprint after (only if demand validated):** Item 3 skeleton — entitlements endpoint, usage batching, run-start gating. No Stripe.
+- **Not validated** → Let usage telemetry run a quarter (already piggybacking on feedback
+  payloads). Revisit Item 3 when there is evidence of willingness-to-pay.
+- **Validated** → Item 3, sequentially: entitlements endpoint, usage batching, run-start
+  gating. No Stripe; license-key path recommended for 1–100 user niche.
 
 **Item 1.10 done:** Alert policy `618920956491326622` is live in Cloud Monitoring.
 
@@ -150,7 +148,7 @@ or are deferred pending demand evidence. See Item 3.
 
 ### 6. Auto-generate downloads page from GitHub Releases
 
-**Status:** Deferred — unblocked quick win. No external dependencies. Ships independently of Items 1–3.
+**Status:** ✅ Fully shipped (2026-04-25).
 
 **What's broken:** The live downloads page at `https://aviation-inventory-pricing-intellig.vercel.app/downloads` is served from the public repo's `master` branch at `apps/web/app/downloads/page.tsx`. It contains a hardcoded `RELEASES: Release[]` array (12 entries as of 2026-04-13, last manual update v1.3.8). GitHub Releases on the desktop repo `IhsanKabir/Process_Optimization_Using_pywinauto` already has newer tags (`1.3.9`, `1.4.0`) — the page is stale within hours of every release.
 
@@ -168,7 +166,12 @@ or are deferred pending demand evidence. See Item 3.
 - Derive `label: "Latest"` from the first non-prerelease, non-draft entry.
 - Fall back to the hardcoded `RELEASES` array if the fetch throws (network issue during build).
 
-**Why deferred:** Not on the prior roadmap because the prior roadmap didn't know the mirror was orphaned. Small, clean, and visible to users — good next-idle-hour task.
+**Post-ship follow-up (2026-04-25):** v1.5.1 was the first release served live via the
+GitHub API. The asset was uploaded as a `.zip` (not `.exe`), so the `parseGitHubReleases`
+finder returned `null` and the page showed "Download coming soon". Fixed by widening the
+`find` predicate to accept both `.endsWith(".exe")` and `.endsWith(".zip")`. Committed
+`eccfc46` to public repo `master` — Vercel redeployed automatically. ISR cache revalidates
+within 1 hour; `?_vercel_no_cache=1` forces an immediate fresh render.
 
 ---
 
@@ -189,22 +192,27 @@ Phase A — Calibration infrastructure (`calibration.py`)
 - **Recalibrate button** added to the GUI bottom bar — resets to baseline and confirms the new line height.
 
 Phase B — Landmark-anchored clicks (no more hardcoded ratios)
+
 - `_find_d_char_column`: finds the rightmost standalone `D` in the right 30% of the `+TQ`/`BOOK` line; passes `char_idx` to `_text_line_to_pixel`. Falls back to `D_BUTTON_X_RATIO` only if char detection fails.
 - `_find_link_char_column`: reusable helper for any regex-matched link; used for BDT Fare Exists and More Fares — both now click at the actual text character column.
 
 Phase C — Self-correcting delta accumulation
+
 - `record_click_delta` in `calibration.py`: rolling 50-entry history of Y offsets used on successful retries. When the average drifts > 0.5px, nudges `line_height` by ±1px and marks source as `"learned"`. Saved to JSON on every successful non-zero-offset click (D button and More Fares sites).
 
 **History:**
+
 - D clicks worked on dev machine; failed on larger screen — clicked close but not on target. See screenshot: `d OPTION CLICK.png`.
 - Post-ship: DPI-scaling overcorrected (25 px at 125% DPI) causing clicks to land ~2 lines below. Fixed by removing DPI scaling — baseline 20 px physical is correct on all tested machines.
 
 **Current unpushed review (2026-04-20):**
+
 - `smartpoint_automation.py:2235` still logs `x_ratio` after the retry loop was refactored to iterate `x_positions`. If the first BDT Currency Fare click misses, that debug line raises `NameError`, aborting the retry fan-out and making the roadmap-4 fix appear flaky on harder machines.
 - The newer fail-safe hardening also exposed a bounds-assumption bug in `_get_terminal_focus_point`: the clamp uses `rect.right` / `rect.bottom` directly even when the fallback rect path only guaranteed `left` / `top` plus derived width/height. In the current local full-suite run this shows up as 4 regressions in `tests/test_smartpoint_automation.py`.
 - The separate FTAX global-airport search changes are not the main blocker for roadmap 4. They pass in the repo `.venv`; the remaining follow-up there is packaging discipline so `airportsdata` stays installed and bundled in the exe.
 
 **Solution options considered:**
+
 1. Surgical patch
    - Replace the stale `x_ratio` reference with the actual clicked X coordinate.
    - Normalize fallback rect bounds once inside `_get_terminal_focus_point` before clamping.
@@ -216,6 +224,7 @@ Phase C — Self-correcting delta accumulation
    - Cleaner long term, but wider change surface than needed for the current blocker.
 
 **Recommended updated plan:**
+
 - Take the surgical patch first; do not expand roadmap-4 behavior again until the current automation suite is green.
 - Fix the stale variable in `click_currency_link` and re-run the BDT Currency Fare retry path.
 - Make `_get_terminal_focus_point` clamp from normalized bounds (`left/top/right/bottom`) rather than raw rect attributes.
@@ -227,11 +236,13 @@ Phase C — Self-correcting delta accumulation
 - Smoke-test the packaged exe on at least two display setups (100% and 125% DPI, different resolutions) before pushing.
 
 **Live follow-up (2026-04-20 11:47):**
+
 - `fs_debug.log` confirms the pricing row text is stable and still renders `D  R` at the far right of the `BOOK/+TQ` line, so the parser is not losing the landmark.
 - The runtime log still shows the first D click opening a repriced `PRICING OPTIONS` screen instead of the tax breakdown, which matches the live symptom that the click can land on `R` even when the detected `D` column is correct.
 - The current follow-up patch now chooses the more conservative of the ratio-based X and the character-based X (with a larger left bias derived from terminal character width), and it keeps probing the next offsets when Smartpoint returns to another pricing screen instead of aborting after the first miss.
 
 **Next live verification:**
+
 - Re-run the same case and inspect the fresh `run_*.log` for the new `using x=...` D-click line and multiple offset attempts.
 - If the screen still reprices instead of opening the tax breakdown, tune the left bias from the logged `char_x`, `ratio_x`, and `using x` values rather than changing the line-height calibration again.
 
@@ -246,12 +257,15 @@ Phase C — Self-correcting delta accumulation
 **What was shipped:**
 
 Part A — Clamped focus point in `_get_terminal_focus_point`
+
 - Result is now clamped to at least 5px inside the terminal rect bounds on all sides. Logs a debug message whenever clamping was needed.
 
 Part B — `_safe_focus_click` helper (eliminates fail-safe path)
+
 - All three focus-only clicks in `_copy_terminal_text` replaced with `self._safe_focus_click(x, y)`, which uses `_pw_mouse.click` (pywinauto / Win32 SendInput) directly — no pyautogui, no fail-safe check.
 
 Part C — One-shot retry on `FailSafeException`
+
 - The entire focus+copy block in `_copy_terminal_text` is wrapped in `try/except`. If a `FailSafeException` still reaches it, it logs a warning, re-fetches the rect, retries once via `_safe_focus_click`, and returns `""` on second failure instead of crashing the run.
 
 **History:**
@@ -268,6 +282,32 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 ## Current session — shipped items (not deferred)
 
 These are done and live on `main` so the next reader knows not to re-open them:
+
+- **Partial report on force-stop — fare mode `StopRequested` leak fixed (2026-04-26):**
+  - **Root cause:** `StopRequested` (in `smartpoint_automation.py`) extends `SystemExit`,
+    not `Exception`. It was raised by `_check_stop()` inside `automation.run_command()` /
+    `run_fs_command()` when the user pressed Stop. Tax and Penalty modes wrap their
+    extraction loops in `except StopRequested:` and call `_stop_run(partial_data=…)`.
+    **Fare mode had no such handler.** The exception propagated past the for-loop,
+    past `main()`, and hit `gui.py`'s `except SystemExit: pass` in the worker thread.
+    By that point `raw_texts` was out of scope, so `result_path` came back `None`
+    and the GUI showed *"Stopped — no data captured yet"* even though FD files for
+    successful routes were already on disk.
+  - **Fix:** Wrapped the fare-mode for-loop body (`main.py` lines 2402–2706) in
+    `try / except StopRequested:` that logs and `break`s. Added `StopRequested` to
+    the local import at the top of the fare-mode block (was importing only
+    `SmartpointAutomation`). When the exception fires mid-iteration the loop now
+    exits cleanly, `raw_texts` keeps whatever was scraped, and the existing
+    `_parse_stop` / `_stop_run(partial_data=all_route_data)` chain at lines 2841–2851
+    writes the partial report.
+  - **Why earlier "partial report" fix wasn't enough:** previous session added
+    `_parse_stop = None if stop already set else _stop` so `process_route_data`
+    wouldn't return an empty dict — but that code path only runs if the for-loop
+    *exits gracefully*. With the unhandled `StopRequested`, control never reached
+    the parse phase at all.
+  - **FTAX section not yet wrapped.** It's an opt-in `--include-ftax` flow and the
+    user's repro is non-FTAX. If/when an FTAX run fails the same way, wrap
+    lines ~2719–2787 the same way.
 
 - **Item 2 (login / user identity — steps 2.1–2.3, 2.5–2.6, 2.8):**
   - New `auth_manager.py`: wraps `keyring` library (Windows Credential Locker in exe,
@@ -370,6 +410,57 @@ These are done and live on `main` so the next reader knows not to re-open them:
     isolation, invalid metric ignore, zero-context, days-active counting, pruning,
     malformed JSON, and end-to-end feedback-payload injection. 268 total tests passing.
 
+- **Feedback dialog Submit button hidden (2026-04-25):**
+  - The Submit and Cancel buttons were being pushed off-screen because the message
+    `ScrolledText` widget had `expand=True` and `height=11`, consuming all available
+    vertical space at the dialog's minimum size.
+  - Fix: footer frame (Submit + Cancel) is now packed directly on the dialog window
+    with `side="bottom"` before the body — anchoring it to the bottom regardless of
+    how tall the message box grows or how small the window is resized.
+  - Dialog height increased from 430 → 460 px, minimum height 360 → 400 px.
+  - Message text height reduced from `height=11` → `height=7` (minimum hint only;
+    still expands to fill available space above the pinned footer).
+
+- **Partial report on force-stop (2026-04-25):**
+  - **Penalty mode gap fixed:** `_stop_run` now accepts a `partial_penalty` list.
+    Both penalty stop points (loop break + post-loop check) pass the accumulated
+    `penalty_records` so whatever was scraped before Stop is written to
+    `penalty_report_<timestamp>_partial.xlsx`.
+  - **Fare/tax modes — root cause fixed:** `process_route_data` checks
+    `stop_event.is_set()` at the start of every iteration. When stop was already
+    set before parsing began (extraction done, user pressed Stop mid-FS), parsing
+    broke on the very first file_key and returned an empty dict. `_stop_run` then
+    got `partial_data = {}` which is falsy → no report written → GUI showed
+    "Stopped — no data captured yet" despite having backed-up FD files.
+    Fix: compute `_parse_stop = None if stop already set else _stop` before calling
+    `process_route_data`. If stop was requested during extraction, parsing runs to
+    completion on all captured keys (stop_event=None); if stop is pressed during
+    parsing itself, the normal per-iteration break still fires.
+  - **GUI:** `_on_done` now distinguishes partial vs full reports. Partial files
+    (filename contains `_partial`) show **amber** "⚠ Partial report saved — …"
+    and still enable the "Open Report" button. Stopped with no data shows
+    "Stopped — no data captured yet" in red instead of plain "Stopped".
+
+- **Feedback visibility + reply path (2026-04-25):**
+  - **Where admin sees feedback:** BigQuery Console →
+    `aeropulseintelligence:aviation_intel.ops_travelport_feedback`. Query newest rows
+    via `ORDER BY submitted_at_utc DESC`. No separate dashboard needed.
+  - **Admin email notification:** `travelport_feedback.py` router now fires a
+    background Gmail SMTP email to `ihsankabir999@gmail.com` after every successful
+    BigQuery insert. Subject: `[TravelportAuto Feedback] <subject>`. Body includes
+    category, submitter email, app version, device, and full message. Non-blocking —
+    runs in a daemon thread; failure is logged as a warning and never surfaces to the
+    user. Requires `GMAIL_NOTIFY_PASSWORD` Cloud Run env var (Gmail App Password).
+    **Deployed 2026-04-25:** env var set via Cloud Shell →
+    revision `aero-pulse-api-00053-9jp` serving 100% traffic.
+  - **User reply path:** Signed-in users see "Replies will be sent to your registered
+    email" in the feedback dialog. The submitter's email is passed in `context_json`
+    so the admin can reply directly. Users not signed in see "Sign in so we can reply
+    to your feedback."
+  - **Success message updated:** After submit, dialog confirms "We'll review it and
+    reply to your registered email if needed."
+  - Commit `a5227dd` on public repo `master`; Cloud Run redeploys automatically.
+
 - **Item 6 (downloads page):**
   - `apps/web/app/downloads/page.tsx` converted from a static hardcoded array to an async
     Next.js server component. Fetches
@@ -378,6 +469,22 @@ These are done and live on `main` so the next reader knows not to re-open them:
     `FALLBACK_RELEASES` if the GitHub API is unavailable at build/revalidate time.
     Filters out drafts; pre-releases kept in the table but can be excluded by adjusting
     the filter. First non-draft entry automatically labelled "Latest".
+  - **v1.5.1 zip-asset fix (2026-04-25):** v1.5.1 was released as `TravelportAuto.zip`.
+    The original asset finder only matched `.exe` so the download button showed "coming
+    soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
+    `master`. Going forward, either format will render a download button.
+
+- **v1.5.1 release (2026-04-25):**
+  - Built via `build_app.ps1` with `VERSION = "v1.5.1"`.
+  - Primary change: Google Sign-In replaces email/password as the default login path.
+  - Published to GitHub Releases (`IhsanKabir/Process_Optimization_Using_pywinauto`)
+    as tag `1.5.1` with asset `TravelportAuto.zip` (exe + installer zipped; `.exe` alone
+    was locked by a running instance during the first compress attempt).
+  - `gh release create` used via Git Bash (PowerShell 5.1 `&&` operator unsupported).
+  - Google OAuth client credentials (`client_id`, `client_secret`) stored in gitignored
+    `agent_config.json` at the exe root — never committed to source control. Loaded by
+    `agent_config.py` with precedence: env var → JSON file → empty string. Requires a
+    Desktop application OAuth 2.0 credential from Google Cloud Console.
 
 - Standalone Currency Rate report (`--currency-report` CLI flag, GUI radio option,
   seed archive, USD change tracker with red-date suffix).
@@ -444,6 +551,90 @@ These are done and live on `main` so the next reader knows not to re-open them:
   Known unknown: domestic India RTs like DEL-BOM-DEL — both scrapes have K3 and
   the current logic keeps both. Needs confirmation from a real scrape whether
   Indian domestic RTs legitimately pay K3 twice.
+
+---
+
+## Release Publishing Checklist
+
+Follow these steps every time a new version ships. Learned from v1.5.1 mistakes.
+
+### Step 1 — Bump the version (this repo)
+
+Edit `gui.py` line ~411:
+
+```python
+VERSION = "vX.Y.Z"
+```
+
+Commit:
+
+```powershell
+git add gui.py
+git commit -m "chore: bump version to vX.Y.Z"
+git push origin main
+```
+
+### Step 2 — Build the exe
+
+**Close any running TravelportAuto.exe first** — the zip step will fail if the exe
+is locked by a running process.
+
+```powershell
+.\build_app.ps1
+```
+
+### Step 3 — Zip the output with the correct version name
+
+```powershell
+Compress-Archive -Path "dist\TravelportAuto\*" -DestinationPath "dist\TravelportAuto-vX.Y.Z-windows.zip" -Force
+```
+
+Name must match the version exactly (e.g. `TravelportAuto-v1.5.2-windows.zip`).
+
+### Step 4 — Create the GitHub Release and upload the zip
+
+```powershell
+gh release create vX.Y.Z dist/TravelportAuto-vX.Y.Z-windows.zip --title "TravelportAuto vX.Y.Z" --notes "- Change 1`n- Change 2"
+```
+
+Or if the release was already created on GitHub first:
+
+```powershell
+gh release upload vX.Y.Z dist/TravelportAuto-vX.Y.Z-windows.zip --clobber
+```
+
+Verify only one asset exists after upload:
+
+```powershell
+gh release view vX.Y.Z --json assets --jq '.assets[].name'
+```
+
+If an old/wrong asset appears, delete it:
+
+```powershell
+gh release delete-asset vX.Y.Z TravelportAuto-OLD-NAME.zip --yes
+```
+
+### Step 5 — Verify the downloads page
+
+The Vercel downloads page auto-refreshes from the GitHub Releases API every hour
+(ISR `revalidate: 3600`). After the release is published, wait up to 60 minutes or
+append `?_vercel_no_cache=1` to the URL to force an immediate refresh.
+
+URL: `https://aviation-inventory-pricing-intellig.vercel.app/downloads`
+
+The new version should appear as "Latest" with a working download button.
+
+### Common mistakes (from v1.5.1)
+
+| Mistake | Fix |
+| --- | --- |
+| Build done before bumping VERSION in gui.py | Always bump + commit first, then build |
+| Zip named with wrong version (e.g. v1.5.0 instead of v1.5.1) | Name the zip manually with the correct version in Step 3 |
+| Running exe locks the zip step | Close TravelportAuto.exe before Compress-Archive |
+| `gh release upload` says "release not found" | Use the tag with `v` prefix: `v1.5.1` not `1.5.1` |
+| `cd /c/Users/...` fails | That syntax is Git Bash only; in PowerShell use plain `cd` or just run `gh` from the current directory |
+| Downloads page still shows old version | ISR cache — wait up to 1 hour or add `?_vercel_no_cache=1` |
 
 ---
 
