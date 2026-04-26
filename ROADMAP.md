@@ -512,6 +512,19 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.3 fix (2026-04-26) — multi-PC focus failure:**
+  - **Problem:** On PCs where Smartpoint runs elevated (Admin) and TravelportAuto does
+    not, `SetForegroundWindow` was silently blocked 100% of the time by Windows UIPI.
+    Symptom: every clipboard capture returned 0 chars; log showed "Window foreground not
+    confirmed after Win32 focus attempt" on every attempt.
+  - **Fix:** `focus()` in `smartpoint_automation.py` now uses `AttachThreadInput` to
+    link our thread's input state to Smartpoint's thread before calling
+    `SetForegroundWindow`, plus a `keybd_event(VK_MENU)` ALT-key pulse that convinces
+    Windows the calling process had recent user input (required for cross-privilege
+    foreground requests). Both are undone cleanly after the call.
+  - If the issue persists on a specific machine, running TravelportAuto as Administrator
+    (right-click → Run as administrator) remains the definitive workaround.
+
 - **v1.5.2 release (2026-04-26):**
   - Built via `build_app.ps1` with `VERSION = "v1.5.2"`.
   - Primary changes:
