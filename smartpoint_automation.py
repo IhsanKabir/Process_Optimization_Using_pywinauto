@@ -443,10 +443,26 @@ class SmartpointAutomation:
             hwnd = self.window.wrapper_object().handle
             if hwnd:
                 user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+                current_thread = kernel32.GetCurrentThreadId()
+                target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+                attached = False
+                if target_thread and target_thread != current_thread:
+                    user32.AttachThreadInput(current_thread, target_thread, True)
+                    attached = True
+                # ALT-key trick: convinces Windows this process has had recent
+                # user input, which lifts the SetForegroundWindow UIPI block
+                # when Smartpoint runs elevated and we don't.
+                VK_MENU = 0x12
+                KEYEVENTF_KEYUP = 0x0002
+                user32.keybd_event(VK_MENU, 0, 0, 0)
+                user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+                user32.BringWindowToTop(hwnd)
                 # SW_RESTORE = 9
                 user32.ShowWindow(hwnd, 9)
-                # Force foreground
                 user32.SetForegroundWindow(hwnd)
+                if attached:
+                    user32.AttachThreadInput(current_thread, target_thread, False)
             self._sleep(constants.FOCUS_DELAY)  # Brief wait for window to come forward
             if not self._is_window_foreground():
                 focus_x, focus_y = self._get_terminal_focus_point()
