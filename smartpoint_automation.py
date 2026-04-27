@@ -2251,6 +2251,7 @@ class SmartpointAutomation:
             fs_text, target_line, x_ratio=D_BUTTON_X_RATIO
         )
         d_char_col = self._find_d_char_column(lines[target_line])
+        char_x: int | None = None
         if d_char_col is not None:
             char_x, _ = self._text_line_to_pixel(
                 fs_text, target_line, char_idx=d_char_col
@@ -2293,6 +2294,29 @@ class SmartpointAutomation:
             (-15, 9),
             (15, 9),  # One line down, shift X
         ]
+
+        # Secondary wave (only fires if the primary fan-out misses):
+        # If char detection found D at a column meaningfully right of the
+        # left-biased base_x, try positions centered on the unbiased char_x.
+        # On PCs where the bias is too aggressive (~50px gap) the primary
+        # fan-out's ±15 X never reaches the actual D button.
+        if char_x is not None:
+            char_x_delta = char_x - base_x
+            if char_x_delta >= 10:
+                offsets.extend([
+                    (char_x_delta, 0),
+                    (char_x_delta, -9),
+                    (char_x_delta, 9),
+                    (char_x_delta - 12, 0),
+                    (char_x_delta + 12, 0),
+                ])
+
+        # Tertiary wave: wider Y attempts (±18 = approximately ±1 line)
+        # in case the calibrated line_height is slightly off on this PC.
+        offsets.extend([(0, -18), (0, 18)])
+        if char_x is not None and (char_x - base_x) >= 10:
+            char_x_delta = char_x - base_x
+            offsets.extend([(char_x_delta, -18), (char_x_delta, 18)])
 
         for x_off, y_off in offsets:
             click_x = base_x + x_off
