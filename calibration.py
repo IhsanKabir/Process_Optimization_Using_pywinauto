@@ -157,6 +157,30 @@ def record_click_delta(calibration: dict, y_offset_used: int) -> dict:
     return calibration
 
 
+def record_d_click_offset(calibration: dict, x_off: int, y_off: int) -> dict:
+    """Persist the (x_off, y_off) tuple that produced a successful D-click
+    on this machine. Used as a 'try first' starting point on subsequent
+    D-clicks so we don't re-execute the full fan-out every time on PCs
+    where the default position is consistently off (e.g. the left-bias
+    heuristic over-corrects on a 1920x1080 work laptop). Self-correcting
+    if the saved offset stops working — control falls through to the
+    standard fan-out which then overwrites the saved offset with whatever
+    new position succeeds."""
+    calibration["d_click_offset"] = [int(x_off), int(y_off)]
+    return calibration
+
+
+def get_d_click_offset(calibration: dict) -> tuple[int, int] | None:
+    """Return the previously-saved D-click offset, or None."""
+    raw = calibration.get("d_click_offset")
+    if isinstance(raw, list) and len(raw) == 2:
+        try:
+            return int(raw[0]), int(raw[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 def _write(data: dict) -> None:

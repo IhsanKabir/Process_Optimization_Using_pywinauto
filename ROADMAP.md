@@ -512,6 +512,22 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.7 + Phase D learning (2026-04-27):**
+  - **Phase D — D-click offset persistence.** After the wider fan-out finds the
+    working `(x_off, y_off)` for D-click on this machine, the tuple is persisted
+    to `calibration.json` as `d_click_offset`. On every subsequent D-click in
+    this run (and in future runs on the same machine) the saved offset is
+    prepended to the try-list, so the click succeeds on the first attempt
+    instead of re-executing the entire 14-attempt fan-out. Self-correcting:
+    if the saved offset stops working (screen layout change), control falls
+    through to the standard fan-out which then overwrites the saved offset
+    with whatever new position succeeds.
+  - New helpers in `calibration.py`: `record_d_click_offset()` and
+    `get_d_click_offset()`. New `d_click_offset: [int, int]` field in
+    `calibration.json`.
+  - Existing Phase C `record_click_delta` tests pass unchanged — Phase D is a
+    separate, additive learning channel.
+
 - **v1.5.7 fix (2026-04-27) — wider D-click fan-out for PCs where left-bias is too aggressive:**
   - **Problem:** On a 1920x1080 work laptop with terminal rect 707px wide, all
     9 D-click attempts missed because the actual D button hitbox was ~50 px

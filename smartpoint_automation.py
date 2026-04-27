@@ -2318,6 +2318,20 @@ class SmartpointAutomation:
             char_x_delta = char_x - base_x
             offsets.extend([(char_x_delta, -18), (char_x_delta, 18)])
 
+        # Phase D learning: prepend the last-known-good offset on this PC
+        # so we don't re-execute the entire fan-out every time. Persisted
+        # in calibration.json after the first successful click. Falls
+        # through to the rest of the list if the saved offset stops
+        # working (e.g. screen layout changed).
+        saved_offset = _calibration_mod.get_d_click_offset(self._cal)
+        if saved_offset is not None:
+            if saved_offset in offsets:
+                offsets.remove(saved_offset)
+            offsets.insert(0, saved_offset)
+            self.logger.debug(
+                f"      [D-CLICK] Trying last-known-good offset {saved_offset} first."
+            )
+
         for x_off, y_off in offsets:
             click_x = base_x + x_off
             click_y = base_y + y_off
@@ -2342,11 +2356,17 @@ class SmartpointAutomation:
                     self.logger.info(
                         f"      [D-CLICK] Tax breakdown at offset=({x_off},{y_off})"
                     )
-                    # Phase C: record successful Y offset for self-correction
+                    # Phase C: record successful Y offset for diagnostics
                     if y_off != 0:
                         self._cal = _calibration_mod.record_click_delta(self._cal, y_off)
                         self._line_height = self._cal["line_height"]
-                        _calibration_mod.save_calibration(self._cal)
+                    # Phase D: persist the working (x, y) offset so the next
+                    # D-click on this machine starts here instead of re-doing
+                    # the full fan-out from scratch.
+                    self._cal = _calibration_mod.record_d_click_offset(
+                        self._cal, x_off, y_off
+                    )
+                    _calibration_mod.save_calibration(self._cal)
                     return result
                 else:
                     upper = result.upper()
