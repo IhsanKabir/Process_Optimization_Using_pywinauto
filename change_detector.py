@@ -29,11 +29,32 @@ def _list_snapshot_names(archive_dir: str) -> list[str]:
 
 
 def _load_snapshot_file(filepath: str, snapshot_name: str) -> Optional[dict]:
-    """Load a single snapshot file, returning None when it is invalid."""
+    """Load a single snapshot file, returning None when it is invalid.
+
+    Tries UTF-8 first, then UTF-8-sig (handles BOM), then falls back to a
+    permissive read with errors='replace' so snapshots written by older
+    builds that occasionally used the Windows default code page still load
+    instead of aborting the run with UnicodeDecodeError.
+    """
+    for encoding in ("utf-8", "utf-8-sig"):
+        try:
+            with open(filepath, "r", encoding=encoding) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("Skipping invalid snapshot '%s': %s", snapshot_name, e)
+            return None
+        except UnicodeDecodeError:
+            continue
+
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            data = json.load(f)
+        logger.warning(
+            "Snapshot '%s' had non-UTF-8 bytes; loaded with replacement characters.",
+            snapshot_name,
+        )
+        return data
+    except (OSError, json.JSONDecodeError, ValueError) as e:
         logger.warning("Skipping invalid snapshot '%s': %s", snapshot_name, e)
         return None
 

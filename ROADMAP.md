@@ -512,6 +512,43 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.6 fix (2026-04-27) — UTF-8-tolerant snapshot loader:**
+  - **Problem:** `--compare-snapshot <file>` aborted the entire run with
+    `'utf-8' codec can't decode byte 0xca in position 17: invalid continuation byte`
+    when the referenced JSON archive was written by an older build that used
+    the Windows default code page. `_load_snapshot_file` in `change_detector.py`
+    only caught `OSError`/`json.JSONDecodeError`; the `UnicodeDecodeError` (a
+    `ValueError` subclass) leaked out and was caught by `main.py:2909`'s
+    `except ValueError` → `sys.exit(1)`.
+  - **Fix:** `_load_snapshot_file` now tries UTF-8, then UTF-8-sig (BOM), and
+    finally falls back to `errors='replace'` so corrupted-encoding files load
+    with U+FFFD substitutions rather than aborting the run. A warning is
+    logged in the fallback case so the user knows.
+  - Side note: this session also produced `uia_textrect_probe.py` — a
+    standalone diagnostic that proved SmartRichTextBox does **not** implement
+    UIA TextPattern spatial bounds (`GetBoundingRectangles` returns empty for
+    every range, including the full DocumentRange). The UIA-rect approach for
+    resolution-independent clicks is therefore not viable; click-positioning
+    work continues via a different path (pending diagnostic logs from the
+    locked-down work laptop).
+
+- **v1.5.5 fix (2026-04-27) — UIA TextPattern fallback for non-RichEdit terminals:**
+  - **Problem:** v1.5.4's `WM_COPY` fallback worked only on RichEdit-based
+    controls. On the locked-down work laptop, even WM_COPY returned empty —
+    SmartRichTextBox is a custom .NET/WPF control that doesn't respond to
+    `EM_SETSEL`/`WM_COPY`. Symptom: every clipboard read returned 0 chars
+    despite the focus-independent path engaging.
+  - **Fix:** Added `_read_text_via_uia()` and `_read_text_focus_independent()`
+    cascade in `smartpoint_automation.py`. Reads terminal text directly via
+    `IUIAutomationTextPattern.DocumentRange.GetText(-1)`, which works on
+    .NET/WPF/XAML controls that expose UIA TextPattern. Tries pywinauto's
+    `iface_text` first, then direct comtypes `GetCurrentPattern(10014)`,
+    then legacy IAccessible `Value` as a final fallback.
+  - Wired into `_copy_terminal_text` at the same three fallback points as
+    WM_COPY: focus-failure branch, heavy-fallback branch, and the final
+    safety net before deselect.
+  - Confirmed working on the work laptop (user: "previous problem is fixed").
+
 - **v1.5.4 fix (2026-04-26) — focus-independent clipboard read for locked-down PCs:**
   - **Problem:** On work laptops where the user can't run TravelportAuto as
     Administrator, the AttachThreadInput fix (v1.5.3) wasn't always sufficient —

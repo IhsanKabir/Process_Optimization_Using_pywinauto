@@ -617,18 +617,22 @@ class SmartpointAutomation:
         return None
 
     def _copy_via_messages(self) -> str:
-        """Focus-independent clipboard read.
+        """Focus-independent clipboard read for RichEdit-based controls.
 
         Sends EM_SETSEL + WM_COPY directly to the SmartRichTextBox HWND.
         Works regardless of whether Smartpoint has foreground focus and
         regardless of UAC/UIPI elevation differences — needed on locked-down
         work laptops where the user can't run TravelportAuto as Administrator.
 
-        Returns the captured text, or "" if the control couldn't be found
-        or didn't respond to the messages.
+        Only works for controls derived from RichEdit. WPF/XAML controls
+        will return "" — fall back to `_read_text_via_uia` for those.
         """
         target_hwnd = self._get_terminal_hwnd()
         if not target_hwnd:
+            self.logger.debug(
+                "      [WM_COPY] No Win32 HWND for SmartRichTextBox — likely "
+                "a WPF/XAML virtual element. Will need UIA TextPattern."
+            )
             return ""
         try:
             user32 = ctypes.windll.user32
@@ -636,15 +640,100 @@ class SmartpointAutomation:
             WM_COPY = 0x0301
 
             pyperclip.copy("")
-            # Select all: start=0, end=-1 means "to the very end"
-            user32.SendMessageW(target_hwnd, EM_SETSEL, 0, -1)
+            sel_result = user32.SendMessageW(target_hwnd, EM_SETSEL, 0, -1)
             self._sleep(0.05)
-            user32.SendMessageW(target_hwnd, WM_COPY, 0, 0)
+            copy_result = user32.SendMessageW(target_hwnd, WM_COPY, 0, 0)
             self._sleep(max(0.15, constants.COPY_DELAY))
-            return pyperclip.paste() or ""
+            text = pyperclip.paste() or ""
+            if not text.strip():
+                self.logger.debug(
+                    f"      [WM_COPY] HWND={hex(target_hwnd)} EM_SETSEL={sel_result} "
+                    f"WM_COPY={copy_result} but clipboard empty — control likely "
+                    "doesn't respond to RichEdit messages."
+                )
+            return text
         except Exception as exc:
-            self.logger.debug(f"      [COPY] WM_COPY path failed: {exc}")
+            self.logger.debug(f"      [WM_COPY] Exception: {exc}")
             return ""
+
+    def _read_text_via_uia(self) -> str:
+        """Focus-independent text read via UI Automation TextPattern.
+
+        Works on .NET/WPF/XAML text controls that don't respond to legacy
+        RichEdit messages (EM_SETSEL/WM_COPY). UIA is the modern Windows
+        accessibility API and works across UAC/UIPI boundaries — no admin
+        required.
+
+        Returns "" if the control doesn't expose a usable text pattern.
+        """
+        if not self.window:
+            return ""
+        try:
+            for doc in self.window.descendants(control_type="Document"):
+                try:
+                    if doc.element_info.automation_id != TERMINAL_AUTOMATION_ID:
+                        continue
+
+                    # Path 1: UIA TextPattern via pywinauto's iface_text helper
+                    try:
+                        pattern = getattr(doc, "iface_text", None)
+                        if pattern is not None:
+                            rng = pattern.DocumentRange
+                            text = rng.GetText(-1)
+                            if text and text.strip():
+                                return text
+                    except Exception as exc:
+                        self.logger.debug(f"      [UIA] iface_text failed: {exc}")
+
+                    # Path 2: Direct UIA TextPattern via comtypes (more robust)
+                    try:
+                        UIA_TextPatternId = 10014
+                        elem = doc.element_info.element
+                        get_pattern = getattr(elem, "GetCurrentPattern", None)
+                        if get_pattern is not None:
+                            raw_pattern = get_pattern(UIA_TextPatternId)
+                            if raw_pattern is not None:
+                                # Try common attribute access patterns
+                                for attr in ("DocumentRange", "documentRange"):
+                                    rng = getattr(raw_pattern, attr, None)
+                                    if rng is not None:
+                                        get_text = getattr(rng, "GetText", None) or getattr(rng, "getText", None)
+                                        if get_text is not None:
+                                            text = get_text(-1)
+                                            if text and text.strip():
+                                                return text
+                                        break
+                    except Exception as exc:
+                        self.logger.debug(f"      [UIA] direct GetCurrentPattern failed: {exc}")
+
+                    # Path 3: Legacy IAccessible Value (smaller text but sometimes works)
+                    try:
+                        legacy = doc.legacy_properties()
+                        val = (legacy or {}).get("Value", "")
+                        if val and val.strip():
+                            return val
+                    except Exception as exc:
+                        self.logger.debug(f"      [UIA] legacy_properties failed: {exc}")
+
+                    break  # found the right element, no point checking siblings
+                except Exception:
+                    continue
+        except Exception as exc:
+            self.logger.debug(f"      [UIA] descendants() walk failed: {exc}")
+        return ""
+
+    def _read_text_focus_independent(self) -> str:
+        """Try every focus-independent text read in order. Returns first hit."""
+        text = self._copy_via_messages()
+        if text.strip():
+            return text
+        text = self._read_text_via_uia()
+        if text.strip():
+            self.logger.info(
+                "      [COPY] Captured terminal text via UIA TextPattern."
+            )
+            return text
+        return ""
 
     def _get_terminal_rect(self):
         """
@@ -802,19 +891,16 @@ class SmartpointAutomation:
             if not self._is_window_foreground():
                 # Focus failed — common on locked-down work laptops where
                 # SetForegroundWindow is blocked by UIPI. Fall back to
-                # focus-independent WM_COPY messaging.
+                # focus-independent paths (WM_COPY, then UIA TextPattern).
                 self.logger.warning(
-                    "      [FOCUS] Smartpoint not foreground; trying focus-independent WM_COPY path."
+                    "      [FOCUS] Smartpoint not foreground; trying focus-independent text read."
                 )
-                text = self._copy_via_messages()
+                text = self._read_text_focus_independent()
                 if text.strip():
-                    self.logger.info(
-                        "      [COPY] Captured terminal text via WM_COPY (focus-independent path)."
-                    )
                     self._last_terminal_text = text
                     return text
                 self.logger.warning(
-                    "      [COPY] WM_COPY path also returned empty — clipboard remains empty."
+                    "      [COPY] All focus-independent paths returned empty — clipboard remains empty."
                 )
                 return ""
 
@@ -852,12 +938,12 @@ class SmartpointAutomation:
                     text = _copy_once(wait_after_copy=max(0.15, constants.COPY_DELAY * 2))
                 else:
                     self.logger.warning(
-                        "      [FOCUS] Heavy clipboard fallback could not confirm foreground; trying WM_COPY."
+                        "      [FOCUS] Heavy clipboard fallback could not confirm foreground; trying focus-independent paths."
                     )
-                    text = self._copy_via_messages()
+                    text = self._read_text_focus_independent()
                     if text.strip():
                         self.logger.info(
-                            "      [COPY] Heavy fallback recovered text via WM_COPY."
+                            "      [COPY] Heavy fallback recovered text via focus-independent path."
                         )
 
         except Exception as exc:
@@ -883,12 +969,12 @@ class SmartpointAutomation:
                 raise
 
         # Final safety net: if every keystroke path returned empty, try the
-        # focus-independent WM_COPY path as a last resort.
+        # focus-independent paths as a last resort.
         if not text or not text.strip():
-            fallback = self._copy_via_messages()
+            fallback = self._read_text_focus_independent()
             if fallback.strip():
                 self.logger.info(
-                    "      [COPY] Final fallback recovered text via WM_COPY."
+                    "      [COPY] Final fallback recovered text via focus-independent path."
                 )
                 text = fallback
 
