@@ -512,6 +512,26 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.7 fix (2026-04-27) — wider D-click fan-out for PCs where left-bias is too aggressive:**
+  - **Problem:** On a 1920x1080 work laptop with terminal rect 707px wide, all
+    9 D-click attempts missed because the actual D button hitbox was ~50 px
+    right of the `min(char_biased_x, ratio_x)` blend (`base_x=1752` vs
+    `char_x=1801`). The primary fan-out only goes ±15 px X / ±9 px Y, which
+    never reaches the unbiased char_x territory. User diagnostic with manual
+    cursor hover confirmed click position was off by 49 px X — outside the
+    primary fan-out range.
+  - **Fix:** `click_d_button` in `smartpoint_automation.py` now appends a
+    secondary wave of click offsets centered on the unbiased `char_x` (the
+    raw column-based pixel coordinate from `_find_d_char_column`) whenever
+    the gap between `char_x` and `base_x` is >= 10 px. Plus a tertiary wave
+    of ±18 px Y attempts at both centers to absorb modest line-height
+    variance per machine. Total max attempts climb from 9 → 16, but only
+    when the primary 9 fail — no regression on PCs where the first attempt
+    succeeds.
+  - User confirmed clicks land in the terminal area but always above/below
+    the actual D — so the issue was *position*, not click delivery (which
+    rules out UIPI elevation blocking).
+
 - **v1.5.6 fix (2026-04-27) — UTF-8-tolerant snapshot loader:**
   - **Problem:** `--compare-snapshot <file>` aborted the entire run with
     `'utf-8' codec can't decode byte 0xca in position 17: invalid continuation byte`
