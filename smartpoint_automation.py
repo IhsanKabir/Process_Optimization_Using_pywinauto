@@ -2318,18 +2318,35 @@ class SmartpointAutomation:
             char_x_delta = char_x - base_x
             offsets.extend([(char_x_delta, -18), (char_x_delta, 18)])
 
-        # Phase D learning: prepend the last-known-good offset on this PC
-        # so we don't re-execute the entire fan-out every time. Persisted
-        # in calibration.json after the first successful click. Falls
-        # through to the rest of the list if the saved offset stops
-        # working (e.g. screen layout changed).
+        # Phase D learning: persist the X offset (consistent per machine —
+        # driven by left-bias mismatch) but NOT the Y offset (varies per
+        # click — different pricing options sit on different rows, and
+        # line_height variance compounds with line index).
+        #
+        # On subsequent clicks, prepend a "same X, every Y" prefix so we
+        # lock in the correct X column and let the Y fan-out figure out
+        # each individual line. Falls through to the standard fan-out if
+        # the saved X stops working (e.g. Smartpoint window resized).
         saved_offset = _calibration_mod.get_d_click_offset(self._cal)
         if saved_offset is not None:
-            if saved_offset in offsets:
-                offsets.remove(saved_offset)
-            offsets.insert(0, saved_offset)
+            saved_x, saved_y = saved_offset
+            saved_x_prefix = [
+                (saved_x, saved_y),
+                (saved_x, 0),
+                (saved_x, -9),
+                (saved_x, 9),
+                (saved_x, -18),
+                (saved_x, 18),
+            ]
+            seen: set[tuple[int, int]] = set()
+            reordered: list[tuple[int, int]] = []
+            for off in saved_x_prefix + offsets:
+                if off not in seen:
+                    seen.add(off)
+                    reordered.append(off)
+            offsets = reordered
             self.logger.debug(
-                f"      [D-CLICK] Trying last-known-good offset {saved_offset} first."
+                f"      [D-CLICK] Trying saved-X variants first (saved_x={saved_x})."
             )
 
         for x_off, y_off in offsets:
