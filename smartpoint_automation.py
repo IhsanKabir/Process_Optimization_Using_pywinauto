@@ -2327,11 +2327,19 @@ class SmartpointAutomation:
         saved_offset = _calibration_mod.get_d_click_offset(self._cal)
         if saved_offset is not None:
             saved_x, saved_y = saved_offset
+            # If char_x is meaningfully right of base_x, insert those variants
+            # immediately after the core saved-X attempts so they are tried early
+            # (before the ±18 wide-Y sweep) rather than deep in the secondary wave.
+            _char_x_early: list[tuple[int, int]] = []
+            if char_x is not None and (char_x - base_x) >= 10:
+                _cxd = char_x - base_x
+                _char_x_early = [(_cxd, 0), (_cxd, -9), (_cxd, 9)]
             saved_x_prefix = [
                 (saved_x, saved_y),
                 (saved_x, 0),
                 (saved_x, -9),
                 (saved_x, 9),
+            ] + _char_x_early + [
                 (saved_x, -18),
                 (saved_x, 18),
             ]
