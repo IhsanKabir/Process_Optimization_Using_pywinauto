@@ -132,6 +132,19 @@ if (Test-Path $agentConfigSrc) {
     Write-Warning "  agent_config.json not found at repo root - skipping copy. Add it before zipping."
 }
 
+# Copy commands.txt and preferences.json so users have defaults out of the box.
+$extras = @("commands.txt", "preferences.json")
+foreach ($extra in $extras) {
+    $src = Join-Path $PSScriptRoot $extra
+    if (Test-Path $src) {
+        $dst = if ($Mode -eq "onedir") { Join-Path $distDir "TravelportAuto\$extra" } else { Join-Path $distDir $extra }
+        Copy-Item $src $dst -Force
+        Write-Host "  Copied $extra to output folder."
+    } else {
+        Write-Warning "  $extra not found at repo root - skipping."
+    }
+}
+
 Write-Host ""
 Write-Host "=========================================="
 Write-Host "Build complete! Please find your executable here:"
