@@ -2384,6 +2384,37 @@ class SmartpointAutomation:
             _calibration_mod.save_calibration(self._cal)
 
         try:
+            # Initial manual window — only on machines with no saved offset yet.
+            # Gives the user 5 seconds to click D before the mouse is moved.
+            # Once an offset is learned and saved, this window is skipped entirely
+            # (Phase D's saved prefix fires first instead).
+            if saved_offset is None:
+                self.logger.warning(
+                    "      [D-CLICK] No saved position for this PC. "
+                    "Click the D button now (5 s) — auto-click starts after."
+                )
+                init_deadline = time.time() + 5.0
+                init_seen = len(_mon_clicks)
+                while time.time() < init_deadline:
+                    try:
+                        self._raise_if_stopped()
+                    except Exception:
+                        break
+                    self._sleep(0.05)
+                    if len(_mon_clicks) > init_seen:
+                        _, ux, uy = _mon_clicks[-1]
+                        init_seen = len(_mon_clicks)
+                        self._sleep(0.5)
+                        result = self._copy_terminal_text()
+                        if result.strip() and looks_like_fs_tax_breakdown(result):
+                            lx, ly = ux - base_x, uy - base_y
+                            self.logger.info(
+                                f"      [D-CLICK] Manual click at ({ux},{uy}) "
+                                f"[x_off={lx}, y_off={ly}] — learned."
+                            )
+                            _record_success(lx, ly, "manual")
+                            return result
+
             for x_off, y_off in offsets:
                 click_x = base_x + x_off
                 click_y = base_y + y_off
