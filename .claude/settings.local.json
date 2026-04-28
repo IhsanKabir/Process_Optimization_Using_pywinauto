@@ -7,7 +7,9 @@
       "Bash(git -C /mnt/c/Users/TLL-90134/Documents/travelport-automation status --short)",
       "Bash(git *)",
       "Bash(python *)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "PowerShell(cd \"c:\\\\Users\\\\TLL-90134\\\\Documents\\\\travelport-automation\"; $srcJson = Get-Content \"agent_config.json\" -Raw | ConvertFrom-Json; $safeKeys = @\\(\"google_oauth_client_id\", \"api_base_url\"\\); $distJson = @{}; foreach \\($key in $safeKeys\\) { $val = $srcJson.$key; if \\($val\\) { $distJson[$key] = $val } }; $distJsonText = $distJson | ConvertTo-Json -Depth 2; [System.IO.File]::WriteAllText\\(\"dist\\\\TravelportAuto\\\\agent_config.json\", $distJsonText, [System.Text.UTF8Encoding]::new\\($false\\)\\); Write-Host \"Written: dist\\\\TravelportAuto\\\\agent_config.json\"; Get-Content \"dist\\\\TravelportAuto\\\\agent_config.json\")",
+      "PowerShell(gh release view v1.5.11 --json assets --jq '.assets[].name')"
     ]
   }
 }
