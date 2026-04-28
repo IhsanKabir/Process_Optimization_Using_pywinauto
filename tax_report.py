@@ -23,6 +23,7 @@ THIN_BORDER = Border(
 EXPIRED_FILL = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
 CURRENT_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
 FUTURE_FILL = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
+EXEMPT_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 
 # ─────────────────────────────────────────────────────────
 
@@ -101,9 +102,22 @@ def _build_summary_sheet(ws, data, config):
 
                 for rate in section.get("rates", []):
                     condition = rate.get("condition", "")
-                    currency = rate.get("currency", "")
-                    amount = rate.get("amount", "")
                     status = rate.get("status", "")
+
+                    # Percent-based rate (e.g. E5 = 15% of BD+P7+P8)
+                    if rate.get("percent") is not None:
+                        codes = "+".join(rate.get("basis_codes") or [])
+                        pct_val = rate["percent"]
+                        currency = ""
+                        amount_display = (
+                            f"{pct_val:.0f}% of {codes}" if codes else f"{pct_val:.0f}%"
+                        )
+                        is_numeric_amount = False
+                    else:
+                        currency = rate.get("currency", "")
+                        raw_amount = rate.get("amount", "")
+                        amount_display = raw_amount if raw_amount != "" else "—"
+                        is_numeric_amount = isinstance(raw_amount, (int, float))
 
                     status_text = status.title() if status else ""
                     if status == "current":
@@ -118,12 +132,11 @@ def _build_summary_sheet(ws, data, config):
                             terminals,
                             condition,
                             currency,
-                            amount if amount != "" else "—",
+                            amount_display,
                             status_text,
                         ]
                     )
 
-                    # Apply status coloring
                     fill = None
                     if status == "current":
                         fill = CURRENT_FILL
@@ -135,13 +148,52 @@ def _build_summary_sheet(ws, data, config):
                     for col in range(1, len(headers) + 1):
                         cell = ws.cell(row=row_idx, column=col)
                         cell.border = THIN_BORDER
-                        if fill and col in (8, 9):  # Amount and Status columns
+                        if fill and col in (8, 9):
                             cell.fill = fill
 
-                    # Format amount as number
-                    amt_cell = ws.cell(row=row_idx, column=8)
-                    if isinstance(amount, (int, float)):
-                        amt_cell.number_format = "#,##0.00"
+                    if is_numeric_amount:
+                        ws.cell(row=row_idx, column=8).number_format = "#,##0.00"
+
+                    row_idx += 1
+
+            # Exemption rows (e.g. INFANTS: 15% of P7+P8)
+            for exemption in tax_type.get("exemptions", []):
+                pax_label = f"[{exemption.get('pax_type', 'EXEMPT')}]"
+                for rate in exemption.get("rates", []):
+                    condition = rate.get("condition", "")
+                    status = rate.get("status", "")
+                    if rate.get("percent") is not None:
+                        codes = "+".join(rate.get("basis_codes") or [])
+                        pct_val = rate["percent"]
+                        amount_display = (
+                            f"{pct_val:.0f}% of {codes}" if codes else f"{pct_val:.0f}%"
+                        )
+                    else:
+                        raw_amount = rate.get("amount", "")
+                        amount_display = raw_amount if raw_amount != "" else "—"
+
+                    status_text = status.title() if status else ""
+                    if status == "current":
+                        status_text = "Current ●"
+
+                    ws.append(
+                        [
+                            airport_code,
+                            country_name,
+                            code,
+                            name,
+                            f"{terminals} {pax_label}".strip(),
+                            condition,
+                            rate.get("currency", ""),
+                            amount_display,
+                            status_text,
+                        ]
+                    )
+
+                    for col in range(1, len(headers) + 1):
+                        cell = ws.cell(row=row_idx, column=col)
+                        cell.border = THIN_BORDER
+                        cell.fill = EXEMPT_FILL
 
                     row_idx += 1
 

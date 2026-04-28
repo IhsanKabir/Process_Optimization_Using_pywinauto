@@ -25,6 +25,19 @@ _RE_LEADING_DASH = re.compile(r"^[-–]\s*")
 _RE_AIRPORT_CODE = re.compile(r"^[A-Z]{3}\s*[-–]\s+[A-Z]")
 _RE_HAS_AMOUNT = re.compile(r"(?:\s|^)[A-Z]{3}\s*\d+\.\d+\s*$")
 _RE_DATE = re.compile(r"(\d{2})([A-Z]{3})(\d{2,4})")
+# Percent-based rates: "15 PERCENT ON EMBARKATION FEE - BD" or
+#                      "15 PERCENT OF APPLICABLE EMBARKATION -BD- FEE."
+_RE_PERCENT = re.compile(
+    r"^(\d+(?:\.\d+)?)\s+PERCENT\s+(?:ON|OF)\s+(.+?)\s*\.?\s*$",
+    re.IGNORECASE,
+)
+_RE_BASIS_CODE_TRAILING = re.compile(r"\s+-+\s*([A-Z][A-Z0-9]?)\s*$")
+_RE_BASIS_CODE_EMBEDDED = re.compile(r"-([A-Z][A-Z0-9]?)-")
+# Standalone condition line that precedes percent rates (no currency+amount on same line)
+_RE_DATE_COND = re.compile(
+    r"\b(?:TKT(?:/TVL)?|TVL)\b.+\b(?:ON/BEFORE|ON/AFTER)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_ftax_list(raw_text: str) -> list[dict]:
@@ -96,7 +109,7 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
             ]
         }
     """
-    result = {"code": tax_code, "name": tax_name, "sections": []}
+    result = {"code": tax_code, "name": tax_name, "sections": [], "exemptions": []}
 
     # Combine all pages into one stream of lines, removing page break markers
     # and deduplicating lines that appear in overlapping page captures
@@ -109,11 +122,13 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
             continue
         if not stripped:
             continue
-        # Deduplicate: skip lines we've already seen, unless they're rate lines
-        # (rate lines with amounts can repeat legitimately for different categories)
+        # Deduplicate: skip lines we've already seen, unless they're rate lines.
+        # Both fixed-amount lines AND percent-rate lines can repeat legitimately
+        # (e.g. "15 PERCENT ON P7..." appears in both TAX RATE and EXEMPTIONS).
         amount_match_check = _RE_AMOUNT_CHECK.search(stripped)
+        pct_match_check = _RE_PERCENT.match(stripped)
         line_key = stripped.rstrip()
-        if not amount_match_check and line_key in seen_lines:
+        if not amount_match_check and not pct_match_check and line_key in seen_lines:
             continue
         seen_lines.add(line_key)
         all_lines.append(stripped)
@@ -123,60 +138,61 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
     current_category = ""
     current_subcategory = ""
     current_rates = []
-    pending_condition = ""  # For multi-line conditions
+    pending_condition = ""       # "... AND" multi-line continuation
+    last_condition_prefix = ""   # standalone date-condition line preceding percent rates
 
-    # Amount pattern: e.g. "SGD 46.40", "CNY 172", "AED 75" (supports whole numbers and decimals)
+    in_exemptions = False
+    current_exempt_pax = ""      # "INFANTS", "CHILDREN", "ADULTS"
+    current_exempt_rates: list = []
+
+    # Amount pattern: e.g. "SGD 46.40", "CNY 172", "AED 75"
     amount_pattern = _RE_AMOUNT
+
+    # PAX type keywords that introduce an exemption sub-section
+    _PAX_KEYWORDS = ("INFANTS", "CHILDREN", "ADULTS")
+
+    def _extract_basis_code(desc: str) -> Optional[str]:
+        """Pull the IATA tax code from a percent-rate description."""
+        m = _RE_BASIS_CODE_TRAILING.search(desc)
+        if m:
+            return m.group(1)
+        m = _RE_BASIS_CODE_EMBEDDED.search(desc)
+        return m.group(1) if m else None
+
+    def _append_percent_rate(
+        rate_list: list,
+        pct: float,
+        basis_code: Optional[str],
+        condition: str,
+    ) -> None:
+        """Add a percent rate, grouping consecutive lines with the same condition."""
+        if (
+            rate_list
+            and rate_list[-1].get("percent") == pct
+            and rate_list[-1].get("condition") == condition
+            and rate_list[-1].get("currency") is None
+        ):
+            # Same rate block — append basis code to existing entry
+            if basis_code and basis_code not in rate_list[-1]["basis_codes"]:
+                rate_list[-1]["basis_codes"].append(basis_code)
+        else:
+            rate_list.append(
+                {
+                    "condition": condition,
+                    "currency": None,
+                    "amount": None,
+                    "percent": pct,
+                    "basis_codes": [basis_code] if basis_code else [],
+                    "status": _determine_status(condition),
+                }
+            )
 
     for i, stripped in enumerate(all_lines):
         upper = stripped.upper()
 
-        # Detect TAX RATE section (multiple possible formats)
-        header_patterns = [
-            "TAX RATE",
-            "TAX RATES",
-            "TAX ASSESSMENT",
-            "TAXES APPLY",
-            "TAX INFORMATION",
-        ]
-        if any(h in upper for h in header_patterns) and not amount_pattern.search(
-            stripped
-        ):
-            in_tax_rate = True
-            seen_tax_rate_block = True
-            continue
-
-        # Fallback: auto-trigger rate state if we see a valid condition and amount
-        # (some country modules skip the 'TAX RATE' header entirely)
-        if not in_tax_rate and amount_pattern.search(stripped):
-            # But only if it's NOT a reserved header or noise
-            if not any(upper.startswith(p) for p in ["FTAX", "MD", "END", "FARE"]):
-                in_tax_rate = True
-                seen_tax_rate_block = True
-                # Don't skip, process this line below!
-
-        if not in_tax_rate:
-            # Try to extract tax name from header if we don't have it
-            if not result["name"] and result["code"]:
-                name_match = re.search(
-                    rf'{re.escape(result["code"])}\s*[-–]\s+(.+)', stripped
-                )
-                if name_match:
-                    result["name"] = name_match.group(1).strip()
-            continue
-
-        # Skip noise lines
-        if upper in ("END", "MD", ")>", ">", "", "."):
-            continue
-        if upper.startswith("FTAX"):
-            continue
-        if upper == "INVALID":
-            continue
-        # Skip EXEMPTIONS section and everything after it (not rate data)
+        # ── EXEMPTIONS section ──────────────────────────────────────────────
         if upper.startswith("EXEMPTIONS"):
-            # BUT only if we've ACTUALLY seen the tax rate!
             if seen_tax_rate_block:
-                # If we already have rates, save the current section first
                 if current_rates:
                     result["sections"].append(
                         {
@@ -186,9 +202,78 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
                         }
                     )
                     current_rates = []
-                in_tax_rate = False  # Stop parsing rates until next TAX RATE
+                in_tax_rate = False
+                in_exemptions = True
+                last_condition_prefix = ""
             continue
-        # Skip other FTAX metadata sections
+
+        # ── Parse inside EXEMPTIONS ─────────────────────────────────────────
+        if in_exemptions:
+            if upper in ("END", "MD", ")>", ">", "", "."):
+                continue
+            # New pax-type sub-section
+            for pax in _PAX_KEYWORDS:
+                if pax in upper:
+                    if current_exempt_rates:
+                        result["exemptions"].append(
+                            {"pax_type": current_exempt_pax, "rates": current_exempt_rates}
+                        )
+                    current_exempt_pax = pax
+                    current_exempt_rates = []
+                    last_condition_prefix = ""
+                    break
+            # Percent rate in exemption
+            pct_m = _RE_PERCENT.match(stripped)
+            if pct_m:
+                pct = float(pct_m.group(1))
+                desc = pct_m.group(2).strip().rstrip(".")
+                basis_code = _extract_basis_code(desc)
+                condition = last_condition_prefix
+                if pending_condition:
+                    condition = f"{pending_condition} {condition}".strip()
+                    pending_condition = ""
+                _append_percent_rate(current_exempt_rates, pct, basis_code, condition)
+            elif upper.endswith("AND"):
+                pending_condition = _RE_LEADING_DASH.sub("", stripped).strip()
+            elif _RE_DATE_COND.search(stripped) and not amount_pattern.search(stripped):
+                last_condition_prefix = _RE_LEADING_DASH.sub("", stripped).strip()
+            continue
+
+        # ── Detect TAX RATE section header ──────────────────────────────────
+        header_patterns = [
+            "TAX RATE",
+            "TAX RATES",
+            "TAX ASSESSMENT",
+            "TAXES APPLY",
+            "TAX INFORMATION",
+        ]
+        if any(h in upper for h in header_patterns) and not amount_pattern.search(stripped):
+            in_tax_rate = True
+            seen_tax_rate_block = True
+            continue
+
+        # Fallback: auto-trigger on a valid amount line when header was absent
+        if not in_tax_rate and amount_pattern.search(stripped):
+            if not any(upper.startswith(p) for p in ["FTAX", "MD", "END", "FARE"]):
+                in_tax_rate = True
+                seen_tax_rate_block = True
+
+        if not in_tax_rate:
+            if not result["name"] and result["code"]:
+                name_match = re.search(
+                    rf'{re.escape(result["code"])}\s*[-–]\s+(.+)', stripped
+                )
+                if name_match:
+                    result["name"] = name_match.group(1).strip()
+            continue
+
+        # ── Inside TAX RATE block ───────────────────────────────────────────
+        if upper in ("END", "MD", ")>", ">", "", "."):
+            continue
+        if upper.startswith("FTAX"):
+            continue
+        if upper == "INVALID":
+            continue
         if any(
             upper.startswith(prefix)
             for prefix in [
@@ -205,28 +290,17 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
         ):
             continue
 
-        # Check if this line has an amount (currency + number)
         amount_match = amount_pattern.search(stripped)
 
         if amount_match:
             currency = amount_match.group(1)
             amount = float(amount_match.group(2))
-
-            # Extract the condition text (everything before the currency)
             condition_text = stripped[: amount_match.start()].strip()
-
-            # Handle multi-line conditions:
-            # previous line might be the start (e.g., "TVL ON/AFTER 01APR28 AND")
             if pending_condition:
                 condition_text = f"{pending_condition} {condition_text}"
                 pending_condition = ""
-
-            # Clean up condition: remove leading dash/hyphen
-            condition_text = _RE_LEADING_DASH.sub("",condition_text).strip()
-
-            # Determine status based on dates in the condition
+            condition_text = _RE_LEADING_DASH.sub("", condition_text).strip()
             status = _determine_status(condition_text)
-
             current_rates.append(
                 {
                     "condition": condition_text,
@@ -235,14 +309,30 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
                     "status": status,
                 }
             )
+            last_condition_prefix = ""  # reset once a rate is consumed
+
+        elif _RE_PERCENT.match(stripped):
+            # Percent-based rate: "15 PERCENT ON EMBARKATION FEE - BD"
+            pct_m = _RE_PERCENT.match(stripped)
+            pct = float(pct_m.group(1))
+            desc = pct_m.group(2).strip().rstrip(".")
+            basis_code = _extract_basis_code(desc)
+            condition = last_condition_prefix
+            if pending_condition:
+                condition = f"{pending_condition} {condition}".strip()
+                pending_condition = ""
+            _append_percent_rate(current_rates, pct, basis_code, condition)
+            # Keep last_condition_prefix — next percent line in same block reuses it
 
         elif upper.endswith("AND"):
-            # Multi-line condition: "TVL ON/AFTER 01APR28 AND" → next line has the rest
-            text = _RE_LEADING_DASH.sub("",stripped).strip()
+            text = _RE_LEADING_DASH.sub("", stripped).strip()
             pending_condition = text
 
+        elif _RE_DATE_COND.search(stripped) and not amount_match:
+            # Standalone date-condition line preceding percent rates
+            last_condition_prefix = _RE_LEADING_DASH.sub("", stripped).strip()
+
         elif _is_category_line(stripped):
-            # Save previous section if it has rates
             if current_rates:
                 result["sections"].append(
                     {
@@ -252,15 +342,14 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
                     }
                 )
                 current_rates = []
-
-            # Determine if this is a category or subcategory
+            last_condition_prefix = ""
             if _is_main_category(stripped):
                 current_category = stripped
                 current_subcategory = ""
             else:
                 current_subcategory = stripped
 
-    # Don't forget the last section
+    # ── Flush final buffers ─────────────────────────────────────────────────
     if current_rates:
         result["sections"].append(
             {
@@ -268,6 +357,10 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
                 "subcategory": current_subcategory,
                 "rates": current_rates,
             }
+        )
+    if current_exempt_rates:
+        result["exemptions"].append(
+            {"pax_type": current_exempt_pax, "rates": current_exempt_rates}
         )
 
     # Debug logging if nothing was extracted
