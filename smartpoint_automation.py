@@ -10,6 +10,7 @@ import re
 import time
 import logging
 import ctypes
+import threading
 from pywinauto import Desktop
 from pywinauto import keyboard as _pw_kb
 from pywinauto import mouse as _pw_mouse
@@ -2293,20 +2294,17 @@ class SmartpointAutomation:
         offsets = [
             (0, 0),
             (-15, 0),
-            (15, 0),  # Same line, shift X
+            (15, 0),
             (0, -9),
-            (0, 9),  # One line up/down, same X
+            (0, 9),
             (-15, -9),
-            (15, -9),  # One line up, shift X
+            (15, -9),
             (-15, 9),
-            (15, 9),  # One line down, shift X
+            (15, 9),
         ]
 
-        # Secondary wave (only fires if the primary fan-out misses):
-        # If char detection found D at a column meaningfully right of the
-        # left-biased base_x, try positions centered on the unbiased char_x.
-        # On PCs where the bias is too aggressive (~50px gap) the primary
-        # fan-out's ±15 X never reaches the actual D button.
+        # Secondary wave: if char detection found D meaningfully right of
+        # the left-biased base_x, also try positions centred on char_x.
         if char_x is not None:
             char_x_delta = char_x - base_x
             if char_x_delta >= 10:
@@ -2318,22 +2316,14 @@ class SmartpointAutomation:
                     (char_x_delta + 12, 0),
                 ])
 
-        # Tertiary wave: wider Y attempts (±18 = approximately ±1 line)
-        # in case the calibrated line_height is slightly off on this PC.
+        # Tertiary wave: wider Y (±18 ≈ ±1 line) for miscalibrated line_height.
         offsets.extend([(0, -18), (0, 18)])
         if char_x is not None and (char_x - base_x) >= 10:
             char_x_delta = char_x - base_x
             offsets.extend([(char_x_delta, -18), (char_x_delta, 18)])
 
-        # Phase D learning: persist the X offset (consistent per machine —
-        # driven by left-bias mismatch) but NOT the Y offset (varies per
-        # click — different pricing options sit on different rows, and
-        # line_height variance compounds with line index).
-        #
-        # On subsequent clicks, prepend a "same X, every Y" prefix so we
-        # lock in the correct X column and let the Y fan-out figure out
-        # each individual line. Falls through to the standard fan-out if
-        # the saved X stops working (e.g. Smartpoint window resized).
+        # Phase D: prepend saved X prefix so the known-good column is tried
+        # first; falls through to full fan-out if the saved offset stops working.
         saved_offset = _calibration_mod.get_d_click_offset(self._cal)
         if saved_offset is not None:
             saved_x, saved_y = saved_offset
@@ -2356,160 +2346,164 @@ class SmartpointAutomation:
                 f"      [D-CLICK] Trying saved-X variants first (saved_x={saved_x})."
             )
 
-        for x_off, y_off in offsets:
-            click_x = base_x + x_off
-            click_y = base_y + y_off
-            self.logger.debug(
-                f"      [D-CLICK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]"
-            )
-
-            pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
-            pyautogui.click()
-            result = self._wait_for_response(
-                text_before,
-                timeout=constants.COMMAND_WAIT_LONG + 0.5,
-                min_wait=constants.COMMAND_WAIT_SHORT,
-                stability_checks=1,
-            )
-            result = self._wait_for_stable_screen(
-                initial_text=result, max_polls=4, interval=0.25
-            )
-
-            if result.strip() != text_before.strip():
-                if looks_like_fs_tax_breakdown(result):
-                    self.logger.info(
-                        f"      [D-CLICK] Tax breakdown at offset=({x_off},{y_off})"
-                    )
-                    # Phase C: record successful Y offset for diagnostics
-                    if y_off != 0:
-                        self._cal = _calibration_mod.record_click_delta(self._cal, y_off)
-                        self._line_height = self._cal["line_height"]
-                    # Phase D: persist the working (x, y) offset so the next
-                    # D-click on this machine starts here instead of re-doing
-                    # the full fan-out from scratch.
-                    self._cal = _calibration_mod.record_d_click_offset(
-                        self._cal, x_off, y_off
-                    )
-                    _calibration_mod.save_calibration(self._cal)
-                    return result
-                else:
-                    upper = result.upper()
-                    looks_like_pricing_screen = (
-                        "PRICING OPTION" in upper
-                        and "TOTAL AMOUNT" in upper
-                        and ("BOOK" in upper or "+TQ" in upper)
-                    )
-                    if looks_like_pricing_screen:
-                        self.logger.debug(
-                            "      [D-CLICK] Screen changed but still looks like pricing options. "
-                            "Trying the next offset without hard reset..."
-                        )
-                        text_before = result
-                        pyautogui.press(
-                            "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
-                        )
-                        time.sleep(constants.ESCAPE_CLEAR_DELAY)
-                        continue
-                    self.logger.debug(
-                        "      [D-CLICK] Screen changed but strict tax parser rejected it. "
-                        f"First 160 chars: {result[:160]!r}"
-                    )
-                    self.logger.debug(
-                        "      [D-CLICK] Sending 'I' to reset and trying the next offset..."
-                    )
-                    pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
-                    pyautogui.press("enter")
-                    text_before = self._wait_for_response(
-                        result,
-                        timeout=constants.COMMAND_WAIT_FS,
-                        min_wait=constants.COMMAND_WAIT_SHORT,
-                        stability_checks=1,
-                    )
-                    text_before = self._wait_for_stable_screen(
-                        initial_text=text_before, max_polls=3, interval=0.25
-                    )
-                    if "PRICING OPTION" not in text_before.upper():
-                        self.logger.warning(
-                            f"      [D-CLICK] Could not recover FS display. Aborting."
-                        )
-                        return ""
-
-        self.logger.warning(
-            f"      [D-CLICK] Could not expand tax details after all attempts."
-        )
-        manual = self._wait_for_manual_d_click(base_x, base_y, text_before)
-        if manual:
-            return manual
-        return self._copy_terminal_text()
-
-    def _wait_for_manual_d_click(
-        self,
-        base_x: int,
-        base_y: int,
-        text_before: str,
-        timeout: float = 15.0,
-    ) -> str:
-        """After auto fan-out fails, wait for a manual left-click on D.
-
-        Polls for a left-button release via GetAsyncKeyState, captures the
-        cursor position with GetCursorPos, then checks whether the screen
-        changed to a tax breakdown. If it did, the (x_off, y_off) relative
-        to (base_x, base_y) is saved to calibration so Phase D can use it
-        as a first-attempt starting point on subsequent runs.
-        """
-        from tax_breakdown_parser import looks_like_fs_tax_breakdown
+        # --- Background click monitor (runs for the whole duration) ----------
+        # Records every left-button release so manual clicks can be detected
+        # at any point during the fan-out, not just after exhaustion.
+        # Thread only reads Win32 state — no clipboard access, thread-safe.
 
         class _POINT(ctypes.Structure):
             _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
-        VK_LBUTTON = 0x01
-        get_key = ctypes.windll.user32.GetAsyncKeyState
-        get_pos = ctypes.windll.user32.GetCursorPos
+        _mon_clicks: list[tuple[float, int, int]] = []  # (timestamp, x, y)
+        _mon_stop = threading.Event()
 
-        self.logger.warning(
-            f"      [D-CLICK] Waiting {int(timeout)}s for manual click on D button "
-            "— position will be learned for this PC."
-        )
+        def _monitor_clicks() -> None:
+            _get_key = ctypes.windll.user32.GetAsyncKeyState
+            _get_pos = ctypes.windll.user32.GetCursorPos
+            prev_dn = bool(_get_key(0x01) & 0x8000)
+            while not _mon_stop.is_set():
+                time.sleep(0.02)
+                dn = bool(_get_key(0x01) & 0x8000)
+                if prev_dn and not dn:
+                    _pt = _POINT()
+                    _get_pos(ctypes.byref(_pt))
+                    _mon_clicks.append((time.time(), _pt.x, _pt.y))
+                prev_dn = dn
 
-        deadline = time.time() + timeout
-        prev_down = bool(get_key(VK_LBUTTON) & 0x8000)
+        _mon_thread = threading.Thread(target=_monitor_clicks, daemon=True)
+        _mon_thread.start()
+        # ----------------------------------------------------------------------
 
-        while time.time() < deadline:
-            try:
-                self._raise_if_stopped()
-            except Exception:
-                return ""
-            self._sleep(0.02)
+        def _record_success(learned_x: int, learned_y: int, source: str) -> None:
+            if learned_y != 0 and source == "auto":
+                self._cal = _calibration_mod.record_click_delta(self._cal, learned_y)
+                self._line_height = self._cal["line_height"]
+            self._cal = _calibration_mod.record_d_click_offset(
+                self._cal, learned_x, learned_y
+            )
+            _calibration_mod.save_calibration(self._cal)
 
-            down = bool(get_key(VK_LBUTTON) & 0x8000)
-            if prev_down and not down:
-                # Left button just released — capture position immediately.
-                pt = _POINT()
-                get_pos(ctypes.byref(pt))
+        try:
+            for x_off, y_off in offsets:
+                click_x = base_x + x_off
+                click_y = base_y + y_off
                 self.logger.debug(
-                    f"      [D-CLICK] Manual click detected at ({pt.x}, {pt.y})"
+                    f"      [D-CLICK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]"
                 )
-                self._sleep(0.5)
-                result = self._copy_terminal_text()
-                if result.strip() and looks_like_fs_tax_breakdown(result):
-                    x_off = pt.x - base_x
-                    y_off = pt.y - base_y
-                    self.logger.info(
-                        f"      [D-CLICK] Manual D-click succeeded at ({pt.x}, {pt.y}) "
-                        f"[x_off={x_off}, y_off={y_off}] — saving to calibration."
-                    )
-                    self._cal = _calibration_mod.record_d_click_offset(
-                        self._cal, x_off, y_off
-                    )
-                    _calibration_mod.save_calibration(self._cal)
-                    return result
-                # Click didn't open tax breakdown; keep waiting for the next one.
-            prev_down = down
 
-        self.logger.warning(
-            "      [D-CLICK] Manual click window expired — no successful click recorded."
-        )
-        return ""
+                pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+                post_click_t = time.time()
+                pyautogui.click()
+                result = self._wait_for_response(
+                    text_before,
+                    timeout=constants.COMMAND_WAIT_LONG + 0.5,
+                    min_wait=constants.COMMAND_WAIT_SHORT,
+                    stability_checks=1,
+                )
+                result = self._wait_for_stable_screen(
+                    initial_text=result, max_polls=4, interval=0.25
+                )
+
+                if result.strip() != text_before.strip():
+                    if looks_like_fs_tax_breakdown(result):
+                        # Was this a manual click? Any click recorded >100 ms
+                        # after post_click_t is from the user, not pyautogui.
+                        user_click = next(
+                            (c for c in _mon_clicks if c[0] > post_click_t + 0.1),
+                            None,
+                        )
+                        if user_click:
+                            _, ux, uy = user_click
+                            lx, ly = ux - base_x, uy - base_y
+                            self.logger.info(
+                                f"      [D-CLICK] Manual click at ({ux},{uy}) "
+                                f"[x_off={lx}, y_off={ly}] — learned."
+                            )
+                            _record_success(lx, ly, "manual")
+                        else:
+                            self.logger.info(
+                                f"      [D-CLICK] Tax breakdown at offset=({x_off},{y_off})"
+                            )
+                            _record_success(x_off, y_off, "auto")
+                        return result
+                    else:
+                        upper = result.upper()
+                        looks_like_pricing_screen = (
+                            "PRICING OPTION" in upper
+                            and "TOTAL AMOUNT" in upper
+                            and ("BOOK" in upper or "+TQ" in upper)
+                        )
+                        if looks_like_pricing_screen:
+                            self.logger.debug(
+                                "      [D-CLICK] Screen changed but still looks like pricing options. "
+                                "Trying the next offset without hard reset..."
+                            )
+                            text_before = result
+                            pyautogui.press(
+                                "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
+                            )
+                            time.sleep(constants.ESCAPE_CLEAR_DELAY)
+                            continue
+                        self.logger.debug(
+                            "      [D-CLICK] Screen changed but strict tax parser rejected it. "
+                            f"First 160 chars: {result[:160]!r}"
+                        )
+                        self.logger.debug(
+                            "      [D-CLICK] Sending 'I' to reset and trying the next offset..."
+                        )
+                        pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
+                        pyautogui.press("enter")
+                        text_before = self._wait_for_response(
+                            result,
+                            timeout=constants.COMMAND_WAIT_FS,
+                            min_wait=constants.COMMAND_WAIT_SHORT,
+                            stability_checks=1,
+                        )
+                        text_before = self._wait_for_stable_screen(
+                            initial_text=text_before, max_polls=3, interval=0.25
+                        )
+                        if "PRICING OPTION" not in text_before.upper():
+                            self.logger.warning(
+                                "      [D-CLICK] Could not recover FS display. Aborting."
+                            )
+                            return ""
+
+            # Fan-out exhausted — monitor is already running; just wait for the
+            # user to click D manually (up to 15 seconds).
+            self.logger.warning(
+                "      [D-CLICK] Auto-click exhausted. Click the D button manually "
+                "within 15 seconds — position will be learned for this PC."
+            )
+            deadline = time.time() + 15.0
+            seen_clicks = len(_mon_clicks)
+            while time.time() < deadline:
+                try:
+                    self._raise_if_stopped()
+                except Exception:
+                    break
+                self._sleep(0.05)
+                if len(_mon_clicks) > seen_clicks:
+                    _, ux, uy = _mon_clicks[-1]
+                    seen_clicks = len(_mon_clicks)
+                    self._sleep(0.5)
+                    result = self._copy_terminal_text()
+                    if result.strip() and looks_like_fs_tax_breakdown(result):
+                        lx, ly = ux - base_x, uy - base_y
+                        self.logger.info(
+                            f"      [D-CLICK] Manual click succeeded at ({ux},{uy}) "
+                            f"[x_off={lx}, y_off={ly}] — saved to calibration."
+                        )
+                        _record_success(lx, ly, "manual")
+                        return result
+
+            self.logger.warning(
+                "      [D-CLICK] Could not expand tax details after all attempts."
+            )
+            return self._copy_terminal_text()
+
+        finally:
+            _mon_stop.set()
+            _mon_thread.join(timeout=0.5)
 
     def click_currency_link(self, fd_text: str) -> str:
         """
