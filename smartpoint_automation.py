@@ -2437,7 +2437,79 @@ class SmartpointAutomation:
         self.logger.warning(
             f"      [D-CLICK] Could not expand tax details after all attempts."
         )
+        manual = self._wait_for_manual_d_click(base_x, base_y, text_before)
+        if manual:
+            return manual
         return self._copy_terminal_text()
+
+    def _wait_for_manual_d_click(
+        self,
+        base_x: int,
+        base_y: int,
+        text_before: str,
+        timeout: float = 15.0,
+    ) -> str:
+        """After auto fan-out fails, wait for a manual left-click on D.
+
+        Polls for a left-button release via GetAsyncKeyState, captures the
+        cursor position with GetCursorPos, then checks whether the screen
+        changed to a tax breakdown. If it did, the (x_off, y_off) relative
+        to (base_x, base_y) is saved to calibration so Phase D can use it
+        as a first-attempt starting point on subsequent runs.
+        """
+        from tax_breakdown_parser import looks_like_fs_tax_breakdown
+
+        class _POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        VK_LBUTTON = 0x01
+        get_key = ctypes.windll.user32.GetAsyncKeyState
+        get_pos = ctypes.windll.user32.GetCursorPos
+
+        self.logger.warning(
+            f"      [D-CLICK] Waiting {int(timeout)}s for manual click on D button "
+            "— position will be learned for this PC."
+        )
+
+        deadline = time.time() + timeout
+        prev_down = bool(get_key(VK_LBUTTON) & 0x8000)
+
+        while time.time() < deadline:
+            try:
+                self._raise_if_stopped()
+            except Exception:
+                return ""
+            self._sleep(0.02)
+
+            down = bool(get_key(VK_LBUTTON) & 0x8000)
+            if prev_down and not down:
+                # Left button just released — capture position immediately.
+                pt = _POINT()
+                get_pos(ctypes.byref(pt))
+                self.logger.debug(
+                    f"      [D-CLICK] Manual click detected at ({pt.x}, {pt.y})"
+                )
+                self._sleep(0.5)
+                result = self._copy_terminal_text()
+                if result.strip() and looks_like_fs_tax_breakdown(result):
+                    x_off = pt.x - base_x
+                    y_off = pt.y - base_y
+                    self.logger.info(
+                        f"      [D-CLICK] Manual D-click succeeded at ({pt.x}, {pt.y}) "
+                        f"[x_off={x_off}, y_off={y_off}] — saving to calibration."
+                    )
+                    self._cal = _calibration_mod.record_d_click_offset(
+                        self._cal, x_off, y_off
+                    )
+                    _calibration_mod.save_calibration(self._cal)
+                    return result
+                # Click didn't open tax breakdown; keep waiting for the next one.
+            prev_down = down
+
+        self.logger.warning(
+            "      [D-CLICK] Manual click window expired — no successful click recorded."
+        )
+        return ""
 
     def click_currency_link(self, fd_text: str) -> str:
         """
