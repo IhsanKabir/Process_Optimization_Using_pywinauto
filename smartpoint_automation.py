@@ -1024,6 +1024,13 @@ class SmartpointAutomation:
             self._sleep(poll_interval)
             new_text = self._copy_terminal_text()
 
+            # Skip blank reads — these are clipboard/focus failures, not a real
+            # empty screen. Treating empty as "screen changed" causes click_d_button
+            # to think a successful D-click missed (the tax breakdown just opened
+            # but the read lost focus transiently), then issue an unwanted "I" reset.
+            if not new_text.strip():
+                continue
+
             # First check: has screen changed from original?
             if new_text.strip() != text_before.strip():
                 # Screen has changed - now verify it's stable
