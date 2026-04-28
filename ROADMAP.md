@@ -512,6 +512,79 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.11 — percent-based FTAX rate parsing + infant exemptions (2026-04-28):**
+  - **Problem:** FTAX screens for some taxes (e.g. Bangladesh E5) express rates as
+    "15 PERCENT ON EMBARKATION FEE - BD" instead of a fixed "BDT NNN" amount.
+    The parser silently dropped these lines; the tax report showed no rate for E5.
+  - **Fix in `tax_parser.py`:**
+    - New regexes: `_RE_PERCENT` (matches "X PERCENT ON/OF ... - CODE"),
+      `_RE_BASIS_CODE_TRAILING` (trailing "- BD"), `_RE_BASIS_CODE_EMBEDDED`
+      ("-BD-"), `_RE_DATE_COND` (standalone condition prefix lines like
+      "TKT/TVL ON/AFTER 16AUG20").
+    - Consecutive percent lines with the same condition (e.g. three "15 PERCENT" lines
+      after "TKT/TVL ON/AFTER 16AUG20") are merged into a single rate entry with
+      `basis_codes=["BD","P7","P8"]` and `percent=15.0`.
+    - `result` dict now carries an `"exemptions"` list. The EXEMPTIONS section is
+      parsed (not skipped): pax-type headers like "INFANTS" open a new exemption
+      group; subsequent percent lines populate it. Infant exemption renders as
+      "15% of P7+P8" (no BD) in the report.
+    - Deduplication bypass: `seen_lines` dedup was dropping EXEMPTIONS-section
+      percent lines that already appeared in TAX RATE. Fixed by bypassing dedup
+      for any line that matches `_RE_PERCENT`.
+  - **Fix in `tax_report.py`:**
+    - `EXEMPT_FILL` (yellow `FFF2CC`) declared as a module-level constant.
+    - Rate rendering: when `rate["percent"]` is present, displays
+      `"15% of BD+P7+P8"` instead of a currency/amount pair.
+    - Exemption rows appended after section rates with `[INFANTS]` in the
+      Terminals column and yellow fill.
+  - New test file `tests/test_tax_parser_percent.py`: 9 tests covering old BD-only
+    rate, new BD+P7+P8 grouped rate, condition capture, exemption parsing, INFANTS
+    pax_type, P7+P8 in infant, and exemption non-bleed into main sections.
+  - 281 tests pass.
+
+- **v1.5.11 — manual D-click learning: 5s initial window before auto fan-out (2026-04-28):**
+  - **Problem:** On uncalibrated PCs (no saved `d_click_offset`), `pyautogui.moveTo`
+    immediately grabbed the mouse for the first auto-click attempt, giving the user
+    zero time to click manually.
+  - **Fix:** When `saved_offset is None`, a 5-second window opens before the auto fan-out
+    starts. A log message prompts "Click the D button now (5 s) — auto-click starts after."
+    If a manual click is detected via the background monitor thread and the clipboard
+    confirms an FS tax breakdown, the offset is learned and saved immediately. If no
+    manual click is made within 5 s, the standard fan-out proceeds unchanged.
+  - **Working-PC safety:** The 5-second window is skipped entirely when Phase D has a
+    saved offset (i.e., any machine that has successfully clicked D at least once before).
+    No behavior change on the developer laptop.
+
+- **v1.5.10 — concurrent manual D-click detection via background thread (2026-04-28):**
+  - **Problem:** Manual click learning (v1.5.9) only engaged after the fan-out was
+    fully exhausted. If the user clicked during auto fan-out, the click was lost.
+  - **Fix:** A background `threading.Thread(daemon=True)` starts before the first
+    auto-click attempt and monitors `GetAsyncKeyState(VK_LBUTTON)` + `GetCursorPos()`
+    every 20 ms. All left-button-up events are recorded as `(timestamp, x, y)`.
+    After each auto `pyautogui.click()`, a `post_click_t` timestamp is captured; any
+    recorded click more than 100 ms after `post_click_t` is attributed to the user
+    (not to pyautogui), and its offset is learned. Thread is stopped in `try/finally`
+    regardless of success or failure.
+
+- **v1.5.9 — manual D-click fallback with position learning (2026-04-28):**
+  - After the fan-out is exhausted without success, a 15-second window prompts the
+    user to click the D button manually. If a click is detected via the background
+    monitor and the clipboard confirms a tax breakdown, the offset `(user_x - base_x,
+    user_y - base_y)` is persisted to `calibration.json` as `d_click_offset` so
+    the next run skips the fan-out entirely.
+
+- **v1.5.8 — skip blank clipboard reads in `_wait_for_response` (2026-04-28):**
+  - **Root cause:** On the work laptop, the D-click at fan-out attempt 5 landed only
+    2 px from the actual D and likely succeeded. However, the immediate post-click
+    clipboard read returned empty (focus loss / clipboard race). With
+    `stability_checks=1`, `_wait_for_response` treated a single empty read as
+    "screen changed to empty" and returned `""`, causing `click_d_button` to
+    misclassify the successful click as a miss and continue the fan-out.
+  - **Fix:** Added `if not new_text.strip(): continue` inside `_wait_for_response`'s
+    polling loop. Empty reads are silently skipped; the loop waits for the first
+    non-empty clipboard snapshot before comparing for stability. No behavior change
+    when the clipboard always returns content (developer laptop).
+
 - **v1.5.7 + Phase D learning (2026-04-27):**
   - **Phase D — D-click offset persistence.** After the wider fan-out finds the
     working `(x_off, y_off)` for D-click on this machine, the tuple is persisted
