@@ -174,6 +174,7 @@ def test_submit_feedback_posts_json(monkeypatch):
     monkeypatch.setattr("feedback_client.urllib.request.urlopen", fake_urlopen)
     monkeypatch.setattr("feedback_client.socket.gethostname", lambda: "DESKTOP-02")
     monkeypatch.setattr("feedback_client.platform.platform", lambda: "Windows-10")
+    monkeypatch.setattr("feedback_client._resolve_session_token", lambda: None)
 
     result = submit_feedback(
         category="suggestion",
