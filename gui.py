@@ -424,7 +424,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.15"
+    VERSION = "v1.5.16"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -758,16 +758,6 @@ class TravelportGUI:
             g_only_flags, text="Taxes only (skip fares)", variable=self.only_yq_var
         ).pack(anchor="w", pady=1)
 
-        # Reset D-click calibration — drops the saved (x, y) offset for this
-        # PC so the next D-click triggers the 5-second manual learning
-        # window.  Use this when D-click is consistently landing on the
-        # wrong glyph (e.g. BOOK instead of D) on this machine.
-        ttk.Button(
-            g_only_flags,
-            text="Reset D-click calibration",
-            command=self._reset_d_click_calibration,
-        ).pack(anchor="w", pady=(6, 1))
-
         # ── Group 5: Compare against (hidden in Currency / Manual) ──────
         g_compare = tk.Frame(parent, bg="#f2f2f2")
         tk.Label(
@@ -1030,6 +1020,22 @@ class TravelportGUI:
             "Run this after changing screen resolution or DPI scaling.",
         )
 
+        self.reset_dclick_btn = ttk.Button(
+            bar,
+            text="↺  Reset D-click",
+            command=self._reset_d_click_calibration,
+            width=16,
+        )
+        self.reset_dclick_btn.pack(side="left", padx=4)
+        _Tooltip(
+            self.reset_dclick_btn,
+            "Drop the saved D-click offset for this PC.\n"
+            "The next D-click will pause for 5 seconds — click the\n"
+            "D button on the FS screen during that window so the new\n"
+            "position is learned. Use this if D-click keeps landing\n"
+            "on the wrong glyph (e.g. BOOK instead of D).",
+        )
+
         self._user_label = tk.Label(
             bar, text="", bg="#dde3e8", fg="#357a38", font=("Segoe UI", 9)
         )
@@ -1163,6 +1169,13 @@ class TravelportGUI:
         m_fzs_total = re.search(
             r"Extracting FZS rates for (\d+) currencies", text
         )
+        # ── Tax progress: [N/M] Airport: KUL (Kuala Lumpur) -> FTAX-MY
+        # Each line marks the START of a new airport, so by the time we see
+        # line N, exactly N-1 airports are completed.  Without this the ETA
+        # overlay stays stuck on "calculating..." for the whole tax run.
+        m_tax = re.search(
+            r"\[(\d+)/(\d+)\]\s+Airport:\s+[A-Z]{3}", text
+        )
         if m_cmd:
             idx = int(m_cmd.group(1))
             total = int(m_cmd.group(2))
@@ -1202,6 +1215,18 @@ class TravelportGUI:
                 self._total = total
                 self._set_step(3)
                 self._update_counter()
+
+        elif m_tax:
+            idx = int(m_tax.group(1))
+            total = int(m_tax.group(2))
+            self._done = idx
+            self._total = total
+            # Seeing airport N's start means N-1 are completed (the previous
+            # ones).  Don't go negative when N=1.
+            self._completed_routes = max(0, idx - 1)
+            self._set_step(3)
+            self._update_counter()
+            self._refresh_eta()
 
         # ── Route succeeded ──
         elif re.search(
