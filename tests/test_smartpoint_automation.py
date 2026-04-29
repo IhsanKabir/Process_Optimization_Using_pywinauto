@@ -937,6 +937,206 @@ def test_clear_d_click_offset_is_noop_when_none_saved():
     assert "d_click_offset" not in cleared
 
 
+def test_clear_d_click_offset_removes_both_anchored_variants():
+    cal = {
+        "line_height": 20,
+        "d_click_offset": [49, 0],
+        "d_click_char_x_offset": [0, 0],
+    }
+    cleared = calibration.clear_d_click_offset(cal)
+    assert "d_click_offset" not in cleared
+    assert "d_click_char_x_offset" not in cleared
+
+
+def test_record_d_click_offset_stores_both_when_char_x_off_provided():
+    cal = {"line_height": 20}
+    updated = calibration.record_d_click_offset(cal, x_off=49, y_off=0, char_x_off=0)
+    assert updated["d_click_offset"] == [49, 0]
+    assert updated["d_click_char_x_offset"] == [0, 0]
+
+
+def test_record_d_click_offset_keeps_legacy_only_when_char_x_off_none():
+    cal = {"line_height": 20}
+    updated = calibration.record_d_click_offset(cal, x_off=49, y_off=0, char_x_off=None)
+    assert updated["d_click_offset"] == [49, 0]
+    assert "d_click_char_x_offset" not in updated
+
+
+def test_get_d_click_char_x_offset_returns_tuple():
+    cal = {"d_click_char_x_offset": [0, 0]}
+    assert calibration.get_d_click_char_x_offset(cal) == (0, 0)
+
+
+def test_get_d_click_char_x_offset_returns_none_when_missing():
+    cal = {"d_click_offset": [49, 0]}
+    assert calibration.get_d_click_char_x_offset(cal) is None
+
+
+def test_click_d_button_prefers_char_x_anchored_offset_when_present(monkeypatch):
+    """v1.5.16: when d_click_char_x_offset is saved, click_d_button must
+    target char_x + saved_char_x_off, NOT base_x + saved_x.  This is the
+    point of anchoring to char_x — saved coords stay correct even when
+    base_x shifts (terminal-width changes).
+    """
+    automation = SmartpointAutomation()
+    move_calls: list[tuple[int, int]] = []
+
+    # The saved char_x-anchored offset is (0, 0) — i.e. learned from a
+    # click directly on the D glyph.  The legacy base_x offset (49, 0)
+    # is also stored but should be IGNORED in favor of the char_x one.
+    automation._cal = {
+        "line_height": 20,
+        "dpi": 96,
+        "source": "dpi_auto",
+        "click_deltas": [],
+        "delta_correction": 0,
+        "d_click_offset": [49, 0],
+        "d_click_char_x_offset": [0, 0],
+    }
+
+    fs_text = "\n".join(
+        [
+            "PRICING OPTION 1",
+            "1   EK    587  N  09MAY DAC DXB",
+            "             \xabBOOK\xbb             +TQ                                                     D  R  +1",
+            ">",
+        ]
+    )
+    settled_tax_text = (
+        "FS-1 ADT\n"
+        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
+    )
+
+    # Simulate a different terminal width on this run vs when the offset
+    # was learned: ratio_x=1740, char_x=1810. base_x = min(char_x-28,
+    # ratio_x) = min(1782, 1740) = 1740. The legacy offset (49, 0) would
+    # click at 1789 (left of D); the char_x offset (0, 0) maps to
+    # base_x + (1810-1740) + 0 = 1810 (on D).
+    pixel_returns = iter([(1740, 540), (1810, 540)])
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(
+        automation, "_text_line_to_pixel", lambda *a, **kw: next(pixel_returns)
+    )
+    monkeypatch.setattr(
+        automation,
+        "_get_terminal_rect",
+        lambda: type("R", (), {"width": lambda self: 1500})(),
+    )
+    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
+
+    call_counter = {"n": 0}
+
+    def fake_resp(*a, **kw):
+        call_counter["n"] += 1
+        return fs_text
+
+    def fake_stable(*a, **kw):
+        if call_counter["n"] >= 1:
+            return settled_tax_text
+        return fs_text
+
+    monkeypatch.setattr(automation, "_wait_for_response", fake_resp)
+    monkeypatch.setattr(automation, "_wait_for_stable_screen", fake_stable)
+    monkeypatch.setattr(calibration, "save_calibration", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "moveTo",
+        lambda x, y, duration=None: move_calls.append((x, y)),
+    )
+
+    result = automation.click_d_button(0, fs_text)
+
+    assert "FARE USD955.00" in result
+    assert move_calls[0] == (1810, 540), (
+        "char_x-anchored offset must place the first click on the actual D "
+        f"glyph (x=1810), not on the legacy base_x position (x=1789).  Got: {move_calls[0]!r}"
+    )
+
+
+def test_click_d_button_falls_back_to_base_x_offset_when_char_x_anchored_missing(
+    monkeypatch,
+):
+    """Legacy PCs that learned an offset under v1.5.14 or earlier have only
+    d_click_offset, not d_click_char_x_offset.  The new code path must
+    fall back gracefully to the base_x-relative offset."""
+    automation = SmartpointAutomation()
+    move_calls: list[tuple[int, int]] = []
+
+    automation._cal = {
+        "line_height": 20,
+        "dpi": 96,
+        "source": "dpi_auto",
+        "click_deltas": [],
+        "delta_correction": 0,
+        "d_click_offset": [49, 0],
+        # No d_click_char_x_offset (legacy install).
+    }
+
+    fs_text = "\n".join(
+        [
+            "PRICING OPTION 1",
+            "1   EK    587  N",
+            "             \xabBOOK\xbb             +TQ                                                     D  R  +1",
+            ">",
+        ]
+    )
+    settled_tax_text = (
+        "FS-1 ADT\n"
+        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
+    )
+
+    pixel_returns = iter([(1752, 540), (1801, 540)])
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(
+        automation, "_text_line_to_pixel", lambda *a, **kw: next(pixel_returns)
+    )
+    monkeypatch.setattr(
+        automation,
+        "_get_terminal_rect",
+        lambda: type("R", (), {"width": lambda self: 1500})(),
+    )
+    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
+
+    call_counter = {"n": 0}
+
+    def fake_resp(*a, **kw):
+        call_counter["n"] += 1
+        return fs_text
+
+    def fake_stable(*a, **kw):
+        if call_counter["n"] >= 1:
+            return settled_tax_text
+        return fs_text
+
+    monkeypatch.setattr(automation, "_wait_for_response", fake_resp)
+    monkeypatch.setattr(automation, "_wait_for_stable_screen", fake_stable)
+    monkeypatch.setattr(calibration, "save_calibration", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        spa.pyautogui,
+        "moveTo",
+        lambda x, y, duration=None: move_calls.append((x, y)),
+    )
+
+    automation.click_d_button(0, fs_text)
+
+    # Falls back to base_x + saved_x = 1752 + 49 = 1801.
+    assert move_calls[0] == (1801, 540), (
+        f"Legacy fallback must use base_x + saved_x.  Got: {move_calls[0]!r}"
+    )
+
+
 def test_click_d_button_clears_stale_saved_offset_after_fanout_exhausts(monkeypatch):
     """v1.5.15: when every auto-click attempt fails AND a saved offset was
     in play, the offset is auto-invalidated so the next run starts fresh

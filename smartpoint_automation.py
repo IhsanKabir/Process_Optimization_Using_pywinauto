@@ -2324,9 +2324,28 @@ class SmartpointAutomation:
 
         # Phase D: prepend saved X prefix so the known-good column is tried
         # first; falls through to full fan-out if the saved offset stops working.
+        #
+        # Two saved offsets may be present:
+        #   * d_click_char_x_offset (preferred when char_x detected this run):
+        #     stable across terminal-width changes because char_x is detected
+        #     per line.  Convert to a base_x-relative offset before feeding
+        #     the offsets list machinery, which clicks at base_x + x_off.
+        #   * d_click_offset: legacy base_x-relative offset, used as fallback.
         saved_offset = _calibration_mod.get_d_click_offset(self._cal)
-        if saved_offset is not None:
-            saved_x, saved_y = saved_offset
+        saved_char_x_offset = _calibration_mod.get_d_click_char_x_offset(self._cal)
+
+        effective_saved_offset: tuple[int, int] | None = None
+        saved_offset_source: str = ""
+        if saved_char_x_offset is not None and char_x is not None:
+            cx_off, cy_off = saved_char_x_offset
+            effective_saved_offset = ((char_x - base_x) + cx_off, cy_off)
+            saved_offset_source = "char_x"
+        elif saved_offset is not None:
+            effective_saved_offset = saved_offset
+            saved_offset_source = "base_x"
+
+        if effective_saved_offset is not None:
+            saved_x, saved_y = effective_saved_offset
             saved_x_prefix = [
                 (saved_x, saved_y),
                 (saved_x, 0),
@@ -2343,7 +2362,8 @@ class SmartpointAutomation:
                     reordered.append(off)
             offsets = reordered
             self.logger.debug(
-                f"      [D-CLICK] Trying saved-X variants first (saved_x={saved_x})."
+                f"      [D-CLICK] Trying saved-X variants first "
+                f"(saved_x={saved_x}, source={saved_offset_source})."
             )
 
         # --- Background click monitor (runs for the whole duration) ----------
@@ -2378,8 +2398,14 @@ class SmartpointAutomation:
             if learned_y != 0 and source == "auto":
                 self._cal = _calibration_mod.record_click_delta(self._cal, learned_y)
                 self._line_height = self._cal["line_height"]
+            # When the per-line D-glyph landmark was detectable, also store
+            # the offset relative to char_x so subsequent runs at different
+            # terminal widths still click on the right glyph.
+            char_x_off: int | None = None
+            if char_x is not None:
+                char_x_off = learned_x - (char_x - base_x)
             self._cal = _calibration_mod.record_d_click_offset(
-                self._cal, learned_x, learned_y
+                self._cal, learned_x, learned_y, char_x_off=char_x_off
             )
             _calibration_mod.save_calibration(self._cal)
 
@@ -2388,7 +2414,7 @@ class SmartpointAutomation:
             # Gives the user 5 seconds to click D before the mouse is moved.
             # Once an offset is learned and saved, this window is skipped entirely
             # (Phase D's saved prefix fires first instead).
-            if saved_offset is None:
+            if effective_saved_offset is None:
                 self.logger.warning(
                     "      [D-CLICK] No saved position for this PC. "
                     "Click the D button now (5 s) — auto-click starts after."
@@ -2500,16 +2526,18 @@ class SmartpointAutomation:
                             return ""
 
             # Auto-invalidate a stale saved offset.  If we got here, every
-            # auto-click attempt failed.  When there was a saved offset, it
-            # was almost certainly wrong (terminal width changed since
-            # learning, or the previous click was learned on the wrong
-            # glyph).  Drop it so the next run starts the manual-learning
-            # window from scratch instead of replaying the bad position.
-            if saved_offset is not None:
+            # auto-click attempt failed.  When there was a saved offset
+            # (either anchored), it was almost certainly wrong (the
+            # previous click was learned on the wrong glyph, or the
+            # layout shifted enough that the saved column no longer maps
+            # to D).  Drop both anchored variants so the next run starts
+            # the manual-learning window from scratch.
+            if saved_offset is not None or saved_char_x_offset is not None:
+                stale = saved_char_x_offset if saved_char_x_offset is not None else saved_offset
                 self._cal = _calibration_mod.clear_d_click_offset(self._cal)
                 _calibration_mod.save_calibration(self._cal)
                 self.logger.warning(
-                    f"      [D-CLICK] Saved offset {saved_offset} did not produce "
+                    f"      [D-CLICK] Saved offset {stale} did not produce "
                     f"a tax breakdown after fan-out; cleared from calibration."
                 )
 

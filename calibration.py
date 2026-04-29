@@ -157,21 +157,30 @@ def record_click_delta(calibration: dict, y_offset_used: int) -> dict:
     return calibration
 
 
-def record_d_click_offset(calibration: dict, x_off: int, y_off: int) -> dict:
-    """Persist the (x_off, y_off) tuple that produced a successful D-click
-    on this machine. Used as a 'try first' starting point on subsequent
-    D-clicks so we don't re-execute the full fan-out every time on PCs
-    where the default position is consistently off (e.g. the left-bias
-    heuristic over-corrects on a 1920x1080 work laptop). Self-correcting
-    if the saved offset stops working — control falls through to the
-    standard fan-out which then overwrites the saved offset with whatever
-    new position succeeds."""
+def record_d_click_offset(
+    calibration: dict,
+    x_off: int,
+    y_off: int,
+    char_x_off: int | None = None,
+) -> dict:
+    """Persist the offset(s) that produced a successful D-click on this PC.
+
+    Two offsets get stored when char_x_off is provided:
+      * d_click_offset = (x_off, y_off) — relative to base_x / base_y.
+        Kept for backward compatibility.
+      * d_click_char_x_offset = (char_x_off, y_off) — relative to the
+        per-line char_x landmark.  Stable across terminal-width changes
+        because char_x is detected per click rather than derived from
+        the empirical ratio.  Preferred at apply time.
+    """
     calibration["d_click_offset"] = [int(x_off), int(y_off)]
+    if char_x_off is not None:
+        calibration["d_click_char_x_offset"] = [int(char_x_off), int(y_off)]
     return calibration
 
 
 def get_d_click_offset(calibration: dict) -> tuple[int, int] | None:
-    """Return the previously-saved D-click offset, or None."""
+    """Return the previously-saved base_x-relative D-click offset, or None."""
     raw = calibration.get("d_click_offset")
     if isinstance(raw, list) and len(raw) == 2:
         try:
@@ -181,13 +190,31 @@ def get_d_click_offset(calibration: dict) -> tuple[int, int] | None:
     return None
 
 
+def get_d_click_char_x_offset(calibration: dict) -> tuple[int, int] | None:
+    """Return the previously-saved char_x-relative D-click offset, or None.
+
+    The first int is the X delta from the per-line char_x landmark; the
+    second is the Y delta from base_y (Y reference does not depend on
+    horizontal layout).  Returns None when the offset has not been
+    recorded yet — typical on PCs that learned an offset under v1.5.14
+    or earlier, before the char_x-anchored field existed."""
+    raw = calibration.get("d_click_char_x_offset")
+    if isinstance(raw, list) and len(raw) == 2:
+        try:
+            return int(raw[0]), int(raw[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def clear_d_click_offset(calibration: dict) -> dict:
-    """Remove the saved D-click offset so the next D-click re-runs the
-    manual-learning window.  Used by the GUI 'Reset D-click calibration'
-    action and by click_d_button's auto-invalidate path when every
-    auto-attempt fails on a machine whose saved offset has gone stale."""
-    if "d_click_offset" in calibration:
-        calibration.pop("d_click_offset", None)
+    """Remove every saved D-click offset (both base_x- and char_x-anchored)
+    so the next D-click re-runs the manual-learning window.  Used by the
+    GUI 'Reset D-click calibration' action and by click_d_button's
+    auto-invalidate path when every auto-attempt fails on a machine
+    whose saved offset has gone stale."""
+    calibration.pop("d_click_offset", None)
+    calibration.pop("d_click_char_x_offset", None)
     return calibration
 
 
