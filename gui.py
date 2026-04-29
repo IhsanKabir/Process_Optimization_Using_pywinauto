@@ -335,6 +335,18 @@ def _pick_release_exe_url(assets: list[dict]) -> str | None:
     return fallback_url
 
 
+def _pick_release_zip_url(assets: list[dict]) -> str | None:
+    """Choose a .zip asset from a release. v1.5.x ships as a folder zip
+    instead of a single exe; the in-app one-click update flow can't swap a
+    folder safely, so we fall back to opening the release page."""
+    for asset in assets:
+        name = str(asset.get("name") or "").strip().lower()
+        url = str(asset.get("browser_download_url") or "").strip()
+        if name.endswith(".zip") and url:
+            return url
+    return None
+
+
 def _build_updater_script(
     current_exe: str, new_exe: str, state_file: str, log_file: str, target_version: str
 ) -> str:
@@ -393,11 +405,15 @@ def _check_for_update(current_version: str) -> dict | None:
             data = json.loads(resp.read().decode("utf-8"))
         latest_tag = data.get("tag_name", "")
         if _parse_version(latest_tag) > _parse_version(current_version):
-            exe_url = _pick_release_exe_url(data.get("assets", []))
+            assets = data.get("assets", [])
+            exe_url = _pick_release_exe_url(assets)
+            zip_url = _pick_release_zip_url(assets) if not exe_url else None
             return {
                 "version": latest_tag,
                 "notes": data.get("body", ""),
                 "exe_url": exe_url,
+                "zip_url": zip_url,
+                "release_url": data.get("html_url", ""),
             }
     except Exception:
         pass
@@ -408,7 +424,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.13"
+    VERSION = "v1.5.14"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -1543,9 +1559,26 @@ class TravelportGUI:
 
     def _start_update(self, info, dlg, progress_var, btn):
         if not info.get("exe_url"):
+            # v1.5.x releases ship as a folder zip — the in-app one-click swap
+            # flow only handles a single exe.  Open the release page so the
+            # user can download and install the zip manually.
+            release_url = info.get("release_url") or info.get("zip_url")
+            if release_url:
+                webbrowser.open(release_url)
+                messagebox.showinfo(
+                    "Manual update",
+                    "This release ships as a folder zip. Your browser has been "
+                    "opened to the release page — download the zip, extract it, "
+                    "and replace your TravelportAuto folder.",
+                )
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+                return
             messagebox.showerror(
                 "Update Error",
-                "No TravelportAuto.exe download link was found for this release.",
+                "No download link was found for this release.",
             )
             return
         btn.configure(state="disabled")
