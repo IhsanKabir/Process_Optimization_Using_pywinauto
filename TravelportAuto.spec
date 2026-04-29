@@ -6,7 +6,7 @@ import sys
 
 import _tkinter
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 
 def _collect_tree(root: Path, dest_root: str, exclude_names=None, exclude_suffixes=None):
@@ -59,6 +59,14 @@ _datas += _collect_tree(_TCL_MODULE_DIR, f"tcl{_TCL_MAJOR}")
 _datas += collect_data_files('airportsdata')
 
 
+# keyring 25.x relies on entry-point plugin discovery and ships submodules
+# (backends, util, compat) that PyInstaller's static scan misses even when
+# they are listed as hiddenimports.  collect_all pulls the package files,
+# data, and metadata so the frozen exe can import keyring at runtime.
+_keyring_datas, _keyring_binaries, _keyring_hiddenimports = collect_all('keyring')
+_datas += _keyring_datas
+
+
 _BUILD_MODE = os.environ.get("TPA_PYINSTALLER_MODE", "onedir").strip().lower()
 _ONEFILE = _BUILD_MODE in {"onefile", "single", "singlefile"}
 
@@ -66,9 +74,9 @@ _ONEFILE = _BUILD_MODE in {"onefile", "single", "singlefile"}
 a = Analysis(
     ['gui.py'],
     pathex=[],
-    binaries=[],
+    binaries=list(_keyring_binaries),
     datas=_datas,
-    hiddenimports=[
+    hiddenimports=list(_keyring_hiddenimports) + [
         '_tkinter',
         'tkinter', 'tkinter.ttk', 'tkinter.scrolledtext',
         'tkinter.filedialog', 'tkinter.messagebox', 'tkinter.simpledialog',

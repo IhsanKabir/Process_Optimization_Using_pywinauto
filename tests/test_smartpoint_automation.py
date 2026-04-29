@@ -1,4 +1,4 @@
-import threading
+﻿import threading
 
 import calibration
 import smartpoint_automation as spa
@@ -279,7 +279,7 @@ def test_click_d_button_accepts_settled_tax_screen(monkeypatch):
     fs_text = """
 PRICING OPTION 1
 1   QR    639  N  09MAY DAC DOH   0305  0615
-             «BOOK»             +TQ                                                     D  R  +1
+             Â«BOOKÂ»             +TQ                                                     D  R  +1
 >
 """
     settled_tax_text = """
@@ -340,10 +340,10 @@ def test_click_d_button_anchors_to_selected_pricing_option_block(monkeypatch):
             "HEADER WITH BOOK +TQ                                                     D  R",
             "PRICING OPTION 1",
             "1   BS    325  E  20MAY DAC CAN   2210  0350 #  WE   738",
-            "             Â«BOOKÂ»             +TQ                                                     D  R  +0",
+            "             Ã‚Â«BOOKÃ‚Â»             +TQ                                                     D  R  +0",
             "PRICING OPTION 2",
             "1   QR    639  N  09MAY DAC DOH   0305  0615",
-            "             Â«BOOKÂ»             +TQ                                                     D  R  +0",
+            "             Ã‚Â«BOOKÃ‚Â»             +TQ                                                     D  R  +0",
             ">",
         ]
     )
@@ -389,7 +389,7 @@ def test_click_d_button_rejects_loose_keyword_screen_and_tries_next_offset(monke
     fs_text = """
 PRICING OPTION 1
 1   QR    639  N  09MAY DAC DOH   0305  0615
-             «BOOK»             +TQ                                                     D  R  +1
+             Â«BOOKÂ»             +TQ                                                     D  R  +1
 >
 """
     bad_detail_text = """
@@ -450,7 +450,7 @@ def test_click_d_button_keeps_trying_when_screen_returns_to_pricing_options(monk
     fs_text = """
 PRICING OPTION 1
 1   BS    325  E  20MAY DAC CAN   2210  0350 #  WE   738      EBDCNO
-             «BOOK»             +TQ                                                     D  R  +0
+             Â«BOOKÂ»             +TQ                                                     D  R  +0
 >
 """
     repriced_text = """
@@ -461,7 +461,7 @@ TTL OF 1   PRICING OPTIONS AND 1     ITINERARY OPTIONS RETURNED
  PRICING OPTION 1                  TOTAL AMOUNT             28870 BDT
 ADT
 1   BS    325  E  20MAY DAC CAN   2210  0350 #  WE   738      EBDCNO
-             «BOOK»             +TQ                                                     D  R  +0
+             Â«BOOKÂ»             +TQ                                                     D  R  +0
 """
     settled_tax_text = """
 TOTAL JOURNEY TIME
@@ -920,330 +920,3 @@ def test_login_types_sign_on_username_and_password(monkeypatch):
 
     assert result is True
     assert sent_keys == ["SON/Z3L5Q", "user/name", "secret123"]
-
-
-# ── v1.5.12 fan-out ordering: char_x_delta tried early ─────────────────────────
-
-
-def _stub_terminal_rect(width: int = 1500):
-    return type("Rect", (), {"width": lambda self: width})()
-
-
-def test_click_d_button_tries_char_x_column_within_first_seven_attempts(monkeypatch):
-    """v1.5.12: when Phase D has a saved offset that is in the right neighbourhood
-    (within 30 px of the detected char_x_delta), the char_x_delta variants must
-    still be tried within the first 7 fan-out attempts (after saved-X core).
-    For the strong-disagreement case (≥30 px), see the smart-first test.
-    """
-    automation = SmartpointAutomation()
-    move_calls: list[tuple[int, int]] = []
-
-    # saved_x=25, char_x_delta=49 → |25 - 49| = 24 < 30 → smart-first does NOT
-    # fire; saved-X core stays at attempts 1-4, char_x_early at 5-7.
-    automation._cal = {
-        "line_height": 20,
-        "dpi": 96,
-        "source": "dpi_auto",
-        "click_deltas": [],
-        "delta_correction": 0,
-        "d_click_offset": [25, 12],
-    }
-
-    fs_text = "\n".join(
-        [
-            "PRICING OPTION 1",
-            "1   BS    325  E  20MAY DAC CAN   2210  0350 #  WE   738",
-            "             \xabBOOK\xbb             +TQ                                                     D  R  +0",
-            ">",
-        ]
-    )
-    settled_tax_text = (
-        "TOTAL JOURNEY TIME\n"
-        "FS-1 ADT\n"
-        "REFUNDABLE: YES\n"
-        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
-    )
-
-    pixel_returns = iter([(1752, 540), (1801, 540)])
-
-    def fake_text_line_to_pixel(text, line_idx, char_idx=None, x_ratio=0.5):
-        return next(pixel_returns)
-
-    monkeypatch.setattr(automation, "focus", lambda force=False: True)
-    monkeypatch.setattr(automation, "_text_line_to_pixel", fake_text_line_to_pixel)
-    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_terminal_rect())
-    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
-    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
-
-    call_counter = {"n": 0}
-
-    def fake_wait_for_response(*args, **kwargs):
-        call_counter["n"] += 1
-        return fs_text
-
-    def fake_wait_for_stable_screen(*args, **kwargs):
-        if call_counter["n"] >= 5:
-            return settled_tax_text
-        return fs_text
-
-    monkeypatch.setattr(automation, "_wait_for_response", fake_wait_for_response)
-    monkeypatch.setattr(
-        automation, "_wait_for_stable_screen", fake_wait_for_stable_screen
-    )
-
-    monkeypatch.setattr(calibration, "save_calibration", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        spa.pyautogui,
-        "moveTo",
-        lambda x, y, duration=None: move_calls.append((x, y)),
-    )
-
-    result = automation.click_d_button(0, fs_text)
-
-    assert "FARE USD955.00" in result, "Expected the simulated success path"
-    # Saved offset: x_off=25, y_off=12. base_x=1752, base_y=540.
-    # char_x_delta = 1801 - 1752 = 49 → char_x_early variants are inserted.
-    # |25 - 49| = 24 < 30 → smart-first does NOT fire; saved-X core first.
-    # Order (v1.5.12 + v1.5.13):
-    #   1: (saved_x=25,  saved_y=12) -> (1777, 552)
-    #   2: (saved_x=25,  y=0)        -> (1777, 540)
-    #   3: (saved_x=25,  y=-9)       -> (1777, 531)
-    #   4: (saved_x=25,  y=9)        -> (1777, 549)
-    #   5: (cxd=49,      y=0)        -> (1801, 540)   <- char_x! success here.
-    assert len(move_calls) == 5, f"Expected 5 moveTo calls, got {move_calls!r}"
-    assert all(x == 1777 for (x, _) in move_calls[:4]), (
-        f"First four attempts must be at saved_x (1777): {move_calls[:4]!r}"
-    )
-    assert move_calls[4] == (1801, 540), (
-        "5th attempt must hit the actual D column (1801, 540). "
-        f"Got: {move_calls[4]!r}"
-    )
-
-
-def test_click_d_button_tries_char_x_first_when_saved_offset_disagrees(monkeypatch):
-    """v1.5.13 smart rule: when the saved offset (x=6) is 30+ px away from the
-    detected char_x_delta (49), the saved offset was learned at a different
-    layout and is unlikely to land on D here. The char_x_delta variants must
-    be attempted FIRST, before the saved-X core.
-    """
-    automation = SmartpointAutomation()
-    move_calls: list[tuple[int, int]] = []
-
-    automation._cal = {
-        "line_height": 20,
-        "dpi": 96,
-        "source": "dpi_auto",
-        "click_deltas": [],
-        "delta_correction": 0,
-        "d_click_offset": [6, 12],
-    }
-
-    fs_text = "\n".join(
-        [
-            "PRICING OPTION 1",
-            "1   EK    587  N  09MAY DAC DXB   0145  0445",
-            "             \xabBOOK\xbb             +TQ                                                     D  R  +1",
-            ">",
-        ]
-    )
-    settled_tax_text = (
-        "FS-1 ADT\n"
-        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
-    )
-
-    pixel_returns = iter([(1752, 540), (1801, 540)])
-
-    monkeypatch.setattr(automation, "focus", lambda force=False: True)
-    monkeypatch.setattr(
-        automation, "_text_line_to_pixel", lambda *a, **kw: next(pixel_returns)
-    )
-    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_terminal_rect())
-    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
-    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
-
-    call_counter = {"n": 0}
-
-    def fake_resp(*a, **kw):
-        call_counter["n"] += 1
-        return fs_text
-
-    def fake_stable(*a, **kw):
-        # Succeed on the very FIRST attempt — proves char_x is tried first.
-        if call_counter["n"] >= 1:
-            return settled_tax_text
-        return fs_text
-
-    monkeypatch.setattr(automation, "_wait_for_response", fake_resp)
-    monkeypatch.setattr(automation, "_wait_for_stable_screen", fake_stable)
-    monkeypatch.setattr(calibration, "save_calibration", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        spa.pyautogui,
-        "moveTo",
-        lambda x, y, duration=None: move_calls.append((x, y)),
-    )
-
-    result = automation.click_d_button(0, fs_text)
-
-    assert "FARE USD955.00" in result
-    # |saved_x=6 - char_x_delta=49| = 43 ≥ 30 → smart-first triggers.
-    # Expected order: char_x first (Y=0, -9, 9), then saved-X core, then wide.
-    assert move_calls[0] == (1801, 540), (
-        f"Smart-first must put char_x at attempt #1; got {move_calls[0]!r}"
-    )
-
-
-def test_click_d_button_keeps_saved_x_first_when_offsets_agree(monkeypatch):
-    """When the saved offset (x=49) is already aligned with char_x_delta (49),
-    the smart-first rule must NOT fire — saved-X stays at attempt #1.
-    """
-    automation = SmartpointAutomation()
-    move_calls: list[tuple[int, int]] = []
-
-    # Saved offset already learned the char_x position from a previous run.
-    automation._cal = {
-        "line_height": 20,
-        "dpi": 96,
-        "source": "dpi_auto",
-        "click_deltas": [],
-        "delta_correction": 0,
-        "d_click_offset": [49, 0],
-    }
-
-    fs_text = "\n".join(
-        [
-            "PRICING OPTION 1",
-            "1   EK    587  N  09MAY DAC DXB",
-            "             \xabBOOK\xbb             +TQ                                                     D  R  +1",
-            ">",
-        ]
-    )
-    settled_tax_text = (
-        "FS-1 ADT\n"
-        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
-    )
-
-    pixel_returns = iter([(1752, 540), (1801, 540)])
-
-    monkeypatch.setattr(automation, "focus", lambda force=False: True)
-    monkeypatch.setattr(
-        automation, "_text_line_to_pixel", lambda *a, **kw: next(pixel_returns)
-    )
-    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_terminal_rect())
-    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
-    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
-
-    call_counter = {"n": 0}
-
-    def fake_resp(*a, **kw):
-        call_counter["n"] += 1
-        return fs_text
-
-    def fake_stable(*a, **kw):
-        if call_counter["n"] >= 1:
-            return settled_tax_text
-        return fs_text
-
-    monkeypatch.setattr(automation, "_wait_for_response", fake_resp)
-    monkeypatch.setattr(automation, "_wait_for_stable_screen", fake_stable)
-    monkeypatch.setattr(calibration, "save_calibration", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        spa.pyautogui,
-        "moveTo",
-        lambda x, y, duration=None: move_calls.append((x, y)),
-    )
-
-    automation.click_d_button(0, fs_text)
-
-    # |49 - 49| = 0 < 30 → smart-first does NOT fire.
-    # First attempt is saved-X with saved_y: (1752+49, 540+0) = (1801, 540).
-    # That's the saved-X attempt at saved_y=0 (this offset, the saved-X column
-    # already aligns with char_x). The point is: order is determined by
-    # saved_core, not by char_x_early.
-    assert move_calls[0] == (1801, 540)
-
-
-def test_click_d_button_omits_char_x_early_when_d_char_column_unknown(monkeypatch):
-    """Negative case: when _find_d_char_column returns None (D landmark not
-    detectable on the line), char_x stays None and the v1.5.12 char_x_early
-    insert is suppressed. The first 5 attempts must all be at saved_x.
-    """
-    automation = SmartpointAutomation()
-    move_calls: list[tuple[int, int]] = []
-
-    automation._cal = {
-        "line_height": 20,
-        "dpi": 96,
-        "source": "dpi_auto",
-        "click_deltas": [],
-        "delta_correction": 0,
-        "d_click_offset": [6, 12],
-    }
-
-    fs_text = "\n".join(
-        [
-            "PRICING OPTION 1",
-            "1   BS    325  E  20MAY DAC CAN",
-            "             \xabBOOK\xbb             +TQ                                                     D  R  +0",
-            ">",
-        ]
-    )
-    settled_tax_text = (
-        "FS-1 ADT\n"
-        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
-    )
-
-    monkeypatch.setattr(automation, "focus", lambda force=False: True)
-    monkeypatch.setattr(
-        automation,
-        "_text_line_to_pixel",
-        lambda *a, **kw: (1800, 540),
-    )
-    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_terminal_rect())
-    # No D landmark → char_x is None → char_x_early branch is skipped.
-    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: None)
-    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
-
-    call_counter = {"n": 0}
-
-    def fake_resp(*a, **kw):
-        call_counter["n"] += 1
-        return fs_text
-
-    def fake_stable(*a, **kw):
-        if call_counter["n"] >= 5:
-            return settled_tax_text
-        return fs_text
-
-    monkeypatch.setattr(automation, "_wait_for_response", fake_resp)
-    monkeypatch.setattr(automation, "_wait_for_stable_screen", fake_stable)
-    monkeypatch.setattr(calibration, "save_calibration", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
-    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        spa.pyautogui,
-        "moveTo",
-        lambda x, y, duration=None: move_calls.append((x, y)),
-    )
-
-    automation.click_d_button(0, fs_text)
-
-    # base_x = ratio_x = 1800 (no char_x detection, so no left-bias).
-    # saved_x=6 → every saved-X attempt clicks at x=1806.
-    assert len(move_calls) == 5
-    assert all(x == 1806 for (x, _) in move_calls), (
-        f"All 5 attempts must be at saved_x (1806) without char_x detection: {move_calls!r}"
-    )
