@@ -920,3 +920,130 @@ def test_login_types_sign_on_username_and_password(monkeypatch):
 
     assert result is True
     assert sent_keys == ["SON/Z3L5Q", "user/name", "secret123"]
+
+
+# ── v1.5.15: D-click calibration reset + auto-invalidate ────────────────────────
+
+
+def test_clear_d_click_offset_removes_saved_offset():
+    cal = {"line_height": 20, "d_click_offset": [6, 12]}
+    cleared = calibration.clear_d_click_offset(cal)
+    assert "d_click_offset" not in cleared
+
+
+def test_clear_d_click_offset_is_noop_when_none_saved():
+    cal = {"line_height": 20}
+    cleared = calibration.clear_d_click_offset(cal)
+    assert "d_click_offset" not in cleared
+
+
+def test_click_d_button_clears_stale_saved_offset_after_fanout_exhausts(monkeypatch):
+    """v1.5.15: when every auto-click attempt fails AND a saved offset was
+    in play, the offset is auto-invalidated so the next run starts fresh
+    with the 5-second manual learning window.  This unblocks PCs whose
+    saved offset has gone stale (e.g. terminal width changed since
+    learning) without ever changing click order on PCs where it works."""
+    automation = SmartpointAutomation()
+
+    automation._cal = {
+        "line_height": 20,
+        "dpi": 96,
+        "source": "dpi_auto",
+        "click_deltas": [],
+        "delta_correction": 0,
+        "d_click_offset": [6, 12],
+    }
+    automation._stop = threading.Event()
+    automation._stop.set()
+
+    fs_text = "\n".join(
+        [
+            "PRICING OPTION 1",
+            "1   EK    587  N  09MAY DAC DXB",
+            "             \xabBOOK\xbb             +TQ                                                     D  R  +1",
+            ">",
+        ]
+    )
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_text_line_to_pixel", lambda *a, **kw: (1752, 540))
+    monkeypatch.setattr(
+        automation,
+        "_get_terminal_rect",
+        lambda: type("R", (), {"width": lambda self: 1500})(),
+    )
+    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
+    monkeypatch.setattr(automation, "_wait_for_response", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_wait_for_stable_screen", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
+
+    saved_calls: list[dict] = []
+    monkeypatch.setattr(
+        calibration, "save_calibration", lambda cal: saved_calls.append(dict(cal))
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
+
+    result = automation.click_d_button(0, fs_text)
+
+    assert result == ""
+    assert saved_calls, "Expected save_calibration to be called for invalidation"
+    assert "d_click_offset" not in saved_calls[-1], (
+        f"Saved offset must be cleared after fan-out exhausts, got: {saved_calls[-1]!r}"
+    )
+    assert "d_click_offset" not in automation._cal
+
+
+def test_click_d_button_does_not_clear_offset_when_none_was_saved(monkeypatch):
+    """No saved offset = nothing stale to invalidate. save_calibration must
+    not be called for that purpose."""
+    automation = SmartpointAutomation()
+    automation._cal = {
+        "line_height": 20,
+        "dpi": 96,
+        "source": "dpi_auto",
+        "click_deltas": [],
+        "delta_correction": 0,
+    }
+    automation._stop = threading.Event()
+    automation._stop.set()
+
+    fs_text = "\n".join(
+        [
+            "PRICING OPTION 1",
+            "1   EK    587  N",
+            "             \xabBOOK\xbb             +TQ                                                     D  R  +1",
+            ">",
+        ]
+    )
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_text_line_to_pixel", lambda *a, **kw: (1752, 540))
+    monkeypatch.setattr(
+        automation,
+        "_get_terminal_rect",
+        lambda: type("R", (), {"width": lambda self: 1500})(),
+    )
+    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
+    monkeypatch.setattr(automation, "_wait_for_response", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_wait_for_stable_screen", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
+
+    saved_calls: list[dict] = []
+    monkeypatch.setattr(
+        calibration, "save_calibration", lambda cal: saved_calls.append(dict(cal))
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
+
+    automation.click_d_button(0, fs_text)
+
+    assert saved_calls == [], (
+        "save_calibration must NOT be called when there was no saved offset"
+    )

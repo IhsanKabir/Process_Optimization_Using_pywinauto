@@ -181,6 +181,16 @@ def get_d_click_offset(calibration: dict) -> tuple[int, int] | None:
     return None
 
 
+def clear_d_click_offset(calibration: dict) -> dict:
+    """Remove the saved D-click offset so the next D-click re-runs the
+    manual-learning window.  Used by the GUI 'Reset D-click calibration'
+    action and by click_d_button's auto-invalidate path when every
+    auto-attempt fails on a machine whose saved offset has gone stale."""
+    if "d_click_offset" in calibration:
+        calibration.pop("d_click_offset", None)
+    return calibration
+
+
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 def _write(data: dict) -> None:

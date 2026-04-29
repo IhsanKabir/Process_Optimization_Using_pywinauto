@@ -2499,6 +2499,20 @@ class SmartpointAutomation:
                             )
                             return ""
 
+            # Auto-invalidate a stale saved offset.  If we got here, every
+            # auto-click attempt failed.  When there was a saved offset, it
+            # was almost certainly wrong (terminal width changed since
+            # learning, or the previous click was learned on the wrong
+            # glyph).  Drop it so the next run starts the manual-learning
+            # window from scratch instead of replaying the bad position.
+            if saved_offset is not None:
+                self._cal = _calibration_mod.clear_d_click_offset(self._cal)
+                _calibration_mod.save_calibration(self._cal)
+                self.logger.warning(
+                    f"      [D-CLICK] Saved offset {saved_offset} did not produce "
+                    f"a tax breakdown after fan-out; cleared from calibration."
+                )
+
             # Fan-out exhausted — monitor is already running; just wait for the
             # user to click D manually (up to 15 seconds).
             self.logger.warning(

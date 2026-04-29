@@ -424,7 +424,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.14"
+    VERSION = "v1.5.15"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -757,6 +757,16 @@ class TravelportGUI:
         ttk.Checkbutton(
             g_only_flags, text="Taxes only (skip fares)", variable=self.only_yq_var
         ).pack(anchor="w", pady=1)
+
+        # Reset D-click calibration — drops the saved (x, y) offset for this
+        # PC so the next D-click triggers the 5-second manual learning
+        # window.  Use this when D-click is consistently landing on the
+        # wrong glyph (e.g. BOOK instead of D) on this machine.
+        ttk.Button(
+            g_only_flags,
+            text="Reset D-click calibration",
+            command=self._reset_d_click_calibration,
+        ).pack(anchor="w", pady=(6, 1))
 
         # ── Group 5: Compare against (hidden in Currency / Manual) ──────
         g_compare = tk.Frame(parent, bg="#f2f2f2")
@@ -1775,6 +1785,38 @@ class TravelportGUI:
         self._hide_stop_overlay()
         self.status_label.configure(text="Stopping…", fg="#b73632")
         self.stop_btn.configure(state="disabled")
+
+    def _reset_d_click_calibration(self):
+        """Drop the saved D-click offset so the next D-click runs the 5s
+        manual-learning window.  Used when the saved offset is landing on
+        the wrong glyph on this PC (e.g. BOOK instead of D)."""
+        try:
+            import calibration as _cal_mod
+
+            cal = _cal_mod.load_calibration()
+            current = _cal_mod.get_d_click_offset(cal)
+            if current is None:
+                messagebox.showinfo(
+                    "Reset D-click calibration",
+                    "No saved D-click offset to reset on this PC.\n\n"
+                    "The next D-click will already use the 5-second manual "
+                    "learning window.",
+                )
+                return
+            cal = _cal_mod.clear_d_click_offset(cal)
+            _cal_mod.save_calibration(cal)
+            messagebox.showinfo(
+                "Reset D-click calibration",
+                f"Saved D-click offset {current} cleared.\n\n"
+                "The next D-click will pause for 5 seconds — click the D "
+                "button on the FS screen during that window and the new "
+                "position will be learned and saved for this PC.",
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Reset D-click calibration",
+                f"Could not reset D-click calibration:\n\n{exc}",
+            )
 
     def _browse_compare_file(self):
         archive_dir = os.path.join("data", "archive")
