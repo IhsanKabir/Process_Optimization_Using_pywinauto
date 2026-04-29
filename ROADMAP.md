@@ -512,6 +512,21 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.13 — D-click smart-first: trust char_x landmark when saved offset disagrees (2026-04-29):**
+  - **Problem:** Even with v1.5.12 promoting `char_x_delta` to attempts 5–7, the
+    work PC's saved offset (`x=6`) still pointed at the BOOK column for *every*
+    EK / DAC-DXB option — the click landed on BOOK for all four saved-X core
+    attempts before the char_x wave finally reached the real D glyph at #5.
+  - **Fix in `smartpoint_automation.py`:** When `|saved_x − char_x_delta| ≥ 30`,
+    treat the saved offset as stale (learned at a different layout) and put the
+    `char_x_delta` variants at attempts #1–3 instead of #5–7. Saved-X core
+    follows as a fallback, then the wide ±18 sweep, then the standard fan-out.
+    When the saved offset and char_x landmark agree (within 30 px), the
+    pre-existing v1.5.12 ordering is preserved (saved-X first).
+  - On the work PC the very first click should now land on the real D glyph,
+    Phase D records `(49, 0)` as the new offset, and subsequent runs hit D on
+    attempt #1 forever.
+
 - **v1.5.12 — D-click fan-out: try char_x column early for multi-option screens (2026-04-29):**
   - **Problem:** On USBA-27784, D-click worked for options at lines 7 and 13 but
     silently failed for option 3 at line 21 on 3-option pricing screens. The log showed

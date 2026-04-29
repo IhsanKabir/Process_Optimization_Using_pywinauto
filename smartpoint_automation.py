@@ -2328,21 +2328,42 @@ class SmartpointAutomation:
         if saved_offset is not None:
             saved_x, saved_y = saved_offset
             # If char_x is meaningfully right of base_x, insert those variants
-            # immediately after the core saved-X attempts so they are tried early
-            # (before the ±18 wide-Y sweep) rather than deep in the secondary wave.
+            # alongside the saved-X attempts.  The smart rule:
+            #   * char_x_delta vs saved_x within 30 px: saved_x is in the right
+            #     neighbourhood — try it first, then char_x as refinement.
+            #   * char_x_delta differs from saved_x by 30+ px: saved offset was
+            #     learned for a different layout (e.g. it points at BOOK on this
+            #     screen).  The per-line landmark detection is more trustworthy,
+            #     so try char_x first and fall back to saved_x.
             _char_x_early: list[tuple[int, int]] = []
+            _char_x_first = False
             if char_x is not None and (char_x - base_x) >= 10:
                 _cxd = char_x - base_x
                 _char_x_early = [(_cxd, 0), (_cxd, -9), (_cxd, 9)]
-            saved_x_prefix = [
+                if abs(saved_x - _cxd) >= 30:
+                    _char_x_first = True
+            saved_core = [
                 (saved_x, saved_y),
                 (saved_x, 0),
                 (saved_x, -9),
                 (saved_x, 9),
-            ] + _char_x_early + [
+            ]
+            saved_wide = [
                 (saved_x, -18),
                 (saved_x, 18),
             ]
+            if _char_x_first:
+                saved_x_prefix = _char_x_early + saved_core + saved_wide
+                self.logger.info(
+                    f"      [D-CLICK] Saved offset (x={saved_x}) disagrees with "
+                    f"char_x landmark by {abs(saved_x - (char_x - base_x))}px; "
+                    f"trying char_x column first."
+                )
+            else:
+                saved_x_prefix = saved_core + _char_x_early + saved_wide
+                self.logger.debug(
+                    f"      [D-CLICK] Trying saved-X variants first (saved_x={saved_x})."
+                )
             seen: set[tuple[int, int]] = set()
             reordered: list[tuple[int, int]] = []
             for off in saved_x_prefix + offsets:
@@ -2350,9 +2371,6 @@ class SmartpointAutomation:
                     seen.add(off)
                     reordered.append(off)
             offsets = reordered
-            self.logger.debug(
-                f"      [D-CLICK] Trying saved-X variants first (saved_x={saved_x})."
-            )
 
         # --- Background click monitor (runs for the whole duration) ----------
         # Records every left-button release so manual clicks can be detected
