@@ -512,6 +512,19 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.12 — D-click fan-out: try char_x column early for multi-option screens (2026-04-29):**
+  - **Problem:** On USBA-27784, D-click worked for options at lines 7 and 13 but
+    silently failed for option 3 at line 21 on 3-option pricing screens. The log showed
+    `char_x=1801` (actual D column) vs `base_x=1752` — 49 px gap — but the char_x
+    secondary wave was attempt #16, never reached before the user stopped the run.
+  - **Fix in `smartpoint_automation.py`:** When Phase D has a saved X offset and
+    `char_x` is 10+ px right of `base_x`, the three `char_x_delta` variants (Y=0, -9,
+    +9) are now inserted into the saved_x prefix immediately after the four core
+    saved-X attempts, making them attempts 5–7 instead of 16+. The ±18 wide-Y sweep
+    and full primary/secondary/tertiary fan-out follow unchanged.
+  - No calibration or fallback changes; existing behavior on the dev laptop is
+    unaffected.
+
 - **v1.5.11 — percent-based FTAX rate parsing + infant exemptions (2026-04-28):**
   - **Problem:** FTAX screens for some taxes (e.g. Bangladesh E5) express rates as
     "15 PERCENT ON EMBARKATION FEE - BD" instead of a fixed "BDT NNN" amount.
