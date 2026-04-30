@@ -348,10 +348,12 @@ def test_write_individual_tables_sheet_keeps_tax_columns_when_tax_data_present()
         None,
     )
 
+    # v1.5.17: gross fare columns now render in the fare's *base* currency
+    # (USD here), not BDT.  Was hardcoded to "(BDT)" before this release.
     assert ws.cell(row=7, column=1).value == "RBD"
     assert ws.cell(row=7, column=2).value == "OW/USD"
     assert ws.cell(row=7, column=3).value == "With YQ/OW(USD)"
-    assert ws.cell(row=7, column=4).value == "OW/Gross(BDT)"
+    assert ws.cell(row=7, column=4).value == "OW/Gross(USD)"
     assert ws.cell(row=7, column=5).value == "RT/USD"
     assert ws.cell(row=7, column=6).value == "With YQ/RT(USD)"
-    assert ws.cell(row=7, column=7).value == "RT/Gross(BDT)"
+    assert ws.cell(row=7, column=7).value == "RT/Gross(USD)"

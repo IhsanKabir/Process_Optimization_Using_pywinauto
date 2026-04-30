@@ -1659,8 +1659,16 @@ def _write_individual_tables_sheet(
             )
             yq_charge = fs_taxes.get("yq_charge", 0)
             yr_charge = fs_taxes.get("yr_charge", 0)
-            q_charge = fs_taxes.get("q_charge", 0)
-            yq_total = yq_charge + yr_charge + q_charge
+            # Q is captured in NUC (= USD) per IATA convention.  ROE scales
+            # NUC -> base currency (1.0 for USD-base fares).  exchange_rate
+            # scales base -> BDT.
+            q_charge_usd = fs_taxes.get("q_charge", 0)
+            roe = fs_taxes.get("roe", 1.0) or 1.0
+            exch_for_q = fs_taxes.get("exchange_rate", 1.0) or 1.0
+            q_charge_bdt = q_charge_usd * roe * exch_for_q
+            # yq_total drives the "any charge present?" check below — keep
+            # all three charges in it (Q in BDT for the comparison).
+            yq_total = yq_charge + yr_charge + q_charge_bdt
             total_tax_val = int(fs_taxes.get("total_taxes", 0))
             has_tax_data = this_table_width == TAX_TABLE_WIDTH
 
@@ -1715,9 +1723,13 @@ def _write_individual_tables_sheet(
             )
             row += 1
 
-            # Tax & Charge Summary Row (User request: Add at the top)
+            # Tax & Charge Summary Row (User request: Add at the top).
+            # YQ/YR are stored in BDT; Q is stored in USD and converted to
+            # BDT for this row only — the Individual Tables sheet is the
+            # single place where the user wants Q in BDT (everywhere else
+            # uses base/fare currency).
             yq_str = (
-                f"YQ:{int(yq_charge)} YR:{int(yr_charge)} Q:{int(q_charge)}"
+                f"YQ:{int(yq_charge)} YR:{int(yr_charge)} Q:{int(q_charge_bdt)}"
                 if yq_total > 0
                 else "None"
             )
@@ -1772,7 +1784,7 @@ def _write_individual_tables_sheet(
                     ws,
                     row,
                     current_col,
-                    "OW/Gross(BDT)",
+                    f"OW/Gross({currency})",
                     HEADER_FONT,
                     HEADER_FILL,
                     alignment=Alignment(horizontal="center"),
@@ -1806,7 +1818,7 @@ def _write_individual_tables_sheet(
                     ws,
                     row,
                     current_col,
-                    "RT/Gross(BDT)",
+                    f"RT/Gross({currency})",
                     HEADER_FONT,
                     HEADER_FILL,
                     alignment=Alignment(horizontal="center"),
@@ -1814,7 +1826,11 @@ def _write_individual_tables_sheet(
             row += 1
 
             exchange_rate = fs_taxes.get("exchange_rate", 1.0)
-            yq_ow = yq_total
+            # v1.5.17: WithYQ now excludes the Q charge (Q is a USD-denominated
+            # surcharge captured separately from the fare-construction line and
+            # must not be mixed into BDT-summed totals).  Gross-fare columns
+            # are now in the fare currency, not BDT.
+            yq_ow = float(yq_charge) + float(yr_charge)
             tax_ow = total_tax_val
 
             inbound_taxes: dict = {}
@@ -1832,8 +1848,10 @@ def _write_individual_tables_sheet(
             # appear in isolated one-way scrapes but shouldn't apply to the
             # actual RT journey.
             tax_rt = compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
-            yq_ow_usd = (yq_ow / exchange_rate) if exchange_rate else 0
-            yq_rt_usd = (yq_rt / exchange_rate) if exchange_rate else 0
+            # YQ+YR converted from BDT (equivalent currency) into the fare's
+            # base currency.  Q is intentionally NOT added — see yq_ow above.
+            yq_ow_in_base = (yq_ow / exchange_rate) if exchange_rate else 0
+            yq_rt_in_base = (yq_rt / exchange_rate) if exchange_rate else 0
 
             # Data rows
             for idx, rbd in enumerate(sorted_rbds):
@@ -1870,11 +1888,18 @@ def _write_individual_tables_sheet(
 
                 current_data_col = col_offset + 2
                 if has_tax_data:
-                    ow_yq_val = (ow + yq_ow_usd) if ow else None
+                    ow_yq_val = (ow + yq_ow_in_base) if ow else None
                     _write_fare_cell(ws, row, current_data_col, ow_yq_val, None)
                     current_data_col += 1
 
-                    ow_gross_val = ((ow * exchange_rate) + tax_ow) if ow else None
+                    # v1.5.17: gross is now in the fare's base currency.
+                    # ow is base, tax_ow is BDT — divide tax by rate to get
+                    # base.  Q is not part of tax_ow and is not added here.
+                    ow_gross_val = (
+                        (ow + (tax_ow / exchange_rate))
+                        if ow and exchange_rate
+                        else None
+                    )
                     _write_fare_cell(ws, row, current_data_col, ow_gross_val, None)
                     current_data_col += 1
 
@@ -1883,11 +1908,15 @@ def _write_individual_tables_sheet(
                 current_data_col += 1
 
                 if has_tax_data:
-                    rt_yq_val = (rt + yq_rt_usd) if rt else None
+                    rt_yq_val = (rt + yq_rt_in_base) if rt else None
                     _write_fare_cell(ws, row, current_data_col, rt_yq_val, None)
                     current_data_col += 1
 
-                    rt_gross_val = ((rt * exchange_rate) + tax_rt) if rt else None
+                    rt_gross_val = (
+                        (rt + (tax_rt / exchange_rate))
+                        if rt and exchange_rate
+                        else None
+                    )
                     _write_fare_cell(ws, row, current_data_col, rt_gross_val, None)
 
                 row += 1
@@ -2031,12 +2060,16 @@ def _write_tax_breakdown_sheet(
             )
             row += 1
 
-            # Currency & Exchange Rate info. The amounts in fs_taxes are already
-            # in the equivalent currency (BDT) exactly as Travelport renders them;
-            # we show Base/Rate here purely as reference metadata.
+            # v1.5.17 — this sheet now displays charges in the *fare* (base)
+            # currency, not the equivalent currency.  YQ and YR are stored
+            # in BDT (equivalent), so divide by exchange_rate to get base.
+            # Q is stored in NUC (= USD), so multiply by ROE to get base.
+            # ROE defaults to 1.0 for USD-base fares.
             base_cur = fs_taxes.get("base_currency", currency)
             equ_cur = fs_taxes.get("equ_currency") or "BDT"
             exch_rate = fs_taxes.get("exchange_rate", 0)
+            roe = fs_taxes.get("roe", 1.0) or 1.0
+            display_cur = base_cur or "USD"
 
             info_font = Font(name="Calibri", size=9, italic=True)
             ws.cell(
@@ -2057,19 +2090,22 @@ def _write_tax_breakdown_sheet(
                 ws,
                 row,
                 col_offset + 1,
-                f"Amount ({equ_cur})",
+                f"Amount ({display_cur})",
                 TAX_HEADER_FONT,
                 TAX_HEADER_FILL,
                 alignment=Alignment(horizontal="right"),
             )
             row += 1
 
-            # Keep the values as scraped — they're already in equ_cur (BDT).
-            # Do NOT divide by exch_rate here; the raw terminal value is what
-            # the user wants to see in this sheet.
-            yq = float(fs_taxes.get("yq_charge", 0) or 0)
-            yr = float(fs_taxes.get("yr_charge", 0) or 0)
-            q = float(fs_taxes.get("q_charge", 0) or 0)
+            # Convert charges to base/fare currency:
+            #   yq, yr (in BDT) → divide by exchange_rate to get base
+            #   q (in NUC=USD) → multiply by ROE to get base
+            yq_raw = float(fs_taxes.get("yq_charge", 0) or 0)
+            yr_raw = float(fs_taxes.get("yr_charge", 0) or 0)
+            q_raw = float(fs_taxes.get("q_charge", 0) or 0)
+            yq = (yq_raw / exch_rate) if exch_rate else yq_raw
+            yr = (yr_raw / exch_rate) if exch_rate else yr_raw
+            q = q_raw * roe
 
             for label, val in [
                 ("YQ", yq),
@@ -2112,20 +2148,32 @@ def _write_tax_breakdown_sheet(
                 row += 1
 
                 for code, amt in sorted(tax_map.items()):
+                    # Tax codes (BD, OW, P7, …) are scraped in BDT; convert
+                    # to base/fare currency for this sheet.
+                    amt_in_base = (
+                        (float(amt) / exch_rate) if exch_rate else float(amt)
+                    )
                     c1 = ws.cell(row=row, column=col_offset, value=code)
                     c1.font = TAX_LABEL_FONT
                     c1.border = THIN_BORDER
-                    c2 = ws.cell(row=row, column=col_offset + 1, value=float(amt))
+                    c2 = ws.cell(row=row, column=col_offset + 1, value=amt_in_base)
                     c2.font = TAX_LABEL_FONT
                     c2.border = THIN_BORDER
                     c2.number_format = "#,##0.00"
                     c2.alignment = Alignment(horizontal="right")
                     row += 1
 
-            # Totals — raw BDT values as scraped, no conversion.
+            # Totals — also converted from BDT to base/fare currency for
+            # consistency with the rest of this sheet.
             row += 1  # Blank separator
-            total_taxes = float(fs_taxes.get("total_taxes", 0) or 0)
-            total_amount = float(fs_taxes.get("total_amount", 0) or 0)
+            total_taxes_bdt = float(fs_taxes.get("total_taxes", 0) or 0)
+            total_amount_bdt = float(fs_taxes.get("total_amount", 0) or 0)
+            total_taxes = (
+                total_taxes_bdt / exch_rate if exch_rate else total_taxes_bdt
+            )
+            total_amount = (
+                total_amount_bdt / exch_rate if exch_rate else total_amount_bdt
+            )
 
             for label, val in [
                 ("Total Taxes", total_taxes),

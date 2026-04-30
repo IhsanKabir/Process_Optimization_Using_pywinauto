@@ -424,7 +424,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.16"
+    VERSION = "v1.5.17"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -459,6 +459,13 @@ class TravelportGUI:
         self._row_states: dict[str, str] = {}
         self._completed_routes = 0
         self._run_started_at: float | None = None
+        # v1.5.17 — ETA stabilization.  Lock per-unit duration at each
+        # completion event; between events, count down from the locked
+        # estimate.  Without this, mid-route the ETA *increased* because
+        # `elapsed / completed` grew while `completed` stayed constant.
+        self._eta_per_unit_seconds: float | None = None
+        self._eta_locked_at_elapsed: float = 0.0
+        self._eta_locked_at_completed: int = 0
 
         # Route checklist state
         self._current_row: str | None = None  # treeview iid of the running row
@@ -1192,6 +1199,7 @@ class TravelportGUI:
             self._done = idx
             self._total = total
             self._completed_routes = idx
+            self._capture_eta_progress_tick()
             self._set_step(3)
 
             # Insert a row per currency so the tree fills up with ticks.
@@ -1224,6 +1232,7 @@ class TravelportGUI:
             # Seeing airport N's start means N-1 are completed (the previous
             # ones).  Don't go negative when N=1.
             self._completed_routes = max(0, idx - 1)
+            self._capture_eta_progress_tick()
             self._set_step(3)
             self._update_counter()
             self._refresh_eta()
@@ -1304,6 +1313,7 @@ class TravelportGUI:
         self._row_states[self._current_row] = state
         if previous_state not in {"done", "failed"} and state in {"done", "failed"}:
             self._completed_routes += 1
+            self._capture_eta_progress_tick()
             self._refresh_eta()
         self._update_counter()
 
@@ -1323,6 +1333,19 @@ class TravelportGUI:
         )
         self.progress.configure(mode="determinate", value=pct)
 
+    def _capture_eta_progress_tick(self) -> None:
+        """v1.5.17 — call whenever _completed_routes changes.  Locks the
+        per-unit time estimate at this completion event so _refresh_eta
+        can compute a smoothly-counting-down ETA between events instead
+        of an increasing one (the old `elapsed/completed` recompute drifted
+        upward whenever a single route was taking a long time)."""
+        if not self._run_started_at or self._completed_routes <= 0:
+            return
+        elapsed = time.monotonic() - self._run_started_at
+        self._eta_per_unit_seconds = elapsed / max(1, self._completed_routes)
+        self._eta_locked_at_elapsed = elapsed
+        self._eta_locked_at_completed = self._completed_routes
+
     def _refresh_eta(self):
         if self.stop_event.is_set():
             self._overlay_eta_var.set("ETA: stopping...")
@@ -1340,17 +1363,27 @@ class TravelportGUI:
             self._overlay_eta_var.set("ETA: waiting for route count...")
             return
 
-        if self._completed_routes <= 0:
+        if self._completed_routes <= 0 or self._eta_per_unit_seconds is None:
             self._overlay_eta_var.set("ETA: calculating after first route...")
             return
 
-        remaining_seconds = _estimate_remaining_seconds(
-            time.monotonic() - self._run_started_at,
-            self._completed_routes,
-            self._total,
+        # Use the per-unit duration captured at the last completion tick.
+        # Between ticks, time elapses but the estimate is stable; subtract
+        # time-since-tick so the displayed ETA counts down smoothly until
+        # the next route finishes.
+        units_remaining = max(0, self._total - self._completed_routes)
+        estimated_remaining_at_lock = (
+            self._eta_per_unit_seconds * units_remaining
         )
-        if remaining_seconds is None:
-            self._overlay_eta_var.set("ETA: calculating...")
+        elapsed_since_lock = (
+            time.monotonic() - self._run_started_at - self._eta_locked_at_elapsed
+        )
+        remaining_seconds = max(
+            0, int(round(estimated_remaining_at_lock - elapsed_since_lock))
+        )
+
+        if units_remaining == 0:
+            self._overlay_eta_var.set("ETA: finishing current step...")
         elif remaining_seconds <= 0:
             self._overlay_eta_var.set("ETA: finishing current step...")
         else:
@@ -1750,6 +1783,10 @@ class TravelportGUI:
         self._run_started_at = time.monotonic()
         self._overlay_eta_var.set("ETA: calculating after first route...")
         self._row_states.clear()
+        # Reset the ETA stabilizer for the new run.
+        self._eta_per_unit_seconds = None
+        self._eta_locked_at_elapsed = 0.0
+        self._eta_locked_at_completed = 0
         self._completed_routes = 0
         self._done = 0
         self._total = 0

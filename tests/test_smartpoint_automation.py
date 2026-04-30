@@ -272,6 +272,56 @@ def test_parse_fs_tax_breakdown_uses_default_rate_for_tax_only_text():
     assert parsed["exchange_rate"] == 1.0
 
 
+# ── v1.5.17: Q-charge from fare-construction line + ROE parsing ───────────────
+
+
+def test_parse_fs_tax_breakdown_extracts_q_charge_from_construction_line():
+    """The Q surcharge appears in the IATA fare-construction line as
+    'Q CITYORIG_CITYDEST AMOUNT'.  The amount is in NUC (= USD).  Captured
+    as q_charge, ROE captured separately."""
+    text = (
+        "CAN CZ DAC 111.56Q2ASRSBU Q CANDAC28.97NUC140.53END ROE6.901808\n"
+        "FARE CNY970 EQU BDT17459 CN1620 YQ492 YR7200  TAXES BDT9312  TOT BDT26771\n"
+    )
+
+    parsed = parse_fs_tax_breakdown(text)
+
+    assert parsed["q_charge"] == 28.97  # NUC (USD)
+    assert parsed["roe"] == 6.901808
+    assert parsed["base_currency"] == "CNY"
+    assert parsed["base_fare"] == 970.0
+    assert parsed["equ_currency"] == "BDT"
+    assert parsed["yq_charge"] == 492.0
+    assert parsed["yr_charge"] == 7200.0
+
+
+def test_parse_fs_tax_breakdown_q_charge_zero_when_no_construction_q():
+    """When the fare construction line has no 'Q ORIGDEST' segment, q_charge
+    must stay at 0.  The simpler USD-base example without Q must not
+    accidentally pick up some other value."""
+    text = (
+        "DAC BG AUH 650.00DBDO NUC650.00END ROE1.0\n"
+        "FARE USD650.00 EQU BDT79911 BD500 OW2500 P71230 P81230 UT4000 ZR168 E5444 YQ615  TAXES BDT10687  TOT BDT90598\n"
+    )
+
+    parsed = parse_fs_tax_breakdown(text)
+
+    assert parsed["q_charge"] == 0.0
+    assert parsed["roe"] == 1.0  # USD base
+    assert parsed["yq_charge"] == 615.0
+
+
+def test_parse_fs_tax_breakdown_roe_defaults_to_one_when_absent():
+    """ROE absent in the captured text should default to 1.0 (USD-base
+    convention)."""
+    text = "FARE USD500 EQU BDT60000 TAXES BDT10000 TOT BDT70000"
+
+    parsed = parse_fs_tax_breakdown(text)
+
+    assert parsed["roe"] == 1.0
+    assert parsed["q_charge"] == 0.0
+
+
 def test_click_d_button_accepts_settled_tax_screen(monkeypatch):
     automation = SmartpointAutomation()
     sent_keys = []
@@ -1246,4 +1296,200 @@ def test_click_d_button_does_not_clear_offset_when_none_was_saved(monkeypatch):
 
     assert saved_calls == [], (
         "save_calibration must NOT be called when there was no saved offset"
+    )
+
+
+# ── v1.5.17: manual-click region validation + saved-offset sanity + FS-N ──────
+
+
+def _stub_rect(left=1147, top=93, right=1854, bottom=1013):
+    return type(
+        "Rect",
+        (),
+        {
+            "left": left,
+            "top": top,
+            "right": right,
+            "bottom": bottom,
+            "width": lambda self: right - left,
+            "height": lambda self: bottom - top,
+        },
+    )()
+
+
+def test_is_manual_click_in_d_region_accepts_click_on_d_row(monkeypatch):
+    automation = SmartpointAutomation()
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_rect())
+    # base_x=1751 (real D column on USBA-27784), base_y=508 (target row).
+    # Click at (1759, 520) is on the actual D glyph — must accept.
+    assert automation._is_manual_click_in_d_region(1759, 520, 1751, 508)
+
+
+def test_is_manual_click_in_d_region_rejects_tab_strip_click(monkeypatch):
+    """The exact (1197, 123) bogus learn from the work-PC log must be rejected.
+    That coordinate is inside the SmartRichTextBox rect but ~554 px left of
+    base_x and ~385 px above base_y — clearly a stray (focus recovery,
+    tab-strip click) and not a D click."""
+    automation = SmartpointAutomation()
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_rect())
+    assert not automation._is_manual_click_in_d_region(1197, 123, 1751, 508)
+
+
+def test_is_manual_click_in_d_region_rejects_book_column_click(monkeypatch):
+    """BOOK on this layout sits ~500 px left of base_x; a click there should
+    not be attributed as a D learn."""
+    automation = SmartpointAutomation()
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_rect())
+    assert not automation._is_manual_click_in_d_region(1234, 508, 1751, 508)
+
+
+def test_is_manual_click_in_d_region_rejects_outside_terminal_pane(monkeypatch):
+    automation = SmartpointAutomation()
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_rect())
+    # Just left of L=1147.
+    assert not automation._is_manual_click_in_d_region(1146, 508, 1751, 508)
+    # Just below B=1013.
+    assert not automation._is_manual_click_in_d_region(1759, 1014, 1751, 508)
+
+
+def test_saved_offset_is_sane_accepts_typical_offset():
+    # The (8, 9) offset learned on USBA-27784 is well within sane bounds for
+    # a 707-px-wide pane with line_height=20.
+    assert SmartpointAutomation._saved_offset_is_sane(8, 9, 707, 20) is True
+
+
+def test_saved_offset_is_sane_rejects_bogus_offset_from_log():
+    """The (-554, -385) offset that was bogusly learned at 09:50:43 on the
+    work PC must be rejected by sanity check — pane width is 707, so |x|
+    must be <= 353."""
+    assert SmartpointAutomation._saved_offset_is_sane(-554, -385, 707, 20) is False
+
+
+def test_saved_offset_is_sane_rejects_excessive_y():
+    # 4 * line_height = 80. y=120 exceeds.
+    assert SmartpointAutomation._saved_offset_is_sane(8, 120, 707, 20) is False
+
+
+def test_post_click_screen_matches_option_accepts_correct_fs_n():
+    text = "TOTAL JOURNEY TIME\nFS-3 ADT\nREFUNDABLE: YES\nFARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564"
+    # option_index=2 → expects FS-3 ADT, present.
+    assert SmartpointAutomation._post_click_screen_matches_option(text, 2) is True
+
+
+def test_post_click_screen_matches_option_rejects_wrong_fs_n():
+    """The +TQ-vs-D confusion on the work PC: pyautogui clicked +TQ, the
+    screen looked tax-breakdown-shaped, but it showed FS-1 ADT (not FS-3
+    for option 3). Must reject so we don't save a +TQ offset."""
+    text = "TOTAL JOURNEY TIME\nFS-1 ADT\nREFUNDABLE: YES\nFARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564"
+    assert SmartpointAutomation._post_click_screen_matches_option(text, 2) is False
+
+
+def test_post_click_screen_matches_option_rejects_non_tax_breakdown():
+    text = "PRICING OPTION 1\nADT\n1 BG 327 D 30MAY DAC AUH"
+    assert SmartpointAutomation._post_click_screen_matches_option(text, 0) is False
+
+
+def test_click_d_button_clears_bogus_saved_offset_on_load(monkeypatch):
+    """Integration: when calibration.json has a wildly out-of-pane offset
+    (e.g. the (-554, -385) bogus learn from the work-PC log), click_d_button
+    must clear it on entry rather than replaying off-screen clicks."""
+    automation = SmartpointAutomation()
+    automation._cal = {
+        "line_height": 20,
+        "dpi": 96,
+        "source": "dpi_auto",
+        "click_deltas": [],
+        "delta_correction": 0,
+        "d_click_offset": [-554, -385],
+        "d_click_char_x_offset": [-603, -385],
+    }
+    automation._stop = threading.Event()
+    automation._stop.set()
+
+    fs_text = "\n".join(
+        [
+            "PRICING OPTION 1",
+            "1   BS    321  V  30MAY DAC MCT",
+            "             \xabBOOK\xbb             +TQ                                                     D  R  +0",
+            ">",
+        ]
+    )
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_text_line_to_pixel", lambda *a, **kw: (1751, 268))
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_rect())
+    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
+    monkeypatch.setattr(automation, "_wait_for_response", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_wait_for_stable_screen", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
+
+    saved_calls: list[dict] = []
+    monkeypatch.setattr(
+        calibration, "save_calibration", lambda cal: saved_calls.append(dict(cal))
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
+
+    automation.click_d_button(0, fs_text)
+
+    # The bogus saved offset must have been cleared on entry.
+    assert saved_calls, "Expected save_calibration to be called for the clear"
+    assert "d_click_offset" not in saved_calls[0], (
+        f"Saved offset must be cleared on load when out of sane bounds: {saved_calls[0]!r}"
+    )
+    assert "d_click_offset" not in automation._cal
+
+
+def test_click_d_button_ignores_stray_manual_click_during_initial_window(
+    monkeypatch,
+):
+    """Integration: with no saved offset, the 5-second manual window opens.
+    A click captured at (1197, 123) (the bogus stray from the work-PC log)
+    must be ignored, not learned."""
+    automation = SmartpointAutomation()
+    automation._cal = {
+        "line_height": 20,
+        "dpi": 96,
+        "source": "dpi_auto",
+        "click_deltas": [],
+        "delta_correction": 0,
+    }
+    automation._stop = threading.Event()
+    automation._stop.set()  # Stops the manual window quickly.
+
+    fs_text = "\n".join(
+        [
+            "PRICING OPTION 1",
+            "1   BS    321  V  30MAY DAC MCT",
+            "             \xabBOOK\xbb             +TQ                                                     D  R  +0",
+            ">",
+        ]
+    )
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_text_line_to_pixel", lambda *a, **kw: (1751, 268))
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _stub_rect())
+    monkeypatch.setattr(automation, "_find_d_char_column", lambda line: 91)
+    monkeypatch.setattr(automation, "_wait_for_response", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_wait_for_stable_screen", lambda *a, **kw: fs_text)
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "")
+
+    saved_calls: list[dict] = []
+    monkeypatch.setattr(
+        calibration, "save_calibration", lambda cal: saved_calls.append(dict(cal))
+    )
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "typewrite", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
+
+    automation.click_d_button(0, fs_text)
+
+    # Even if a stray click had been recorded, no learn should happen.
+    assert "d_click_offset" not in automation._cal, (
+        "A stray click outside the D-row region must not be learned"
     )

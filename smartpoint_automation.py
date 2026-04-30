@@ -2177,6 +2177,88 @@ class SmartpointAutomation:
         m = pattern.search(line)
         return m.start() if m else None
 
+    # ── Manual D-click validation (v1.5.17) ───────────────────────────────────
+    #
+    # Before v1.5.17, *any* mouse click captured by the background monitor
+    # while click_d_button was running could be attributed as "the user
+    # clicked D and we should learn that position".  In practice the OS
+    # sometimes fires stray clicks (focus recovery, accidental moves, the
+    # fail-safe pulling the cursor briefly out of the app and back) — and
+    # those got mis-attributed, persisting offsets like (-554, -385) that
+    # broke the next run entirely.  These bounds reject any click that is
+    # not plausibly on the D button row.
+
+    _MANUAL_D_CLICK_X_TOLERANCE_PX = 100
+    _MANUAL_D_CLICK_Y_TOLERANCE_LINES = 1.5
+
+    def _is_manual_click_in_d_region(
+        self,
+        ux: int,
+        uy: int,
+        base_x: int,
+        base_y: int,
+    ) -> bool:
+        """Return True when (ux, uy) is plausibly a click on the D button.
+
+        The bounds (in physical pixels) are intentionally loose enough that
+        a slightly-misaimed real click still counts, but tight enough to
+        reject:
+          * tab strip / title bar clicks above the terminal pane,
+          * focus-recovery clicks far from the BOOK/+TQ/D row,
+          * accidental clicks elsewhere on screen.
+
+        We require the click to be inside the SmartRichTextBox terminal
+        pane, within ±line_height·1.5 of the target row's Y center, and
+        within ±100 px of base_x (which spans the +TQ → D portion of the
+        row across all observed terminal widths)."""
+        try:
+            rect = self._get_terminal_rect()
+        except Exception:
+            return False
+
+        if not (rect.left <= ux <= rect.right):
+            return False
+        if not (rect.top <= uy <= rect.bottom):
+            return False
+        y_tol = int(self._line_height * self._MANUAL_D_CLICK_Y_TOLERANCE_LINES)
+        if abs(uy - base_y) > y_tol:
+            return False
+        if abs(ux - base_x) > self._MANUAL_D_CLICK_X_TOLERANCE_PX:
+            return False
+        return True
+
+    @staticmethod
+    def _saved_offset_is_sane(
+        offset_x: int,
+        offset_y: int,
+        rect_width: int,
+        line_height: int,
+    ) -> bool:
+        """Reject saved offsets that are obviously bogus (learned from a
+        stray click, e.g. a focus-recovery click on a tab outside the D
+        row).  Used at the start of click_d_button to defang corrupted
+        calibration files instead of replaying offsets that point off-pane."""
+        if abs(offset_x) > rect_width // 2:
+            return False
+        if abs(offset_y) > 4 * max(1, line_height):
+            return False
+        return True
+
+    @staticmethod
+    def _post_click_screen_matches_option(text: str, option_index: int) -> bool:
+        """Tighter version of looks_like_fs_tax_breakdown that also requires
+        the FS-N marker for the option we tried to expand.  Guards against
+        accidental +TQ clicks that produce a tax-breakdown-shaped screen
+        for a *different* option (or no FS-N at all)."""
+        from tax_breakdown_parser import looks_like_fs_tax_breakdown
+
+        if not looks_like_fs_tax_breakdown(text):
+            return False
+        # Smartpoint marks the FS detail with `FS-{N} ADT` where N is the
+        # human-readable option number (option_index 0 → "FS-1 ADT").
+        expected_marker = f"FS-{option_index + 1} ADT"
+        return expected_marker in text.upper()
+
     def click_d_button(self, option_index: int, fs_text: str) -> str:
         """
         Click the 'D' (Details) button for a specific Pricing Option in FS results.
@@ -2334,6 +2416,31 @@ class SmartpointAutomation:
         saved_offset = _calibration_mod.get_d_click_offset(self._cal)
         saved_char_x_offset = _calibration_mod.get_d_click_char_x_offset(self._cal)
 
+        # v1.5.17 — defang corrupted calibration files.  If the saved
+        # offset is obviously absurd (e.g. learned from a stray click on
+        # a tab outside the terminal pane), drop it and start fresh
+        # rather than replaying a click at off-pane coordinates.
+        try:
+            _rect_for_sanity = self._get_terminal_rect()
+            _rect_width = _rect_for_sanity.width()
+        except Exception:
+            _rect_width = 0
+        if (
+            _rect_width > 0
+            and saved_offset is not None
+            and not self._saved_offset_is_sane(
+                saved_offset[0], saved_offset[1], _rect_width, self._line_height
+            )
+        ):
+            self.logger.warning(
+                f"      [D-CLICK] Saved offset {saved_offset} is outside sane bounds "
+                f"for rect width={_rect_width}; clearing and re-learning."
+            )
+            self._cal = _calibration_mod.clear_d_click_offset(self._cal)
+            _calibration_mod.save_calibration(self._cal)
+            saved_offset = None
+            saved_char_x_offset = None
+
         effective_saved_offset: tuple[int, int] | None = None
         saved_offset_source: str = ""
         if saved_char_x_offset is not None and char_x is not None:
@@ -2430,6 +2537,17 @@ class SmartpointAutomation:
                     if len(_mon_clicks) > init_seen:
                         _, ux, uy = _mon_clicks[-1]
                         init_seen = len(_mon_clicks)
+                        # v1.5.17 — reject stray clicks (focus-recovery,
+                        # tab strip, etc.).  Only accept clicks plausibly
+                        # on the D button row.
+                        if not self._is_manual_click_in_d_region(
+                            ux, uy, base_x, base_y
+                        ):
+                            self.logger.info(
+                                f"      [D-CLICK] Ignored stray click at ({ux},{uy}) "
+                                f"— outside D-row region (base=({base_x},{base_y}))."
+                            )
+                            continue
                         self._sleep(0.5)
                         result = self._copy_terminal_text()
                         if result.strip() and looks_like_fs_tax_breakdown(result):
@@ -2462,13 +2580,28 @@ class SmartpointAutomation:
                 )
 
                 if result.strip() != text_before.strip():
-                    if looks_like_fs_tax_breakdown(result):
+                    # v1.5.17 — for AUTO success, require the post-click
+                    # screen to show FS-{N} ADT for the option we tried,
+                    # so accidental +TQ clicks (which can produce a
+                    # similar tax-breakdown-shaped screen for a different
+                    # option, or no FS-N at all) don't masquerade as a
+                    # successful D click.  Manual clicks still validated
+                    # through their own region check below.
+                    if self._post_click_screen_matches_option(result, option_index):
                         # Was this a manual click? Any click recorded >100 ms
                         # after post_click_t is from the user, not pyautogui.
-                        user_click = next(
-                            (c for c in _mon_clicks if c[0] > post_click_t + 0.1),
-                            None,
-                        )
+                        # Iterate from newest to oldest so we look at the
+                        # *most recent* user click, not the first stray one.
+                        user_click = None
+                        for click in reversed(_mon_clicks):
+                            if click[0] <= post_click_t + 0.1:
+                                break
+                            _, ux, uy = click
+                            if self._is_manual_click_in_d_region(
+                                ux, uy, base_x, base_y
+                            ):
+                                user_click = click
+                                break
                         if user_click:
                             _, ux, uy = user_click
                             lx, ly = ux - base_x, uy - base_y
@@ -2558,6 +2691,18 @@ class SmartpointAutomation:
                 if len(_mon_clicks) > seen_clicks:
                     _, ux, uy = _mon_clicks[-1]
                     seen_clicks = len(_mon_clicks)
+                    # v1.5.17 — same region guard as the initial 5s window.
+                    # Stray clicks during the 15s wait (focus recovery,
+                    # tab clicks, etc.) must not be attributed as D-learn
+                    # events.
+                    if not self._is_manual_click_in_d_region(
+                        ux, uy, base_x, base_y
+                    ):
+                        self.logger.info(
+                            f"      [D-CLICK] Ignored stray click at ({ux},{uy}) "
+                            f"during 15s manual fallback — outside D-row region."
+                        )
+                        continue
                     self._sleep(0.5)
                     result = self._copy_terminal_text()
                     if result.strip() and looks_like_fs_tax_breakdown(result):
