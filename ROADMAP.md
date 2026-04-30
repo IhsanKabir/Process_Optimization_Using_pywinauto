@@ -512,6 +512,142 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.17 — Bundle: D-click manual-learn validation, Q-charge in NUC/USD, gross fare in base currency, ETA stabilization (2026-04-30):**
+
+  This release bundles four independent fixes.  Each is additive — none
+  changes behavior for users/PCs where the prior path was already working.
+
+  **(A) D-click manual-learn validation + saved-offset sanity + FS-N tightening**
+  - **Problem (from work-PC log `run_2026-04-30_0944`):** During a multi-option
+    BG/AUH-DAC fan-out, pyautogui's auto-click at `(1757, 499)` produced a
+    tax-breakdown-shaped screen — but the click was on the +TQ column, not the
+    D button.  Concurrently a stray click was recorded at `(1197, 123)` (the
+    Smartpoint tab strip / focus-recovery area).  Phase D attributed credit to
+    the stray click, persisted `d_click_offset = [-554, -385]`, and the next
+    run's saved-X variants tried clicking at off-pane coordinates like
+    `(1197, -117)`.  Total fan-out failure each time, until the user
+    re-clicked manually.
+
+  - **Fix in `smartpoint_automation.py`:**
+    - **`_is_manual_click_in_d_region(ux, uy, base_x, base_y)`** — every
+      manual-click capture (initial 5s window, mid-fan-out attribution, and
+      15s post-exhaust fallback) must satisfy: inside the SmartRichTextBox
+      pane, within ±line_height·1.5 of the target row's Y center, AND within
+      ±100 px of base_x.  Stray clicks (tab strip, title bar, focus recovery,
+      mouse fail-safe pulling out and back) are logged and ignored, never
+      learned.  The mid-fan-out path also now iterates clicks newest-first so
+      the *latest* in-region click is picked, not the first stray.
+    - **`_saved_offset_is_sane(...)`** — defangs corrupted calibration files
+      on entry to `click_d_button`.  If `|x| > rect.width/2` or `|y| > 4 ×
+      line_height`, the saved offset is dropped and a re-learn is forced.
+      The bogus `(-554, -385)` from the log fails both checks.
+    - **`_post_click_screen_matches_option(text, option_index)`** — auto-
+      success now requires `FS-{option_index+1} ADT` in the post-click
+      screen, not just any tax-breakdown-shaped output.  Guards against +TQ
+      clicks producing similar-looking screens for the wrong option.
+
+  **(B) Q charge captured from fare-construction line, in NUC (= USD)**
+  - **Problem:** The Q surcharge is filed by airlines in NUC (= USD by IATA
+    convention).  In the captured terminal text it appears in the IATA fare
+    construction line as `Q ORIG_DEST AMOUNT` (e.g. `Q CANDAC28.97`).  The
+    pre-v1.5.17 regex `\bQ\s*(\d+...)\b` could not match this format because
+    of the city codes between `Q` and the number — `q_charge` was silently
+    `0` on every fare for as long as this format has been used.  When the
+    field WAS interpreted (in any branch that summed it with YQ/YR), it was
+    incorrectly treated as BDT, double-counting if a value ever showed up.
+  - **Fix in `tax_breakdown_parser.py`:**
+    - New regex `_RE_Q_CHARGE_NUC = r"\bQ\s+[A-Z]{3}\s*[A-Z]{3}\s*(\d+\.\d+)"`
+      to capture the construction-line format (e.g. `Q CANDAC28.97 → 28.97`).
+    - New regex `_RE_ROE = r"\bROE\s*(\d+\.\d+)"` to capture Rate of Exchange
+      (local-per-NUC).
+    - `q_charge` field semantically is now NUC (USD).  `roe` field added,
+      defaults to `1.0` for USD-base fares (the common case).
+  - **Display rules per user spec:**
+    - **Individual Tables** sheet — Q rendered in BDT (single place that
+      uses the equivalent currency).  Conversion: `q_bdt = q_usd × roe ×
+      exchange_rate`.  For USD-base fares this collapses to
+      `q_usd × exchange_rate` which is the fare's own scraped rate.
+    - **YQ-YR-Q Charges** sheet — header changed from `Amount ({equ_cur})`
+      to `Amount ({base_cur})`.  YQ and YR converted from BDT to base via
+      `÷ exchange_rate`; Q converted from USD to base via `× roe`; the
+      tax-codes section and `Total Taxes` / `Total Amount` all also
+      converted to base.
+    - **WithYQ** column (Individual Tables) — Q intentionally NOT added.
+      The user wants Q to "stand alone" and never affect any other fare
+      column.  WithYQ = `ow + (yq+yr)/exchange_rate` (in base).
+
+  **(C) Gross fare column in fare's base currency (was always BDT)**
+  - **Problem:** The Individual Tables sheet hardcoded `OW/Gross(BDT)` and
+    `RT/Gross(BDT)` headers and computed `(ow × exchange_rate) + tax_ow`
+    (BDT result).  Bangladesh-only assumption that breaks for India, China,
+    or any non-USD-base fare display.
+  - **Fix:** Header is now `OW/Gross({currency})` per row, and the
+    computation is `ow + (tax_ow / exchange_rate)` → fare's base currency.
+    Q is not added (per spec).
+
+  **(D) ETA stabilization for long-running tasks (especially tax mode)**
+  - **Problem (work-PC report):** "ETA could not show time after the first
+    calculation" in tax mode.  Root cause: `_estimate_remaining_seconds`
+    used current `elapsed / completed` for per-unit, so `per_unit` grew
+    while a long-running route was still in flight (elapsed grew, completed
+    stayed put).  ETA actually *increased* mid-route, then snapped down at
+    each completion event — visually jittery and increased toward the end
+    of long tax-mode runs (each airport runs ~150 FTAX commands).
+  - **Fix in `gui.py`:** New `_capture_eta_progress_tick()` helper records
+    `per_unit_seconds` at each completion event (FZS, tax airport, fare
+    route).  `_refresh_eta` no longer recomputes per-unit; it uses the
+    locked value and subtracts time-since-lock so the displayed ETA
+    monotonically counts down between completions.
+
+  **No behavior change on the developer laptop** for any of (A)–(D).
+  Validation only rejects clicks objectively outside the D-row region;
+  Q/gross changes are display-only and apply consistently across PCs;
+  ETA fix is also display-only (no logic in the run path changes).
+
+  **Tests:** 319 passing.  +12 D-click guards (region + sanity + FS-N + 2
+  integration tests), +3 parser tests for the construction-line Q and ROE.
+
+- **v1.5.16 — char_x-anchored D-click offset, tax-mode ETA, Reset button moved, penalty comparison sheet (2026-04-30):**
+  - **D-click offset anchored to `char_x`:** stores a second offset relative
+    to the per-line D-glyph landmark detected by `_find_d_char_column`.  At
+    apply time the char_x-anchored offset is preferred (more stable across
+    terminal-width changes); legacy base_x-anchored offset is the fallback.
+    Both fields written on every successful learn; `clear_d_click_offset`
+    clears both.
+  - **Tax-mode ETA fix:** GUI log parser now matches `[N/M] Airport: …`, so
+    the ETA overlay actually updates during tax runs instead of staying
+    stuck on "calculating after first route…".
+  - **Reset D-click button** moved from inside the filters group to the
+    bottom bar next to Recalibrate, with a tooltip.
+  - **Penalty Comparison sheet** added to the penalty Excel: side-by-side
+    reissue/refund × Before-24h / Within-24h / NOSHOW grid grouped by
+    Route → Carrier → RBDs.  First-change-free rules get a `*` suffix.
+    Records sharing identical bucket values collapse into one RBDs row.
+  - 12 new tests; 304 passing total.
+
+- **v1.5.15 — D-click stale-offset recovery (2026-04-30):**
+  - **Auto-invalidate inside `click_d_button`:** when every auto-attempt
+    fails AND a saved offset was in play, the offset is cleared from
+    calibration.json before the manual 15-second fallback wait.  Next run
+    starts the manual-learning window from scratch.
+  - **`Reset D-click calibration` button in the GUI** drops the saved offset
+    on demand so the user can force relearning without sitting through a
+    fan-out exhaust + 15-s wait.
+  - 4 new tests covering clear behavior + auto-invalidate fire/noop branches.
+
+- **v1.5.14 — recovery: revert v1.5.12/v1.5.13 D-click ordering, fix keyring bundling, fix update flow (2026-04-30):**
+  - **Reverted v1.5.12 char_x_early insert and v1.5.13 smart-first rule.**
+    Saved-X prefix is back to the v1.5.11 ordering (six saved-X variants,
+    then the standard fan-out).  Restores click behavior on every PC where
+    it had been working.
+  - **Login fix:** PyInstaller 6.19 wasn't following keyring 25.x's
+    entry-point plugin discovery from a bare `hiddenimports` list — only the
+    `.dist-info` was bundled.  Switched to `collect_all('keyring')`.
+  - **In-app update fallback:** when the latest release ships only a `.zip`
+    (true since v1.5.0 onedir builds), the in-app update prompt now opens
+    the GitHub release page in the browser instead of reporting "no exe
+    download link".
+
 - **v1.5.13 — D-click smart-first: trust char_x landmark when saved offset disagrees (2026-04-29):**
   - **Problem:** Even with v1.5.12 promoting `char_x_delta` to attempts 5–7, the
     work PC's saved offset (`x=6`) still pointed at the BOOK column for *every*

@@ -5,7 +5,16 @@ _RE_BASE_FARE = re.compile(r"FARE\s+([A-Z]{3})\s*(\d+\.?\d*)")
 _RE_EQU_FARE = re.compile(r"EQU\s+([A-Z]{3})\s*(\d+\.?\d*)")
 _RE_YQ_CHARGE = re.compile(r"\bYQ\s*(\d+\.?\d*)\b")
 _RE_YR_CHARGE = re.compile(r"\bYR\s*(\d+\.?\d*)\b")
-_RE_Q_CHARGE = re.compile(r"\bQ\s*(\d+\.?\d*)\b")
+# Q charge appears in the IATA fare construction line as
+# "Q CITYORIG_CITYDEST AMOUNT" (e.g. "Q CANDAC28.97").  The amount is in
+# NUC, which IATA defines as USD.  The previous regex `\bQ\s*(\d+...)\b`
+# never actually matched this format because of the city codes between Q
+# and the number — q_charge was silently 0 on every fare for as long as
+# this format has existed.
+_RE_Q_CHARGE_NUC = re.compile(r"\bQ\s+[A-Z]{3}\s*[A-Z]{3}\s*(\d+\.\d+)")
+# ROE = Rate of Exchange — local-currency-per-NUC.  Defaults to 1.0 when
+# absent (which is correct for USD-denominated fares).
+_RE_ROE = re.compile(r"\bROE\s*(\d+\.\d+)")
 _RE_TAXES = re.compile(r"TAXES\s+([A-Z]{3})?\s*(\d+\.?\d*)")
 _RE_TOTAL = re.compile(r"TOT\s+([A-Z]{3})?\s*(\d+\.?\d*)")
 _RE_TAX_CODES = re.compile(r"\b([A-Z][A-Z0-9]?)(\d+\.?\d*)\b")
@@ -37,7 +46,12 @@ def parse_fs_tax_breakdown(text: str) -> dict:
         "equ_fare": 0.0,
         "yq_charge": 0.0,
         "yr_charge": 0.0,
+        # `q_charge` is the Q-surcharge amount in NUC (= USD by IATA
+        # convention).  Captured from the fare-construction line, e.g.
+        # "Q CANDAC28.97".  This is the "single source of truth" value;
+        # local-currency renderings are derived as q_charge × roe.
         "q_charge": 0.0,
+        "roe": 1.0,
         "total_taxes": 0.0,
         "total_amount": 0.0,
         "exchange_rate": 0.0,
@@ -65,9 +79,16 @@ def parse_fs_tax_breakdown(text: str) -> dict:
     if yr_match:
         result["yr_charge"] = float(yr_match.group(1))
 
-    q_match = _RE_Q_CHARGE.search(text)
+    # Q-surcharge from the IATA fare construction line, in NUC (= USD).
+    q_match = _RE_Q_CHARGE_NUC.search(text)
     if q_match:
         result["q_charge"] = float(q_match.group(1))
+
+    # Rate of Exchange (local-per-NUC).  For USD-base fares this is 1.0;
+    # for non-USD bases (e.g. CNY) it scales NUC → fare currency.
+    roe_match = _RE_ROE.search(text)
+    if roe_match:
+        result["roe"] = float(roe_match.group(1))
 
     # 4. Total Taxes & Total Amount
     tax_match = _RE_TAXES.search(text)
