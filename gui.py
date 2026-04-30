@@ -424,7 +424,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.17"
+    VERSION = "v1.5.18"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]

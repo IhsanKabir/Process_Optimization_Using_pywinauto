@@ -512,6 +512,83 @@ These are done and live on `main` so the next reader knows not to re-open them:
     soon". Fixed to accept both `.exe` and `.zip`; committed `eccfc46` to public repo
     `master`. Going forward, either format will render a download button.
 
+- **v1.5.18 — Hot-fix bundle: Q-charge sheet routing + Option 2/3 manual click + DAC-origin gross in BDT (2026-04-30):**
+
+  Three independent fixes for issues found by running v1.5.17 on real
+  fares.  Each is small and targeted.
+
+  **(A) Q-charge currency rules wrong on two sheets in v1.5.17**
+  - **Bug:** v1.5.17 mis-located the Q-charge display logic — the change
+    intended for the *YQ-YR-Q Charges* sheet (`_write_yq_charges_sheet`,
+    line ~2216) was instead applied to the *Tax Breakdowns* sheet
+    (`_write_tax_breakdown_sheet`, line ~1949).  Result on a CNY-base fare
+    (CZ CAN-DAC, Q=28.97 USD, ROE=6.9, rate=18.0):
+    - Tax Breakdowns sheet: header said `Amount (CNY)` instead of
+      `(BDT)`, and YQ/YR/tax-codes/totals were divided by the rate so they
+      rendered ~125× too small.
+    - YQ-YR-Q Charges sheet: Q was divided by the rate (treated as if it
+      were BDT), so it rendered as ~1.61 CNY instead of the correct
+      ~200 CNY (a 125× under-display).
+  - **Fix in `excel_report.py`:**
+    - `_write_tax_breakdown_sheet` reverted to BDT for everything.  Only
+      Q now does USD→BDT via `q_usd × roe × exchange_rate`.
+    - `_write_yq_charges_sheet` corrected: YQ/YR still divide by
+      `exchange_rate` (BDT → base), but Q now multiplies by `roe`
+      (USD → base).  Header `Amount ({base_cur})` was already correct.
+  - **Tests added:** four new tests in `test_excel_report.py` lock down
+    the per-sheet formulas using the user-supplied CZ CAN-DAC numbers:
+    - Tax Breakdowns header `Amount (BDT)`, Q displayed as `q × roe × rate`.
+    - YQ-YR-Q Charges header `Amount (CNY)` for a CNY-base fare,
+      Q displayed as `q × roe`, YQ/YR as `÷ rate`.
+  - Individual Tables sheet, WithYQ column, and Gross fare column were
+    correct in v1.5.17 — no changes needed there.
+
+  **(B) D-click Option 2/3 manual click was being thrown away**
+  - **Symptom (work-PC log run_2026-04-30_1558):** for routes whose pure-
+    airline option was Option 2 or 3 (e.g. FDMCTZYL/BG, FDDOHCGP/BS,
+    FDDOHZYL/BG), the auto fan-out failed all 24 attempts and the user's
+    manual D-click between attempts didn't get attributed.  Eventually
+    the saved offset was cleared, the next "no saved position" run
+    re-prompted, and the user had to keep manually clicking.
+  - **Root cause:** v1.5.17's `_post_click_screen_matches_option` required
+    `FS-{option_index+1} ADT` *exactly* in the post-click screen.  When
+    the user clicked D for an Option-N row mid-fan-out, the screen
+    *was* a valid tax breakdown — but the FS-N marker rendered in a
+    format the strict check missed.  The code then fell through to the
+    "screen changed but tax parser rejected it" branch and sent `I` to
+    reset the screen, wiping the user's successful click.
+  - **Fix:** reverted the auto-success check to plain
+    `looks_like_fs_tax_breakdown(result)` (the v1.5.16 behavior).  The
+    manual-click region validation (`_is_manual_click_in_d_region`) is
+    *unchanged* — stray clicks (tab strip, focus recovery) are still
+    rejected.  We give up the +TQ-vs-D paranoia in exchange for not
+    rejecting legitimate Option 2/3 manual clicks.
+
+  **(C) Gross fare column in BDT for DAC-origin routes only**
+  - **Per user spec:** routes whose outbound origin is DAC keep gross in
+    BDT (the booking office's local currency).  Routes from elsewhere
+    (CAN-DAC, MCT-DAC, etc.) use the fare's base currency.
+  - **Fix in `_write_individual_tables_sheet`:**
+    - New per-route `gross_currency = "BDT" if outbound_origin == "DAC"
+      else base_cur`.
+    - Header changed to `OW/Gross({gross_currency})` — `(BDT)` for DAC
+      origins, fare-base for others.
+    - Gross calc branched: DAC origins do `(ow × exchange_rate) +
+      tax_ow` (BDT), other origins do `ow + tax_ow / exchange_rate`
+      (base).
+  - WithYQ column unchanged — still in fare's base currency for all
+    origins.
+
+  **Tests:** 324 passing (was 323 in v1.5.18 attempt).  +1 test for
+  non-DAC-origin gross-currency rule.  Existing test that asserted
+  `OW/Gross(USD)` for `BG_DAC-MLE` updated to expect `(BDT)` per the
+  new DAC rule.
+
+  **Deferred to v1.5.19:** the user reported that selecting a snapshot
+  file from a different directory in the GUI's "Compare against" field
+  did not produce a comparison.  Need a full log around `[3.5] Detecting
+  changes...` to diagnose; truncated in the v1.5.18 report.
+
 - **v1.5.17 — Bundle: D-click manual-learn validation, Q-charge in NUC/USD, gross fare in base currency, ETA stabilization (2026-04-30):**
 
   This release bundles four independent fixes.  Each is additive — none
