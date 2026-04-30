@@ -2580,14 +2580,20 @@ class SmartpointAutomation:
                 )
 
                 if result.strip() != text_before.strip():
-                    # v1.5.17 — for AUTO success, require the post-click
-                    # screen to show FS-{N} ADT for the option we tried,
-                    # so accidental +TQ clicks (which can produce a
-                    # similar tax-breakdown-shaped screen for a different
-                    # option, or no FS-N at all) don't masquerade as a
-                    # successful D click.  Manual clicks still validated
-                    # through their own region check below.
-                    if self._post_click_screen_matches_option(result, option_index):
+                    # v1.5.18 — reverted the FS-{N} ADT tightening that
+                    # v1.5.17 added for auto-success.  In real runs the
+                    # tightening rejected legitimate Option 2/3 manual
+                    # clicks (the post-click screen for an Option-N detail
+                    # may render the FS-N marker in a format the tighter
+                    # check missed, e.g. without the exact `FS-{N} ADT`
+                    # string).  Result: when the user manually clicked D
+                    # for Option 2/3, the click was *recognised* by the
+                    # screen-changed check, but `_post_click_screen_matches
+                    # _option` rejected it, the code sent `I` to reset,
+                    # and the fan-out kept going — wiping the user's
+                    # successful click.  Manual-click region validation
+                    # below still guards against stray clicks.
+                    if looks_like_fs_tax_breakdown(result):
                         # Was this a manual click? Any click recorded >100 ms
                         # after post_click_t is from the user, not pyautogui.
                         # Iterate from newest to oldest so we look at the
