@@ -2189,7 +2189,12 @@ class SmartpointAutomation:
     # not plausibly on the D button row.
 
     _MANUAL_D_CLICK_X_TOLERANCE_PX = 100
-    _MANUAL_D_CLICK_Y_TOLERANCE_LINES = 1.5
+    # Raised from 1.5 to 4.0 (±80 px at 20 px/line).  The tight 1.5-line
+    # value accumulated calibration error for deep options (option 3/4 at
+    # text line 20+) and rejected valid manual clicks that were 44+ px from
+    # the computed base_y.  4.0 lines still rejects title-bar/tab-strip
+    # clicks while absorbing ~5 px/line of drift over 16 lines.
+    _MANUAL_D_CLICK_Y_TOLERANCE_LINES = 4.0
 
     def _is_manual_click_in_d_region(
         self,
@@ -2208,9 +2213,11 @@ class SmartpointAutomation:
           * accidental clicks elsewhere on screen.
 
         We require the click to be inside the SmartRichTextBox terminal
-        pane, within ±line_height·1.5 of the target row's Y center, and
-        within ±100 px of base_x (which spans the +TQ → D portion of the
-        row across all observed terminal widths)."""
+        pane, within ±100 px of base_x (the +TQ → D column range), and
+        within ±line_height·4.0 of base_y.  When base_y is outside the
+        visible rect (option 3/4 off-screen), we skip the Y check entirely
+        since the user had to scroll to find the D button — any in-pane,
+        in-column click counts."""
         try:
             rect = self._get_terminal_rect()
         except Exception:
@@ -2220,9 +2227,14 @@ class SmartpointAutomation:
             return False
         if not (rect.top <= uy <= rect.bottom):
             return False
-        y_tol = int(self._line_height * self._MANUAL_D_CLICK_Y_TOLERANCE_LINES)
-        if abs(uy - base_y) > y_tol:
-            return False
+        # When base_y is off-screen (option scrolled below visible terminal
+        # edge), skip the Y proximity check — the user had to scroll and we
+        # cannot know the exact rendered Y from captured text coordinates.
+        base_y_in_rect = rect.top <= base_y <= rect.bottom
+        if base_y_in_rect:
+            y_tol = int(self._line_height * self._MANUAL_D_CLICK_Y_TOLERANCE_LINES)
+            if abs(uy - base_y) > y_tol:
+                return False
         if abs(ux - base_x) > self._MANUAL_D_CLICK_X_TOLERANCE_PX:
             return False
         return True
@@ -2665,19 +2677,32 @@ class SmartpointAutomation:
                             return ""
 
             # Auto-invalidate a stale saved offset.  If we got here, every
-            # auto-click attempt failed.  When there was a saved offset
-            # (either anchored), it was almost certainly wrong (the
-            # previous click was learned on the wrong glyph, or the
-            # layout shifted enough that the saved column no longer maps
-            # to D).  Drop both anchored variants so the next run starts
-            # the manual-learning window from scratch.
-            if saved_offset is not None or saved_char_x_offset is not None:
+            # auto-click attempt failed.  Only clear the saved offset when
+            # base_y was within the visible terminal rect (on-screen failure
+            # = the offset is genuinely wrong).  When base_y was off-screen,
+            # the failure is because every click landed outside the window —
+            # not because the saved offset itself is bad — so preserve it for
+            # the next on-screen D-click.
+            try:
+                _rect_for_clear = self._get_terminal_rect()
+                _base_y_in_rect = (
+                    _rect_for_clear.top <= base_y <= _rect_for_clear.bottom
+                )
+            except Exception:
+                _base_y_in_rect = True  # assume on-screen if rect unreadable
+
+            if (saved_offset is not None or saved_char_x_offset is not None) and _base_y_in_rect:
                 stale = saved_char_x_offset if saved_char_x_offset is not None else saved_offset
                 self._cal = _calibration_mod.clear_d_click_offset(self._cal)
                 _calibration_mod.save_calibration(self._cal)
                 self.logger.warning(
                     f"      [D-CLICK] Saved offset {stale} did not produce "
                     f"a tax breakdown after fan-out; cleared from calibration."
+                )
+            elif saved_offset is not None or saved_char_x_offset is not None:
+                self.logger.warning(
+                    "      [D-CLICK] Fan-out failed but base_y is off-screen — "
+                    "preserving saved offset (failure was off-screen, not a bad offset)."
                 )
 
             # Fan-out exhausted — monitor is already running; just wait for the
@@ -2966,8 +2991,17 @@ class SmartpointAutomation:
 
         clean_text, lines, line_idx = target
         _add_candidate(_line_base(clean_text, lines, line_idx), terminal_text, "visible")
+        # Try bottom-anchored coordinate without scrolling first.  _bottom_base
+        # measures from rect.bottom upward by the prompt's distance-from-end-of-text,
+        # so it is correct whether or not the captured text is longer than the
+        # visible window.  This avoids the scroll sequence for the common case
+        # where Smartpoint is already at the last page.
+        _add_candidate(_bottom_base(clean_text, lines, line_idx), terminal_text, "bottom")
 
-        if len(lines) > total_lines_capacity:
+        if len(lines) > total_lines_capacity and not candidates:
+            # Bottom-anchored calculation produced no valid coordinate (rare —
+            # only happens when the prompt is many lines above the last line),
+            # so fall back to scrolling and re-reading the layout.
             self.logger.debug(
                 "      [CLICK] More prompt may be off-screen; scrolling and re-reading layout..."
             )
@@ -3012,8 +3046,6 @@ class SmartpointAutomation:
                     scrolled_text,
                     "scrolled-bottom",
                 )
-
-            _add_candidate(_bottom_base(clean_text, lines, line_idx), terminal_text, "bottom")
 
         if not candidates:
             self.logger.warning(
