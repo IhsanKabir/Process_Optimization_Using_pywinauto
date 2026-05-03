@@ -463,6 +463,25 @@ PRICING OPTION 2
     assert option_count == 2
 
 
+def test_pure_finder_returns_option_2_on_mixed_page():
+    # Option 1 has BG outbound + WY return (mixed); option 2 is pure BG.
+    # Pure finder must skip option 1 and return option 2.
+    mixed_page = """
+PRICING OPTION 1
+ 1   BG   BG 421  Y 02JUN  ZYL  DAC 1155 1240
+ 2   WY   WY 182  Y 02JUN  DAC  MCT 1540 1800
+
+PRICING OPTION 2
+ 1   BG   BG 501  Y 02JUN  ZYL  DAC 1000 1045
+ 2   BG   BG 301  Y 02JUN  DAC  MCT 1300 1530
+
+"""
+    idx, num, count = _find_pure_airline_option_in_fs_page(mixed_page, "BG")
+    assert idx == 1
+    assert num == "2"
+    assert count == 2
+
+
 def test_should_recheck_same_fs_page_when_refreshed_page_adds_target_option():
     current_page = """
 PRICING OPTION 1

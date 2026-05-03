@@ -1273,29 +1273,6 @@ def _find_pure_airline_option_in_fs_page(
     return None, None, len(options)
 
 
-def _find_first_leg_airline_option_in_fs_page(
-    fs_text: str, airline: str
-) -> tuple[int | None, str | None, int]:
-    """Find the first option where the target airline operates the outbound leg.
-
-    Used as a codeshare fallback when no pure single-carrier option exists across
-    any date.  The first leg is the one that matters for the YQ/tax breakdown we
-    want, even when the return leg is operated by a partner carrier.
-    """
-    options = list(FS_OPTION_PATTERN.finditer(fs_text or ""))
-    airline_upper = (airline or "").upper()
-
-    for option_index, opt_match in enumerate(options):
-        opt_num = opt_match.group(1)
-        block = opt_match.group(2)
-        leg_matches = FS_LEG_PATTERN.findall(block)
-        if not leg_matches:
-            continue
-        if leg_matches[0][1].upper().strip() == airline_upper:
-            return option_index, opt_num, len(options)
-
-    return None, None, len(options)
-
 
 def _should_recheck_same_fs_page(
     current_fs_page: str, refreshed_fs_page: str, airline: str
@@ -2525,10 +2502,6 @@ def main(prebuilt_args=None, stop_event=None):
                             airline = base_cmd.split("/")[1][:2]
 
                             fs_expanded = ""
-                            # Offset of the earliest date with a codeshare (first-leg)
-                            # option.  Populated during the pure-airline pass; used
-                            # after it if no pure option was found on any date.
-                            codeshare_fallback_offset: int | None = None
                             # Two-window fallback: 7 consecutive days ~1 month out,
                             # then 7 more ~3 months out if the first window yields
                             # no pure-airline option.
@@ -2693,16 +2666,6 @@ def main(prebuilt_args=None, stop_event=None):
                                     rechecked_current_fs_page = False
 
                                 if target_option_index is None:
-                                    # Store the earliest date that has a codeshare
-                                    # (first-leg) option as a fallback.  We check
-                                    # fs_result (page 1) so re-running the FS command
-                                    # for this date will show the option immediately.
-                                    if codeshare_fallback_offset is None:
-                                        (cs_idx, _, _) = _find_first_leg_airline_option_in_fs_page(
-                                            fs_result, airline
-                                        )
-                                        if cs_idx is not None:
-                                            codeshare_fallback_offset = fs_date_offset
                                     _time.sleep(0.5)
                                     continue
 
@@ -2723,40 +2686,6 @@ def main(prebuilt_args=None, stop_event=None):
                                     )
                                     fs_expanded = ""
                                 break  # Exit the date-stepping for loop
-
-                            # No pure-airline option found on any date.
-                            # Try codeshare fallback: re-run FS for the earliest date
-                            # that had a first-leg match and click its D button.
-                            if not fs_expanded and codeshare_fallback_offset is not None:
-                                cs_date_str = (
-                                    (datetime.now() + timedelta(days=codeshare_fallback_offset))
-                                    .strftime("%d%b")
-                                    .upper()
-                                )
-                                logger.info(
-                                    f"    [FS Checkout] No pure {airline} option found; "
-                                    f"trying codeshare fallback for {src}-{dst} on {cs_date_str}..."
-                                )
-                                cs_fs_result = automation.run_fs_command(
-                                    src, dst, cs_date_str, airline
-                                )
-                                (cs_idx, cs_num, _) = _find_first_leg_airline_option_in_fs_page(
-                                    cs_fs_result, airline
-                                )
-                                if cs_idx is not None:
-                                    logger.info(
-                                        f"      [CS-FALLBACK] Option {cs_num} (first-leg {airline})"
-                                    )
-                                    fs_expanded = automation.click_d_button(cs_idx, cs_fs_result)
-                                    if fs_expanded and looks_like_fs_tax_breakdown(fs_expanded):
-                                        logger.info(
-                                            f"      [OK] Tax breakdown extracted via D-click (codeshare fallback)"
-                                        )
-                                    else:
-                                        logger.warning(
-                                            f"      [!] Codeshare fallback D-click did not return tax data."
-                                        )
-                                        fs_expanded = ""
 
                             if fs_expanded and len(fs_expanded.strip()) > 50:
                                 raw_fs_texts[file_key] = fs_expanded

@@ -100,12 +100,29 @@ def parse_fs_tax_breakdown(text: str) -> dict:
         result["total_amount"] = float(tot_match.group(2))
 
     # 5. Extract specific tax breakdown array
-    # Look for 1 or 2 character IATA tax codes (Letter + Letter/Digit) followed immediately by numbers (e.g. BD500, P7614)
-    # Only search from the "FARE" keyword onwards to avoid false positives from
-    # flight segment lines (e.g. aircraft type "DH8" parsed as tax code "DH").
+    # Only scan the FARE-line through TOT-line (inclusive).  Using the full
+    # text from "FARE" onwards can still catch carrier codes/flight numbers
+    # (e.g. "DH350" for carrier DH flight 350) that appear in operator notes
+    # or itinerary summaries printed after the tax totals line.
     exclude_codes = {"YQ", "YR", "TOT", "EQU", "NUC", "ROE", "USD", "BDT", "EUR", "GBP"}
-    fare_pos = text.find("FARE")
-    tax_search_text = text[fare_pos:] if fare_pos >= 0 else text
+    _lines = (text or "").split("\n")
+    _fare_idx = next(
+        (i for i, ln in enumerate(_lines) if re.search(r"\bFARE\b", ln)), -1
+    )
+    _tot_idx = next(
+        (
+            i
+            for i, ln in enumerate(_lines)
+            if re.search(r"\bTOT\b", ln) and i >= max(0, _fare_idx)
+        ),
+        -1,
+    )
+    if _fare_idx >= 0 and _tot_idx >= 0:
+        tax_search_text = "\n".join(_lines[_fare_idx : _tot_idx + 1])
+    elif _fare_idx >= 0:
+        tax_search_text = "\n".join(_lines[_fare_idx:])
+    else:
+        tax_search_text = text
     tax_codes = _RE_TAX_CODES.findall(tax_search_text)
 
     # Process multiple of the same code by adding them, but keep different codes separate

@@ -93,7 +93,10 @@ def test_record_click_delta_does_not_mutate_global_line_height():
 
 def test_click_more_prompt_link_rereads_layout_after_scroll(monkeypatch):
     automation = SmartpointAutomation()
-    long_text = "\n".join(["ROW"] * 30 + ["          More Flights"])
+    # "More Flights" must have >= total_lines_capacity (9) lines after it so that
+    # _bottom_base returns None (lines_from_bottom >= capacity), ensuring the
+    # scroll fallback path actually fires.
+    long_text = "\n".join(["ROW"] * 20 + ["          More Flights"] + ["ROW"] * 10)
     scrolled_text = "HEADER\n  More Flights\n>"
     next_page_text = "NEXT PAGE\nEND"
     copied_texts = iter([scrolled_text, next_page_text])
@@ -320,6 +323,38 @@ def test_parse_fs_tax_breakdown_roe_defaults_to_one_when_absent():
 
     assert parsed["roe"] == 1.0
     assert parsed["q_charge"] == 0.0
+
+
+def test_parse_fs_tax_breakdown_excludes_carrier_code_after_tot():
+    """Carrier codes like DH350 appearing in operator notes after TOT must not
+    be parsed as a tax code entry in the breakdown dict."""
+    text = (
+        "AUH EY DAC 350.00DBDO NUC350.00END ROE1.0\n"
+        "FARE AED1285.00 EQU USD350.00 BD100 OB15\n"
+        "YQ87 TAXES AED202 TOT AED1487\n"
+        "OPERATED DH350 AUH-DAC\n"  # carrier DH flight 350 — must not be a tax
+    )
+
+    parsed = parse_fs_tax_breakdown(text)
+
+    assert "DH" not in parsed["tax_breakdown"]
+    assert parsed["yq_charge"] == 87.0
+    assert parsed["total_taxes"] == 202.0
+
+
+def test_parse_fs_tax_breakdown_excludes_aircraft_type_before_fare():
+    """Aircraft type DH8 on a leg line appearing before the FARE keyword must
+    not be captured as a tax code."""
+    text = (
+        "1  EY  456  DH8  AUH DAC\n"
+        "FARE AED1285.00 EQU USD350.00 BD100\n"
+        "YQ87 TAXES AED187 TOT AED1472\n"
+    )
+
+    parsed = parse_fs_tax_breakdown(text)
+
+    assert "DH" not in parsed["tax_breakdown"]
+    assert "BD" in parsed["tax_breakdown"]
 
 
 def test_click_d_button_accepts_settled_tax_screen(monkeypatch):
