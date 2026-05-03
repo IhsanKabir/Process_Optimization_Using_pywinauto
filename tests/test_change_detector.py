@@ -9,7 +9,9 @@ from pathlib import Path
 
 from change_detector import (
     detect_changes,
+    detect_fs_tax_changes,
     format_change_summary,
+    format_fs_tax_change_summary,
     load_latest_snapshot,
     load_snapshot_by_reference,
     save_snapshot,
@@ -229,6 +231,92 @@ class TestFormatChangeSummary:
         assert "BG_DAC-CGP" in summary
         assert "BG_DAC-MLE" in summary
         assert "Total changes: 3" in summary
+
+
+class TestDetectFsTaxChanges:
+    """Tests for FS tax breakdown change detection."""
+
+    def _entry(self, fs_taxes):
+        return {"rbd_data": {}, "currency": "USD", "fs_taxes": fs_taxes}
+
+    def test_no_change_when_both_empty(self):
+        data = {"BG_DAC-MCT": self._entry({})}
+        assert detect_fs_tax_changes(data, data) == {}
+
+    def test_no_change_when_both_missing(self):
+        data = {"BG_DAC-MCT": {"rbd_data": {}, "currency": "USD"}}
+        assert detect_fs_tax_changes(data, data) == {}
+
+    def test_detects_tax_data_lost(self):
+        prev = {"BG_DAC-MCT": self._entry({"yq_charge": 50, "total_taxes": 80})}
+        curr = {"BG_DAC-MCT": self._entry({})}
+        changes = detect_fs_tax_changes(curr, prev)
+        assert "BG_DAC-MCT" in changes
+        assert changes["BG_DAC-MCT"]["status"] == "tax_data_lost"
+
+    def test_detects_tax_data_gained(self):
+        prev = {"BG_DAC-MCT": self._entry({})}
+        curr = {"BG_DAC-MCT": self._entry({"yq_charge": 50, "total_taxes": 80})}
+        changes = detect_fs_tax_changes(curr, prev)
+        assert "BG_DAC-MCT" in changes
+        assert changes["BG_DAC-MCT"]["status"] == "tax_data_gained"
+
+    def test_detects_yq_charge_change(self):
+        prev = {"BG_DAC-MCT": self._entry({"yq_charge": 50, "total_taxes": 80})}
+        curr = {"BG_DAC-MCT": self._entry({"yq_charge": 60, "total_taxes": 80})}
+        changes = detect_fs_tax_changes(curr, prev)
+        assert "BG_DAC-MCT" in changes
+        assert "yq_charge" in changes["BG_DAC-MCT"]
+        assert changes["BG_DAC-MCT"]["yq_charge"] == {"old": 50, "new": 60}
+
+    def test_no_change_when_values_identical(self):
+        taxes = {"yq_charge": 50, "yr_charge": 5, "total_taxes": 80}
+        prev = {"BG_DAC-MCT": self._entry(taxes)}
+        curr = {"BG_DAC-MCT": self._entry(taxes)}
+        assert detect_fs_tax_changes(curr, prev) == {}
+
+    def test_detects_multiple_field_changes(self):
+        prev = {"BG_DAC-MCT": self._entry({"yq_charge": 50, "total_taxes": 80, "yr_charge": 0})}
+        curr = {"BG_DAC-MCT": self._entry({"yq_charge": 55, "total_taxes": 90, "yr_charge": 5})}
+        changes = detect_fs_tax_changes(curr, prev)
+        assert "BG_DAC-MCT" in changes
+        assert len(changes["BG_DAC-MCT"]) == 3
+
+    def test_route_not_in_prev_treated_as_gained(self):
+        curr = {"BG_DAC-MCT": self._entry({"yq_charge": 50})}
+        prev: dict = {}
+        changes = detect_fs_tax_changes(curr, prev)
+        assert changes["BG_DAC-MCT"]["status"] == "tax_data_gained"
+
+    def test_route_not_in_curr_treated_as_lost(self):
+        prev = {"BG_DAC-MCT": self._entry({"yq_charge": 50})}
+        curr: dict = {}
+        changes = detect_fs_tax_changes(curr, prev)
+        assert changes["BG_DAC-MCT"]["status"] == "tax_data_lost"
+
+
+class TestFormatFsTaxChangeSummary:
+    def test_empty_returns_no_change_message(self):
+        assert "No FS tax changes" in format_fs_tax_change_summary({})
+
+    def test_lost_data_shown(self):
+        changes = {"BG_DAC-MCT": {"status": "tax_data_lost"}}
+        summary = format_fs_tax_change_summary(changes)
+        assert "BG_DAC-MCT" in summary
+        assert "TAX DATA LOST" in summary
+        assert "Total: 1" in summary
+
+    def test_gained_data_shown(self):
+        changes = {"BG_DAC-MCT": {"status": "tax_data_gained"}}
+        summary = format_fs_tax_change_summary(changes)
+        assert "Tax data now available" in summary
+
+    def test_field_change_shown(self):
+        changes = {"BG_DAC-MCT": {"yq_charge": {"old": 50, "new": 60}}}
+        summary = format_fs_tax_change_summary(changes)
+        assert "yq_charge" in summary
+        assert "50" in summary
+        assert "60" in summary
 
 
 class TestSnapshotPersistence:
