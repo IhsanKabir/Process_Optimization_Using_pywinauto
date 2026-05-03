@@ -493,6 +493,90 @@ def detect_tax_changes(current_data: dict, previous_data: dict) -> dict:
     return changes
 
 
+def detect_fs_tax_changes(current_data: dict, previous_data: dict) -> dict:
+    """Compare FS tax breakdown data between fare-mode runs.
+
+    Detects when tax data is gained, lost, or when key charges change between
+    snapshots.  Works on the same ``all_route_data`` dict that ``detect_changes``
+    operates on; reads the ``fs_taxes`` sub-key that ``detect_changes`` ignores.
+
+    Returns:
+        Dict mapping route_key -> change_info.
+        change_info contains one of:
+          - ``{"status": "tax_data_lost"}``   — prev had data, curr doesn't
+          - ``{"status": "tax_data_gained"}`` — curr has data, prev didn't
+          - field-level diffs: ``{field: {"old": v, "new": v}, ...}``
+    """
+    changes: dict = {}
+    all_routes = current_data.keys() | previous_data.keys()
+
+    for route_key in all_routes:
+        curr_entry = current_data.get(route_key, {})
+        prev_entry = previous_data.get(route_key, {})
+
+        curr_taxes: dict = (
+            curr_entry.get("fs_taxes", {}) if isinstance(curr_entry, dict) else {}
+        )
+        prev_taxes: dict = (
+            prev_entry.get("fs_taxes", {}) if isinstance(prev_entry, dict) else {}
+        )
+
+        # Skip routes where neither run had any tax data — nothing to compare.
+        if not curr_taxes and not prev_taxes:
+            continue
+
+        if prev_taxes and not curr_taxes:
+            changes[route_key] = {"status": "tax_data_lost"}
+            continue
+
+        if curr_taxes and not prev_taxes:
+            changes[route_key] = {"status": "tax_data_gained"}
+            continue
+
+        route_changes: dict = {}
+        for field in ("yq_charge", "yr_charge", "q_charge", "total_taxes"):
+            curr_val = curr_taxes.get(field) or 0
+            prev_val = prev_taxes.get(field) or 0
+            try:
+                if float(curr_val) != float(prev_val):
+                    route_changes[field] = {"old": prev_val, "new": curr_val}
+            except (TypeError, ValueError):
+                pass
+
+        if route_changes:
+            changes[route_key] = route_changes
+
+    return changes
+
+
+def format_fs_tax_change_summary(changes: dict) -> str:
+    """Format FS tax breakdown changes into a human-readable summary."""
+    if not changes:
+        return "No FS tax changes detected from previous data."
+
+    lines = ["=" * 50, "FS TAX BREAKDOWN CHANGES", "=" * 50, ""]
+
+    total = 0
+    for route_key, route_changes in changes.items():
+        status = route_changes.get("status")
+        if status == "tax_data_lost":
+            lines.append(f"  {route_key}: TAX DATA LOST (FS extraction failed this run)")
+            total += 1
+        elif status == "tax_data_gained":
+            lines.append(f"  {route_key}: Tax data now available (was missing previously)")
+            total += 1
+        else:
+            parts = []
+            for field, diff in route_changes.items():
+                parts.append(f"{field}: {diff['old']} -> {diff['new']}")
+            lines.append(f"  {route_key}: {', '.join(parts)}")
+            total += 1
+
+    lines.append("")
+    lines.append(f"Total: {total} route(s) with FS tax changes")
+    return "\n".join(lines)
+
+
 def format_tax_change_summary(changes: dict) -> str:
     """
     Format tax changes into a human-readable summary string.
