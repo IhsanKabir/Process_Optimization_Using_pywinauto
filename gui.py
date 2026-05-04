@@ -1,7 +1,7 @@
-"""
+﻿"""
 gui.py - TravelportAuto GUI
 
-User-friendly window. No raw log by default — shows a live route
+User-friendly window. No raw log by default â€” shows a live route
 checklist with plain-language status icons. Technical log is available
 via a hidden "Show technical log" toggle for troubleshooting.
 
@@ -31,7 +31,7 @@ import tkinter as tk
 import urllib.request
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-# ── Thread-safe log bridge ────────────────────────────────────────────────────
+# â”€â”€ Thread-safe log bridge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class _QueueHandler(logging.Handler):
@@ -80,11 +80,11 @@ def _escape_hold_state(
     return pressed_since, (now - pressed_since) >= hold_seconds
 
 
-# ── Tooltip helper ────────────────────────────────────────────────────────────
+# â”€â”€ Tooltip helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class _Tooltip:
-    """Lightweight tkinter tooltip — shows a small label on hover."""
+    """Lightweight tkinter tooltip â€” shows a small label on hover."""
 
     def __init__(self, widget, text: str, delay_ms: int = 450):
         self.widget = widget
@@ -139,7 +139,7 @@ class _Tooltip:
             self._tip = None
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _runtime_dir() -> str:
     """Return the folder that should hold user-visible runtime files."""
@@ -262,11 +262,11 @@ def _build_update_notice(
 
 
 def _parse_cmd(cmd_str: str):
-    """'FDDACMCT/BG'  →  ('BG', 'DAC → MCT')"""
+    """'FDDACMCT/BG'  â†’  ('BG', 'DAC â†’ MCT')"""
     m = re.match(r"FD([A-Z]{3})([A-Z]{3})/([A-Z0-9]+)", cmd_str.upper())
     if m:
         origin, dest, airline = m.group(1), m.group(2), m.group(3)
-        return airline, f"{origin} → {dest}"
+        return airline, f"{origin} â†’ {dest}"
     return cmd_str, ""
 
 
@@ -299,7 +299,7 @@ def _estimate_remaining_seconds(
     return max(1, int(round(remaining)))
 
 
-# ── Update checker ───────────────────────────────────────────────────────────
+# â”€â”€ Update checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 GITHUB_RELEASES_API = (
     "https://api.github.com/repos/IhsanKabir/"
@@ -308,7 +308,7 @@ GITHUB_RELEASES_API = (
 
 
 def _parse_version(tag: str) -> tuple:
-    """'v1.3.0' → (1, 3, 0)  — returns (0,) on failure."""
+    """'v1.3.0' â†’ (1, 3, 0)  â€” returns (0,) on failure."""
     try:
         return tuple(int(x) for x in tag.lstrip("v").split("."))
     except Exception:
@@ -476,11 +476,11 @@ def _check_for_update(current_version: str) -> dict | None:
     return None
 
 
-# ── Main GUI ──────────────────────────────────────────────────────────────────
+# â”€â”€ Main GUI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class TravelportGUI:
-    VERSION = "v1.5.21"
+    VERSION = "v1.5.22"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -515,7 +515,7 @@ class TravelportGUI:
         self._row_states: dict[str, str] = {}
         self._completed_routes = 0
         self._run_started_at: float | None = None
-        # v1.5.17 — ETA stabilization.  Lock per-unit duration at each
+        # v1.5.17 â€” ETA stabilization.  Lock per-unit duration at each
         # completion event; between events, count down from the locked
         # estimate.  Without this, mid-route the ETA *increased* because
         # `elapsed / completed` grew while `completed` stayed constant.
@@ -587,7 +587,7 @@ class TravelportGUI:
         self._save_preferences()
         self.root.destroy()
 
-    # ── Theme ─────────────────────────────────────────────────────────────────
+    # â”€â”€ Theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _apply_theme(self):
         style = ttk.Style(self.root)
@@ -601,7 +601,7 @@ class TravelportGUI:
         style.configure("Treeview", rowheight=26, font=("Segoe UI", 10))
         style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
 
-    # ── UI ────────────────────────────────────────────────────────────────────
+    # â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _build_ui(self):
         # Title bar
@@ -628,7 +628,7 @@ class TravelportGUI:
             fg="#5a7f9a",
             font=("Segoe UI", 9),
         ).pack(side="right")
-        # Update badge — hidden until a newer version is detected
+        # Update badge â€” hidden until a newer version is detected
         self._update_btn = tk.Button(
             bar,
             text="",
@@ -641,13 +641,13 @@ class TravelportGUI:
             padx=8,
             pady=2,
         )
-        # Not packed yet — shown only when update is available
+        # Not packed yet â€” shown only when update is available
 
         # Body
         body = tk.Frame(self.root, bg="#f2f2f2")
         body.pack(fill="both", expand=True, padx=10, pady=8)
 
-        # Scrollable left panel — wraps the controls in a Canvas so taller content
+        # Scrollable left panel â€” wraps the controls in a Canvas so taller content
         # (e.g. Currency mode with Previous Rates + Output Path) stays reachable.
         left_container = tk.Frame(body, bg="#f2f2f2", width=290)
         left_container.pack(side="left", fill="y", padx=(0, 10))
@@ -695,7 +695,7 @@ class TravelportGUI:
 
         self._build_bottom()
 
-    # ── Left panel ────────────────────────────────────────────────────────────
+    # â”€â”€ Left panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _section(self, parent, text):
         tk.Label(
@@ -711,7 +711,7 @@ class TravelportGUI:
     def _build_left(self, parent):
         self._left_parent = parent
 
-        # ── Group 1: What to Extract ────────────────────────────────────
+        # â”€â”€ Group 1: What to Extract â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         g_extract = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_extract, "What to Extract")
         self.mode_var = tk.StringVar(value="fare")
@@ -735,7 +735,7 @@ class TravelportGUI:
         ).pack(anchor="w")
         self.mode_var.trace_add("write", self._on_mode_change)
 
-        # ── Group 2: Speed ──────────────────────────────────────────────
+        # â”€â”€ Group 2: Speed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         g_speed = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_speed, "Speed")
         self.speed_var = tk.StringVar(value="normal")
@@ -748,7 +748,7 @@ class TravelportGUI:
                 g_speed, text=label, variable=self.speed_var, value=val
             ).pack(anchor="w", pady=1)
 
-        # ── Group 3: Filters (hidden in Currency) ───────────────────────
+        # â”€â”€ Group 3: Filters (hidden in Currency) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         g_filters = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_filters, "Filters")
         self._primary_filter_label_var = tk.StringVar(value="Route:")
@@ -796,7 +796,7 @@ class TravelportGUI:
         self.limit_var = tk.StringVar(value="0")
         ttk.Entry(g_filters, textvariable=self.limit_var, width=8).pack(anchor="w")
 
-        # ── Group 4a: Options — core (always) ───────────────────────────
+        # â”€â”€ Group 4a: Options â€” core (always) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         g_options_core = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_options_core, "Options")
         self.checkpoint_var = tk.BooleanVar(value=True)
@@ -810,7 +810,7 @@ class TravelportGUI:
             g_options_core, text="Skip change report", variable=self.no_changes_var
         ).pack(anchor="w", pady=1)
 
-        # ── Group 4b: Options — only-flags (Fares mode only) ────────────
+        # â”€â”€ Group 4b: Options â€” only-flags (Fares mode only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         g_only_flags = tk.Frame(parent, bg="#f2f2f2")
         self.only_fd_var = tk.BooleanVar(value=False)
         self.only_yq_var = tk.BooleanVar(value=False)
@@ -821,7 +821,7 @@ class TravelportGUI:
             g_only_flags, text="Taxes only (skip fares)", variable=self.only_yq_var
         ).pack(anchor="w", pady=1)
 
-        # ── Group 5: Compare against (hidden in Currency / Manual) ──────
+        # â”€â”€ Group 5: Compare against (hidden in Currency / Manual) â”€â”€â”€â”€â”€â”€
         g_compare = tk.Frame(parent, bg="#f2f2f2")
         tk.Label(
             g_compare, text="Compare against:", bg="#f2f2f2", font=("Segoe UI", 9)
@@ -844,7 +844,7 @@ class TravelportGUI:
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
-        # ── Group 6: Previous Rates (Currency mode only) ────────────────
+        # â”€â”€ Group 6: Previous Rates (Currency mode only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         g_prev_rates = tk.Frame(parent, bg="#f2f2f2")
         tk.Label(
             g_prev_rates,
@@ -866,18 +866,18 @@ class TravelportGUI:
         self._prev_rates_browse_btn.pack(side="left", padx=(4, 0))
         tk.Label(
             g_prev_rates,
-            text="Optional — sets the Previous Date column (Currency Rate only).",
+            text="Optional â€” sets the Previous Date column (Currency Rate only).",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
-        # ── Group 7: Output Path (always) ───────────────────────────────
+        # â”€â”€ Group 7: Output Path (always) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         g_output = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_output, "Output Path")
         tk.Label(
             g_output,
-            text="Leave blank — saved automatically",
+            text="Leave blank â€” saved automatically",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
@@ -889,7 +889,7 @@ class TravelportGUI:
             side="left", fill="x", expand=True
         )
         self._output_browse_btn = ttk.Button(
-            out_row, text="…", width=3, command=self._browse
+            out_row, text="â€¦", width=3, command=self._browse
         )
         self._output_browse_btn.pack(side="left", padx=(2, 0))
 
@@ -905,7 +905,7 @@ class TravelportGUI:
             (g_output, lambda m: True),
         ]
 
-        # Tooltips (B.7) — attached after buttons exist.
+        # Tooltips (B.7) â€” attached after buttons exist.
         _Tooltip(
             self._compare_browse_btn,
             "Browse for a JSON / CSV / XLSX snapshot to diff against.",
@@ -921,7 +921,7 @@ class TravelportGUI:
 
         self._apply_mode_visibility()
 
-    # ── Right panel ───────────────────────────────────────────────────────────
+    # â”€â”€ Right panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _build_right(self, parent):
         # Step indicator
@@ -938,7 +938,7 @@ class TravelportGUI:
             if i < len(self.STEPS) - 1:
                 tk.Label(
                     step_frame,
-                    text="  →  ",
+                    text="  â†’  ",
                     bg="#f2f2f2",
                     fg="#ccc",
                     font=("Segoe UI", 9),
@@ -1001,7 +1001,7 @@ class TravelportGUI:
 
         self._toggle_btn = tk.Button(
             toggle_row,
-            text="▶  Show technical log",
+            text="â–¶  Show technical log",
             bg="#f2f2f2",
             fg="#777",
             font=("Segoe UI", 8),
@@ -1032,31 +1032,31 @@ class TravelportGUI:
         self.log_text.configure(height=8 if self._log_visible else 0)
         self._toggle_btn.configure(
             text=(
-                "▼  Hide technical log"
+                "â–¼  Hide technical log"
                 if self._log_visible
-                else "▶  Show technical log"
+                else "â–¶  Show technical log"
             )
         )
 
-    # ── Bottom bar ────────────────────────────────────────────────────────────
+    # â”€â”€ Bottom bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _build_bottom(self):
         bar = tk.Frame(self.root, bg="#dde3e8", pady=8)
         bar.pack(fill="x", side="bottom")
 
         self.start_btn = ttk.Button(
-            bar, text="▶   Start", command=self._start, width=14
+            bar, text="â–¶   Start", command=self._start, width=14
         )
         self.start_btn.pack(side="left", padx=(12, 4))
 
         self.stop_btn = ttk.Button(
-            bar, text="■   Stop", command=self._stop, width=14, state="disabled"
+            bar, text="â–    Stop", command=self._stop, width=14, state="disabled"
         )
         self.stop_btn.pack(side="left", padx=4)
 
         self.open_btn = ttk.Button(
             bar,
-            text="📂  Open Report",
+            text="ðŸ“‚  Open Report",
             command=self._open_report,
             width=16,
             state="disabled",
@@ -1064,7 +1064,7 @@ class TravelportGUI:
         self.open_btn.pack(side="left", padx=4)
 
         self.feedback_btn = ttk.Button(
-            bar, text="✉  Feedback", command=self._open_feedback_dialog, width=14
+            bar, text="âœ‰  Feedback", command=self._open_feedback_dialog, width=14
         )
         self.feedback_btn.pack(side="left", padx=4)
 
@@ -1074,7 +1074,7 @@ class TravelportGUI:
         self.account_btn.pack(side="left", padx=4)
 
         self.recalibrate_btn = ttk.Button(
-            bar, text="⚙  Recalibrate", command=self._recalibrate_display, width=15
+            bar, text="âš™  Recalibrate", command=self._recalibrate_display, width=15
         )
         self.recalibrate_btn.pack(side="left", padx=4)
         _Tooltip(
@@ -1085,7 +1085,7 @@ class TravelportGUI:
 
         self.reset_dclick_btn = ttk.Button(
             bar,
-            text="↺  Reset D-click",
+            text="â†º  Reset D-click",
             command=self._reset_d_click_calibration,
             width=16,
         )
@@ -1093,7 +1093,7 @@ class TravelportGUI:
         _Tooltip(
             self.reset_dclick_btn,
             "Drop the saved D-click offset for this PC.\n"
-            "The next D-click will pause for 5 seconds — click the\n"
+            "The next D-click will pause for 5 seconds â€” click the\n"
             "D button on the FS screen during that window so the new\n"
             "position is learned. Use this if D-click keeps landing\n"
             "on the wrong glyph (e.g. BOOK instead of D).",
@@ -1109,7 +1109,7 @@ class TravelportGUI:
         )
         self.status_label.pack(side="right", padx=12)
 
-    # ── Logging setup ─────────────────────────────────────────────────────────
+    # â”€â”€ Logging setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _setup_logging(self):
         handler = _QueueHandler(self.log_queue)
@@ -1120,7 +1120,7 @@ class TravelportGUI:
 
         # main.py logs to the "travelport" named logger and adds its own
         # StreamHandler to it.  Without this, each message propagates to the
-        # root QueueHandler AND fires the StreamHandler → stdout → queue,
+        # root QueueHandler AND fires the StreamHandler â†’ stdout â†’ queue,
         # producing duplicate lines.  Turning off propagation means the named
         # logger's own handlers run; the root QueueHandler catches everything
         # else (e.g. third-party library logs).
@@ -1174,7 +1174,7 @@ class TravelportGUI:
         elif _read_update_state():
             _clear_update_state()
 
-    # ── Queue polling (main thread) ───────────────────────────────────────────
+    # â”€â”€ Queue polling (main thread) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _poll(self):
         try:
@@ -1205,13 +1205,13 @@ class TravelportGUI:
         self._refresh_eta()
         self.root.after(150, self._poll)
 
-    # ── Log parsing → UI updates ──────────────────────────────────────────────
+    # â”€â”€ Log parsing â†’ UI updates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _handle_log(self, text: str):
         """Parse a log line and update the step indicator + route checklist."""
         tl = text.lower()
 
-        # ── Step detection ──
+        # â”€â”€ Step detection â”€â”€
         if re.search(r"\[1/4\].*load|loading config", tl):
             self._set_step(1)
         elif re.search(r"connecting to smart|\[2/4\].*auto", tl):
@@ -1219,20 +1219,20 @@ class TravelportGUI:
         elif re.search(r"\[4/4\].*generat|generating excel", tl):
             self._set_step(4)
 
-        # ── Route command line:  [45/85] FDDACMCT/BG ──
+        # â”€â”€ Route command line:  [45/85] FDDACMCT/BG â”€â”€
         m_cmd = re.search(r"\[(\d+)/(\d+)\]\s+(FD[A-Z0-9]+/[A-Z0-9]+)", text)
-        # ── Currency progress:  [3/17] OMR -> BDT: 320.64   (success)
-        # ── Currency failure:   [3/17] Could not parse rate for OMR
+        # â”€â”€ Currency progress:  [3/17] OMR -> BDT: 320.64   (success)
+        # â”€â”€ Currency failure:   [3/17] Could not parse rate for OMR
         m_fzs = re.search(
             r"\[(\d+)/(\d+)\]\s+(?:[A-Z]{3}\s*->\s*[A-Z]{3}|Could not parse)",
             text,
         )
-        # ── FZS pre-scan banner sets the total up-front so ETA has a denominator
+        # â”€â”€ FZS pre-scan banner sets the total up-front so ETA has a denominator
         # even before the first currency completes.
         m_fzs_total = re.search(
             r"Extracting FZS rates for (\d+) currencies", text
         )
-        # ── Tax progress: [N/M] Airport: KUL (Kuala Lumpur) -> FTAX-MY
+        # â”€â”€ Tax progress: [N/M] Airport: KUL (Kuala Lumpur) -> FTAX-MY
         # Each line marks the START of a new airport, so by the time we see
         # line N, exactly N-1 airports are completed.  Without this the ETA
         # overlay stays stuck on "calculating..." for the whole tax run.
@@ -1268,7 +1268,7 @@ class TravelportGUI:
             if m_succ:
                 self._add_currency_row(idx, m_succ.group(1), m_succ.group(2), "done")
             elif m_fail:
-                self._add_currency_row(idx, m_fail.group(1), "—", "failed")
+                self._add_currency_row(idx, m_fail.group(1), "â€”", "failed")
 
             self._update_counter()
             self._refresh_eta()
@@ -1293,17 +1293,17 @@ class TravelportGUI:
             self._update_counter()
             self._refresh_eta()
 
-        # ── Route succeeded ──
+        # â”€â”€ Route succeeded â”€â”€
         elif re.search(
-            r"✓.*fare data|✓.*tax.*complet|✓.*completed|fare data captured", tl
+            r"âœ“.*fare data|âœ“.*tax.*complet|âœ“.*completed|fare data captured", tl
         ):
             self._mark_row("done")
 
-        # ── Route failed ──
-        elif re.search(r"failed after|✗ failed|✗.*failed", tl):
+        # â”€â”€ Route failed â”€â”€
+        elif re.search(r"failed after|âœ— failed|âœ—.*failed", tl):
             self._mark_row("failed")
 
-        # ── Append to hidden technical log ──
+        # â”€â”€ Append to hidden technical log â”€â”€
         self._append_raw(text)
 
     def _set_step(self, n: int):
@@ -1314,7 +1314,7 @@ class TravelportGUI:
             step_num = i + 1
             if step_num < n:
                 lbl.configure(
-                    text=f"✓ {self.STEPS[i]}", fg="#1d8a63", font=("Segoe UI", 9)
+                    text=f"âœ“ {self.STEPS[i]}", fg="#1d8a63", font=("Segoe UI", 9)
                 )
             elif step_num == n:
                 lbl.configure(
@@ -1328,10 +1328,10 @@ class TravelportGUI:
         iid = f"row_{idx}"
         # If already exists (e.g. resume), just update it
         if self.tree.exists(iid):
-            self.tree.item(iid, values=("⟳", airline, route), tags=("running",))
+            self.tree.item(iid, values=("âŸ³", airline, route), tags=("running",))
         else:
             self.tree.insert(
-                "", "end", iid=iid, values=("⟳", airline, route), tags=("running",)
+                "", "end", iid=iid, values=("âŸ³", airline, route), tags=("running",)
             )
         self._row_states[iid] = "running"
         self.tree.see(iid)
@@ -1341,10 +1341,10 @@ class TravelportGUI:
         """Insert (or update) a currency row and mark it done/failed in one step.
 
         Currency runs emit one log line per currency when the rate is finalised, so
-        each line is a completed event — no separate "running → done" transition.
+        each line is a completed event â€” no separate "running â†’ done" transition.
         """
         iid = f"row_{idx}"
-        icon = "✓" if state == "done" else "✗"
+        icon = "âœ“" if state == "done" else "âœ—"
         detail = (
             f"\u2192 BDT: {rate_str}" if state == "done" else "failed to parse"
         )
@@ -1360,7 +1360,7 @@ class TravelportGUI:
     def _mark_row(self, state: str):
         if not self._current_row or not self.tree.exists(self._current_row):
             return
-        icon = "✓" if state == "done" else "✗"
+        icon = "âœ“" if state == "done" else "âœ—"
         previous_state = self._row_states.get(self._current_row)
         vals = self.tree.item(self._current_row, "values")
         self.tree.item(
@@ -1390,7 +1390,7 @@ class TravelportGUI:
         self.progress.configure(mode="determinate", value=pct)
 
     def _capture_eta_progress_tick(self) -> None:
-        """v1.5.17 — call whenever _completed_routes changes.  Locks the
+        """v1.5.17 â€” call whenever _completed_routes changes.  Locks the
         per-unit time estimate at this completion event so _refresh_eta
         can compute a smoothly-counting-down ETA between events instead
         of an increasing one (the old `elapsed/completed` recompute drifted
@@ -1455,13 +1455,13 @@ class TravelportGUI:
             tag = "ERROR"
         elif "warning" in tl:
             tag = "WARNING"
-        elif "✓" in text or "success" in tl:
+        elif "âœ“" in text or "success" in tl:
             tag = "SUCCESS"
         self.log_text.insert("end", text + "\n", tag)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    # ── Mode change handler ───────────────────────────────────────────────────
+    # â”€â”€ Mode change handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _on_mode_change(self, *_):
         if self.mode_var.get() == "quickpaste":
@@ -1514,7 +1514,7 @@ class TravelportGUI:
             self.tree.heading("airline", text="Airline")
             self.tree.heading("route", text="Route")
 
-    # ── Quick-paste wizard (GUI-native, step-by-step clipboard collection) ────
+    # â”€â”€ Quick-paste wizard (GUI-native, step-by-step clipboard collection) â”€â”€â”€â”€
 
     def _run_quickpaste_wizard(self) -> dict | None:
         """Show step-by-step dialogs to collect GDS output from clipboard.
@@ -1525,9 +1525,9 @@ class TravelportGUI:
         """
         from tkinter import simpledialog, messagebox as _mb
 
-        # Step 1 — ask for command string
+        # Step 1 â€” ask for command string
         cmds_str = simpledialog.askstring(
-            "Manual Paste — Step 1 of …",
+            "Manual Paste â€” Step 1 of â€¦",
             "Enter one or more GDS commands, separated by commas:\n\n"
             "Example:  FDDACMCT/BG,  FDDACDOH/QR",
             parent=self.root,
@@ -1565,7 +1565,7 @@ class TravelportGUI:
             # FD step
             step = 2 + i * 2
             proceed = _mb.askokcancel(
-                f"Manual Paste — Step {step}/{total_steps}",
+                f"Manual Paste â€” Step {step}/{total_steps}",
                 f"Command {i + 1}/{len(commands)}:  {airline}  {route}\n\n"
                 "Switch to Travelport Smartpoint and copy the\n"
                 "FD (Fare Display) output to your clipboard,\n"
@@ -1585,7 +1585,7 @@ class TravelportGUI:
             # FS step
             step += 1
             proceed = _mb.askokcancel(
-                f"Manual Paste — Step {step}/{total_steps}",
+                f"Manual Paste â€” Step {step}/{total_steps}",
                 f"Command {i + 1}/{len(commands)}:  {airline}  {route}\n\n"
                 "Now copy the FS (Tax Summary) output to your clipboard,\n"
                 "then click OK.\n\n"
@@ -1609,7 +1609,7 @@ class TravelportGUI:
             "raw_fs_texts": raw_fs_texts,
         }
 
-    # ── Auto-update ───────────────────────────────────────────────────────────
+    # â”€â”€ Auto-update â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _bg_update_check(self):
         """Run in background thread; posts result to queue."""
@@ -1619,7 +1619,7 @@ class TravelportGUI:
 
     def _on_update_available(self, info: dict):
         self._update_info = info
-        self._update_btn.configure(text=f"  ↑ Update {info['version']}  ")
+        self._update_btn.configure(text=f"  â†‘ Update {info['version']}  ")
         self._update_btn.pack(side="right", padx=(0, 8))
 
     def _show_update_dialog(self):
@@ -1627,7 +1627,7 @@ class TravelportGUI:
         if not info:
             return
         dlg = tk.Toplevel(self.root)
-        dlg.title(f"Update Available — {info['version']}")
+        dlg.title(f"Update Available â€” {info['version']}")
         dlg.geometry("480x360")
         dlg.resizable(False, False)
         dlg.transient(self.root)
@@ -1686,7 +1686,7 @@ class TravelportGUI:
             messagebox.showerror("Update Error", "No download link was found for this release.")
             return
         btn.configure(state="disabled")
-        progress_var.set("Downloading…")
+        progress_var.set("Downloadingâ€¦")
         if info.get("exe_url"):
             threading.Thread(
                 target=self._download_and_replace,
@@ -1707,7 +1707,7 @@ class TravelportGUI:
             if getattr(sys, "frozen", False):
                 current_exe = sys.executable
             else:
-                # Dev mode — just open the releases page
+                # Dev mode â€” just open the releases page
                 self.log_queue.put(("update_open_browser", info.get("exe_url", "")))
                 return
 
@@ -1734,7 +1734,7 @@ class TravelportGUI:
             def _reporthook(count, block_size, total):
                 if total > 0:
                     pct = min(int(count * block_size * 100 / total), 100)
-                    progress_var.set(f"Downloading… {pct}%")
+                    progress_var.set(f"Downloadingâ€¦ {pct}%")
 
             urllib.request.urlretrieve(info["exe_url"], download_exe, _reporthook)
             os.replace(download_exe, new_exe)
@@ -1748,7 +1748,7 @@ class TravelportGUI:
             )
             if hash_match:
                 expected_hash = hash_match.group(1).lower()
-                progress_var.set("Verifying integrity…")
+                progress_var.set("Verifying integrityâ€¦")
                 sha256 = hashlib.sha256()
                 with open(new_exe, "rb") as f:
                     for chunk in iter(lambda: f.read(65536), b""):
@@ -1763,14 +1763,14 @@ class TravelportGUI:
                     )
                     progress_var.set(
                         f"Error: SHA256 mismatch!\n"
-                        f"Expected: {expected_hash[:16]}…\n"
-                        f"Got:      {actual_hash[:16]}…"
+                        f"Expected: {expected_hash[:16]}â€¦\n"
+                        f"Got:      {actual_hash[:16]}â€¦"
                     )
                     return
 
-            progress_var.set("Installing…")
+            progress_var.set("Installingâ€¦")
 
-            # Write batch updater — runs after this process exits.
+            # Write batch updater â€” runs after this process exits.
             # 5-second wait gives the old PyInstaller process time to fully
             # clean up its _MEI* temp folder before we start the new exe.
             # We also delete any leftover _MEI* dirs ourselves to avoid the
@@ -1837,10 +1837,10 @@ class TravelportGUI:
             def _reporthook(count, block_size, total):
                 if total > 0:
                     pct = min(int(count * block_size * 100 / total), 100)
-                    progress_var.set(f"Downloading… {pct}%")
+                    progress_var.set(f"Downloadingâ€¦ {pct}%")
 
             urllib.request.urlretrieve(info["zip_url"], zip_path, _reporthook)
-            progress_var.set("Extracting…")
+            progress_var.set("Extractingâ€¦")
 
             os.makedirs(staging_root, exist_ok=True)
             with _zipfile.ZipFile(zip_path, "r") as zf:
@@ -1854,7 +1854,7 @@ class TravelportGUI:
                     staging_app_folder = dirpath
                     break
 
-            progress_var.set("Installing…")
+            progress_var.set("Installingâ€¦")
             current_exe = sys.executable
             install_folder = os.path.dirname(current_exe)
 
@@ -1890,13 +1890,13 @@ class TravelportGUI:
     def _on_update_restart(self):
         self.root.destroy()
 
-    # ── Button actions ────────────────────────────────────────────────────────
+    # â”€â”€ Button actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _browse(self):
         path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel files", "*.xlsx")],
-            title="Save report as…",
+            title="Save report asâ€¦",
         )
         if path:
             self.output_var.set(path)
@@ -1934,7 +1934,7 @@ class TravelportGUI:
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.open_btn.configure(state="disabled")
-        self.status_label.configure(text="Starting…", fg="#0f3758")
+        self.status_label.configure(text="Startingâ€¦", fg="#0f3758")
         self.progress.configure(mode="indeterminate", value=0)
         self.progress.start(12)
 
@@ -1945,7 +1945,7 @@ class TravelportGUI:
         if args.quick_paste:
             qp_data = self._run_quickpaste_wizard()
             if qp_data is None:
-                # User cancelled — restore buttons and bail out
+                # User cancelled â€” restore buttons and bail out
                 self._run_started_at = None
                 self._overlay_eta_var.set("")
                 self.start_btn.configure(state="normal")
@@ -1971,7 +1971,7 @@ class TravelportGUI:
         self.stop_event.set()
         self._overlay_eta_var.set("ETA: stopping...")
         self._hide_stop_overlay()
-        self.status_label.configure(text="Stopping…", fg="#b73632")
+        self.status_label.configure(text="Stoppingâ€¦", fg="#b73632")
         self.stop_btn.configure(state="disabled")
 
     def _reset_d_click_calibration(self):
@@ -1996,7 +1996,7 @@ class TravelportGUI:
             messagebox.showinfo(
                 "Reset D-click calibration",
                 f"Saved D-click offset {current} cleared.\n\n"
-                "The next D-click will pause for 5 seconds — click the D "
+                "The next D-click will pause for 5 seconds â€” click the D "
                 "button on the FS screen during that window and the new "
                 "position will be learned and saved for this PC.",
             )
@@ -2086,14 +2086,14 @@ class TravelportGUI:
         except Exception as exc:
             messagebox.showerror("Recalibrate Failed", str(exc))
 
-    # ── Account / login ───────────────────────────────────────────────────────
+    # â”€â”€ Account / login â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _refresh_user_label(self) -> None:
         if self._user_info:
             email = self._user_info.get("email", "")
             display = email or self._user_info.get("full_name", "Signed in")
-            self._user_label.configure(text=f"● {display}", fg="#357a38")
-            self.account_btn.configure(text="Account ▾")
+            self._user_label.configure(text=f"â— {display}", fg="#357a38")
+            self.account_btn.configure(text="Account â–¾")
         else:
             self._user_label.configure(text="")
             self.account_btn.configure(text="Sign In")
@@ -2141,7 +2141,7 @@ class TravelportGUI:
                 user = data.get("user") or data
                 self.log_queue.put(("auth_done", {"ok": True, "user": user}))
             except Exception:
-                pass  # Silently ignore — user just stays unsigned in
+                pass  # Silently ignore â€” user just stays unsigned in
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -2188,7 +2188,7 @@ class TravelportGUI:
 
         tk.Label(body, text="Password", anchor="w", font=("Segoe UI", 9)).pack(fill="x")
         self._login_password_var = tk.StringVar()
-        ttk.Entry(body, textvariable=self._login_password_var, show="●").pack(fill="x", pady=(2, 8))
+        ttk.Entry(body, textvariable=self._login_password_var, show="â—").pack(fill="x", pady=(2, 8))
 
         self._login_status_label = tk.Label(
             body, textvariable=self._login_status_var,
@@ -2229,7 +2229,7 @@ class TravelportGUI:
             return
         if self._login_submit_btn:
             self._login_submit_btn.configure(state="disabled")
-        self._login_status_var.set("Signing in…")
+        self._login_status_var.set("Signing inâ€¦")
         threading.Thread(
             target=self._login_worker,
             args=(email, password),
@@ -2296,7 +2296,7 @@ class TravelportGUI:
             self._login_submit_btn.configure(state="disabled")
         if self._login_status_label:
             self._login_status_label.configure(fg="#2980b9")
-        self._login_status_var.set("Opening Google sign-in in your browser…")
+        self._login_status_var.set("Opening Google sign-in in your browserâ€¦")
         threading.Thread(
             target=self._google_oauth_worker,
             args=(GOOGLE_OAUTH_CLIENT_ID, AUTH_API_ROOT),
@@ -2306,7 +2306,7 @@ class TravelportGUI:
     def _google_oauth_worker(self, client_id: str, api_base_url: str) -> None:
         try:
             from google_oauth import GoogleOAuthError, run_google_oauth_flow
-            self.log_queue.put(("auth_status", "Completing Google sign-in…"))
+            self.log_queue.put(("auth_status", "Completing Google sign-inâ€¦"))
             result = run_google_oauth_flow(client_id, api_base_url)
 
             from auth_manager import KeyringUnavailableError, save_token
@@ -2509,7 +2509,7 @@ class TravelportGUI:
             return
 
         if payload.get("queued"):
-            # Network or server error — feedback saved offline; close dialog
+            # Network or server error â€” feedback saved offline; close dialog
             self._close_feedback_dialog()
             messagebox.showinfo(
                 "Saved for Later",
@@ -2522,7 +2522,7 @@ class TravelportGUI:
             self._feedback_submit_btn.configure(state="normal")
         self._feedback_status_var.set(payload.get("error", "Could not send feedback."))
 
-    # ── Args builder ──────────────────────────────────────────────────────────
+    # â”€â”€ Args builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _build_args(self) -> argparse.Namespace:
         mode = self.mode_var.get()
@@ -2563,7 +2563,7 @@ class TravelportGUI:
             config=None,
         )
 
-    # ── Worker thread ─────────────────────────────────────────────────────────
+    # â”€â”€ Worker thread â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _worker(self, args: argparse.Namespace):
         result_path = None
@@ -2578,7 +2578,7 @@ class TravelportGUI:
         finally:
             self.log_queue.put(("done", result_path))
 
-    # ── Completion ────────────────────────────────────────────────────────────
+    # â”€â”€ Completion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _show_stop_overlay(self):
         """Small always-on-top overlay shown while automation is running.
@@ -2600,7 +2600,7 @@ class TravelportGUI:
 
         tk.Label(
             ov,
-            text="TravelportAuto  — running",
+            text="TravelportAuto  â€” running",
             bg="#1e2a35",
             fg="#78b4d4",
             font=("Segoe UI", 8),
@@ -2614,7 +2614,7 @@ class TravelportGUI:
         ).pack(pady=(0, 6))
         tk.Button(
             ov,
-            text="■  Stop  (hold ESC)",
+            text="â–   Stop  (hold ESC)",
             bg="#b73632",
             fg="white",
             font=("Segoe UI", 9, "bold"),
@@ -2674,7 +2674,7 @@ class TravelportGUI:
         self.progress.configure(mode="determinate", value=100)
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        self._set_step(len(self.STEPS) + 1)  # +1 so last step shows ✓ not bold
+        self._set_step(len(self.STEPS) + 1)  # +1 so last step shows âœ“ not bold
 
         if result_path and os.path.exists(result_path):
             self._last_report = result_path
@@ -2682,20 +2682,20 @@ class TravelportGUI:
             is_partial = "_partial" in os.path.basename(result_path)
             if is_partial:
                 self.status_label.configure(
-                    text=f"⚠ Partial report saved — {os.path.basename(result_path)}",
+                    text=f"âš  Partial report saved â€” {os.path.basename(result_path)}",
                     fg="#e67e22",
                 )
             else:
                 self.status_label.configure(
-                    text=f"✓  {os.path.basename(result_path)}", fg="#1d8a63"
+                    text=f"âœ“  {os.path.basename(result_path)}", fg="#1d8a63"
                 )
         elif self.stop_event.is_set():
-            self.status_label.configure(text="Stopped — no data captured yet", fg="#b73632")
+            self.status_label.configure(text="Stopped â€” no data captured yet", fg="#b73632")
         else:
             self.status_label.configure(text="Finished", fg="#555")
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# â”€â”€ Entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def launch():
@@ -2707,10 +2707,11 @@ def launch():
         import traceback
 
         messagebox.showerror(
-            "TravelportAuto — Startup Error",
+            "TravelportAuto â€” Startup Error",
             f"An unexpected error occurred:\n\n{e}\n\n{traceback.format_exc()}",
         )
 
 
 if __name__ == "__main__":
     launch()
+
