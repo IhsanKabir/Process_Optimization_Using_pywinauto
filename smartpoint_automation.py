@@ -2514,8 +2514,25 @@ class SmartpointAutomation:
         # ----------------------------------------------------------------------
 
         def _record_success(learned_x: int, learned_y: int, source: str) -> None:
-            if learned_y != 0 and source == "auto":
-                self._cal = _calibration_mod.record_click_delta(self._cal, learned_y)
+            # When a Y offset is known for a specific text row, derive the
+            # implied line height and update calibration.  A single stored
+            # y_off is row-specific: an offset correct for row 22 is far too
+            # large for row 8 (error = y_off/row × other_row).  Baking the
+            # correction into line_height and storing y_off=0 lets every
+            # subsequent row compute its own base_y accurately.
+            store_y = learned_y
+            if store_y != 0 and target_line > 0:
+                implied_lh = self._line_height + store_y / target_line
+                new_lh = round(max(17.0, min(28.0, implied_lh)), 1)
+                self.logger.debug(
+                    f"      [D-CLICK] line_height {self._line_height} → {new_lh} "
+                    f"(y_off={store_y} at row {target_line}); storing y_off=0."
+                )
+                self._cal["line_height"] = new_lh
+                self._line_height = new_lh
+                store_y = 0
+            elif store_y != 0 and source == "auto":
+                self._cal = _calibration_mod.record_click_delta(self._cal, store_y)
                 self._line_height = self._cal["line_height"]
             # When the per-line D-glyph landmark was detectable, also store
             # the offset relative to char_x so subsequent runs at different
@@ -2524,7 +2541,7 @@ class SmartpointAutomation:
             if char_x is not None:
                 char_x_off = learned_x - (char_x - base_x)
             self._cal = _calibration_mod.record_d_click_offset(
-                self._cal, learned_x, learned_y, char_x_off=char_x_off
+                self._cal, learned_x, store_y, char_x_off=char_x_off
             )
             _calibration_mod.save_calibration(self._cal)
 

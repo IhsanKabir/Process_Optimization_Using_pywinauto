@@ -480,7 +480,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.22"
+    VERSION = "v1.5.23"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -2714,4 +2714,5 @@ def launch():
 
 if __name__ == "__main__":
     launch()
+
 
