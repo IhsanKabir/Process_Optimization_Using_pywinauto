@@ -2652,17 +2652,34 @@ class SmartpointAutomation:
                             )
                             time.sleep(constants.ESCAPE_CLEAR_DELAY)
                             continue
+                        # Something unexpected opened (e.g., clicking the
+                        # serial-number column opened a flight-detail screen).
+                        # Escape is cheaper and safer than "I": it closes
+                        # popups, booking screens, and detail views without
+                        # sending a GDS command that might mis-parse.
                         self.logger.debug(
-                            "      [D-CLICK] Screen changed but strict tax parser rejected it. "
-                            f"First 160 chars: {result[:160]!r}"
+                            "      [D-CLICK] Unexpected screen (not breakdown, not pricing). "
+                            f"First 120 chars: {result[:120]!r} — dismissing with Escape."
                         )
+                        pyautogui.press(
+                            "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
+                        )
+                        time.sleep(constants.ESCAPE_CLEAR_DELAY)
+                        text_before = self._copy_terminal_text()
+                        if "PRICING OPTION" in text_before.upper():
+                            # Escape recovered the FS screen — continue the fan-out.
+                            self.logger.debug(
+                                "      [D-CLICK] Escape recovered FS screen; continuing fan-out."
+                            )
+                            continue
+                        # Escape didn't recover — try "I" as a last resort.
                         self.logger.debug(
-                            "      [D-CLICK] Sending 'I' to reset and trying the next offset..."
+                            "      [D-CLICK] Escape did not recover FS screen; sending 'I'."
                         )
                         pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
                         pyautogui.press("enter")
                         text_before = self._wait_for_response(
-                            result,
+                            text_before,
                             timeout=constants.COMMAND_WAIT_FS,
                             min_wait=constants.COMMAND_WAIT_SHORT,
                             stability_checks=1,
@@ -2911,108 +2928,98 @@ class SmartpointAutomation:
 
     def click_more_prompt_link(self, terminal_text: str) -> bool:
         """
-        Dynamically finds and clicks 'More Flights/Fares' in the current layout.
+        Navigate to the next page of Flights/Fares results.
 
-        The prompt can appear in different visual positions after currency
-        redirects, fare-basis popups, or normal FD pagination.  Re-read after
-        scrolling so the click target is based on the visible prompt location.
+        Primary path: Alt+M keyboard shortcut (Smartpoint built-in).
+        Fallback: pixel-coordinate click fan-out for cases where the
+        shortcut is not intercepted (e.g., focus lost to another widget).
         """
-
 
         if not self.focus():
             return False
 
+        # Verify a "More" prompt actually exists before doing anything.
+        clean = (terminal_text or "").rstrip("\r\n")
+        lines = clean.split("\n") if clean else []
+        has_prompt = any(_RE_MORE_PROMPT.search(ln) for ln in lines)
+        if not has_prompt:
+            return False
+
+        # Clear any active selection / dropdown before sending the shortcut.
+        pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
+        time.sleep(constants.ESCAPE_CLEAR_DELAY)
+
+        # ── Primary: Alt+M ────────────────────────────────────────────────
+        self.logger.debug("      [CLICK] Trying Alt+M shortcut for More...")
+        pyautogui.hotkey("alt", "m")
+        time.sleep(constants.COMMAND_WAIT_LONG)
+        result = self._copy_terminal_text()
+        if result.strip() and result.strip() != terminal_text.strip():
+            self.logger.info("      [CLICK] Alt+M succeeded — next page loaded.")
+            return True
+
+        self.logger.debug(
+            "      [CLICK] Alt+M did not change the screen; falling back to click."
+        )
+
+        # ── Fallback: coordinate-based click ─────────────────────────────
         rect = self._get_terminal_rect()
         total_lines_capacity = max(1, (rect.height() - 10) // self._line_height)
 
         def _find_prompt(text: str):
-            clean = (text or "").rstrip("\r\n")
-            lines = clean.split("\n") if clean else []
-            for line_idx in range(len(lines) - 1, -1, -1):
-                if _RE_MORE_PROMPT.search(lines[line_idx]):
-                    return clean, lines, line_idx
+            c = (text or "").rstrip("\r\n")
+            ls = c.split("\n") if c else []
+            for i in range(len(ls) - 1, -1, -1):
+                if _RE_MORE_PROMPT.search(ls[i]):
+                    return c, ls, i
             return None
 
-        def _line_base(clean: str, lines: list[str], line_idx: int):
-            more_col = self._find_link_char_column(lines[line_idx], _RE_MORE_PROMPT)
-            if more_col is not None:
-                base_x, base_y = self._text_line_to_pixel(
-                    clean, line_idx, char_idx=more_col
-                )
+        def _line_base(c: str, ls: list[str], idx: int):
+            col = self._find_link_char_column(ls[idx], _RE_MORE_PROMPT)
+            if col is not None:
+                bx, by = self._text_line_to_pixel(c, idx, char_idx=col)
             else:
-                base_x, base_y = self._text_line_to_pixel(
-                    clean, line_idx, x_ratio=MORE_LINK_X_RATIO
-                )
-            if rect.top <= base_y <= rect.bottom:
-                return base_x, base_y
-            return None
+                bx, by = self._text_line_to_pixel(c, idx, x_ratio=MORE_LINK_X_RATIO)
+            return (bx, by) if rect.top <= by <= rect.bottom else None
 
-        def _bottom_base(clean: str, lines: list[str], line_idx: int):
-            lines_from_bottom = len(lines) - 1 - line_idx
-            if lines_from_bottom >= total_lines_capacity:
+        def _bottom_base(c: str, ls: list[str], idx: int):
+            from_bottom = len(ls) - 1 - idx
+            if from_bottom >= total_lines_capacity:
                 return None
-            more_col = self._find_link_char_column(lines[line_idx], _RE_MORE_PROMPT)
-            if more_col is not None:
-                base_x, _ = self._text_line_to_pixel(
-                    clean, line_idx, char_idx=more_col
-                )
+            col = self._find_link_char_column(ls[idx], _RE_MORE_PROMPT)
+            if col is not None:
+                bx, _ = self._text_line_to_pixel(c, idx, char_idx=col)
             else:
-                base_x, _ = self._text_line_to_pixel(
-                    clean, line_idx, x_ratio=MORE_LINK_X_RATIO
-                )
-            base_y = int(
-                rect.bottom
-                - BOTTOM_MARGIN
-                - (lines_from_bottom + 0.5) * self._line_height
+                bx, _ = self._text_line_to_pixel(c, idx, x_ratio=MORE_LINK_X_RATIO)
+            by = int(
+                rect.bottom - BOTTOM_MARGIN - (from_bottom + 0.5) * self._line_height
             )
-            if rect.top <= base_y <= rect.bottom:
-                return base_x, base_y
-            return None
+            return (bx, by) if rect.top <= by <= rect.bottom else None
 
-        target = _find_prompt(terminal_text)
-        if not target:
-            return False
+        candidates: list[tuple] = []
+        seen: set = set()
 
-        pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
-        time.sleep(constants.ESCAPE_CLEAR_DELAY)
-
-        candidates = []
-        seen = set()
-
-        def _add_candidate(base, text_before: str, label: str):
+        def _add(base, tb: str, label: str):
             if not base:
                 return
-            base_x, base_y = base
-            key = (int(base_x), int(base_y), label)
-            if key in seen:
-                return
-            seen.add(key)
-            candidates.append((base_x, base_y, text_before, label))
+            bx, by = base
+            key = (int(bx), int(by), label)
+            if key not in seen:
+                seen.add(key)
+                candidates.append((bx, by, tb, label))
 
-        clean_text, lines, line_idx = target
-        _add_candidate(_line_base(clean_text, lines, line_idx), terminal_text, "visible")
-        # Try bottom-anchored coordinate without scrolling first.  _bottom_base
-        # measures from rect.bottom upward by the prompt's distance-from-end-of-text,
-        # so it is correct whether or not the captured text is longer than the
-        # visible window.  This avoids the scroll sequence for the common case
-        # where Smartpoint is already at the last page.
-        _add_candidate(_bottom_base(clean_text, lines, line_idx), terminal_text, "bottom")
+        target = _find_prompt(terminal_text)
+        if target:
+            ct, ls, li = target
+            _add(_line_base(ct, ls, li), terminal_text, "visible")
+            _add(_bottom_base(ct, ls, li), terminal_text, "bottom")
 
         if len(lines) > total_lines_capacity and not candidates:
-            # Bottom-anchored calculation produced no valid coordinate (rare —
-            # only happens when the prompt is many lines above the last line),
-            # so fall back to scrolling and re-reading the layout.
             self.logger.debug(
                 "      [CLICK] More prompt may be off-screen; scrolling and re-reading layout..."
             )
-            # Dismiss any lingering dropdown/modal state before scrolling.
             pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
             time.sleep(constants.ESCAPE_CLEAR_DELAY)
-            # Focus the terminal WITHOUT clicking a fare row. The center of the
-            # terminal is always an interactive row — clicking it opens a
-            # fare-detail dropdown (MAX/MIN STAY) and PageDown then navigates
-            # the dropdown instead of the terminal.  _get_terminal_focus_point
-            # returns a safe corner (~50px,30px inside the rect).
             safe_x, safe_y = self._get_terminal_focus_point()
             self._safe_focus_click(safe_x, safe_y)
             time.sleep(constants.COPY_DELAY)
@@ -3020,32 +3027,18 @@ class SmartpointAutomation:
                 "pagedown", presses=4, interval=constants.KEYBOARD_INTERVAL
             )
             time.sleep(constants.PAGEDOWN_SCROLL_DELAY)
-
             scrolled_text = self._copy_terminal_text()
-            # Recover if PageDown still managed to open a dropdown (rare
-            # after the safe-corner click, but cheap insurance).
             if self._has_dropdown_activated(scrolled_text):
-                self.logger.debug(
-                    "      [CLICK] Dropdown detected after scroll — dismissing and re-reading."
-                )
                 pyautogui.press(
                     "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
                 )
                 time.sleep(constants.ESCAPE_CLEAR_DELAY)
                 scrolled_text = self._copy_terminal_text()
-            scrolled_target = _find_prompt(scrolled_text)
-            if scrolled_target:
-                scrolled_clean, scrolled_lines, scrolled_idx = scrolled_target
-                _add_candidate(
-                    _line_base(scrolled_clean, scrolled_lines, scrolled_idx),
-                    scrolled_text,
-                    "scrolled-visible",
-                )
-                _add_candidate(
-                    _bottom_base(scrolled_clean, scrolled_lines, scrolled_idx),
-                    scrolled_text,
-                    "scrolled-bottom",
-                )
+            st = _find_prompt(scrolled_text)
+            if st:
+                sc, sl, si = st
+                _add(_line_base(sc, sl, si), scrolled_text, "scrolled-visible")
+                _add(_bottom_base(sc, sl, si), scrolled_text, "scrolled-bottom")
 
         if not candidates:
             self.logger.warning(
@@ -3054,53 +3047,29 @@ class SmartpointAutomation:
             return False
 
         offsets = [
-            (0, 0),
-            (0, -10),
-            (0, 10),
-            (-5, 0),
-            (5, 0),
-            (0, -20),
-            (0, 20),
-            (-5, -10),
-            (5, -10),
-            (-5, 10),
-            (5, 10),
-            (0, -30),
-            (0, 30),
+            (0, 0), (0, -10), (0, 10), (-5, 0), (5, 0),
+            (0, -20), (0, 20), (-5, -10), (5, -10), (-5, 10), (5, 10),
+            (0, -30), (0, 30),
         ]
 
         for base_x, base_y, text_before, label in candidates:
-            self.logger.debug(
-                f"      [CLICK] More target '{label}' -> ({base_x}, {base_y})"
-            )
             for x_off, y_off in offsets:
-                click_x = base_x + x_off
-                click_y = base_y + y_off
-                self.logger.debug(
-                    f"      [CLICK] Trying 'More' link at ({click_x}, {click_y}) [offset=({x_off},{y_off})]"
-                )
-
                 pyautogui.moveTo(
-                    click_x, click_y, duration=constants.MOUSE_MOVE_DURATION
+                    base_x + x_off, base_y + y_off,
+                    duration=constants.MOUSE_MOVE_DURATION,
                 )
                 pyautogui.click()
                 time.sleep(constants.COMMAND_WAIT_LONG)
-
                 result = self._copy_terminal_text()
-
                 if self._has_dropdown_activated(result):
-                    self.logger.debug(
-                        "      [CLICK] Dropdown detected - closing and trying next target..."
-                    )
                     pyautogui.press(
                         "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
                     )
                     time.sleep(constants.ESCAPE_CLEAR_DELAY)
                     continue
-
                 if result.strip() != text_before.strip():
                     self.logger.info(
-                        f"      [CLICK] 'More' link clicked successfully via {label} target!"
+                        f"      [CLICK] 'More' link clicked successfully via {label} target."
                     )
                     return True
 
