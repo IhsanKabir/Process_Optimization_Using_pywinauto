@@ -8,6 +8,7 @@ price changes, new fares, and removed fares.
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -250,8 +251,43 @@ def load_snapshot_by_reference(
     Returns:
         Tuple of (parsed snapshot data, snapshot id without prefix/suffix).
     """
-    # If reference is a direct file path, load it directly
+    # If reference is a direct file path, load it directly.
+    # Special case: when the user browses to an xlsx report instead of the
+    # snapshot JSON, try to find the companion snapshot by extracting the
+    # YYYY-MM-DD_HHMM timestamp from the xlsx filename and looking in the
+    # archive directory.
     if os.path.isfile(reference):
+        if reference.lower().endswith(".xlsx"):
+            m = re.search(r"(\d{4}-\d{2}-\d{2}_\d{4})", os.path.basename(reference))
+            if m:
+                ts = m.group(1)
+                snap_name = f"snapshot_{ts}.json"
+                # Check the current archive dir and all sibling dirs (the
+                # archive root has tax/ and fare/ subdirs — scan both so the
+                # lookup works regardless of which mode the user ran).
+                candidate_dirs = [archive_dir]
+                archive_root = os.path.dirname(archive_dir)
+                if os.path.isdir(archive_root):
+                    try:
+                        candidate_dirs += [
+                            os.path.join(archive_root, d)
+                            for d in os.listdir(archive_root)
+                            if os.path.isdir(os.path.join(archive_root, d))
+                        ]
+                    except OSError:
+                        pass
+                for cdir in candidate_dirs:
+                    snap_path = os.path.join(cdir, snap_name)
+                    if os.path.isfile(snap_path):
+                        snapshot_data = _load_snapshot_file(snap_path, snap_name)
+                        if snapshot_data is not None:
+                            return snapshot_data, ts
+            logger.warning(
+                "The 'Compare against' path is an xlsx report; the matching "
+                "snapshot JSON was not found in the archive. Use a date "
+                "(YYYY-MM-DD) or a snapshot_*.json file from data/archive/fare/."
+            )
+            return None, None
         snapshot_data = _load_snapshot_file(reference, os.path.basename(reference))
         snapshot_id = os.path.basename(reference).removeprefix("snapshot_").removesuffix(".json")
         return snapshot_data, snapshot_id
