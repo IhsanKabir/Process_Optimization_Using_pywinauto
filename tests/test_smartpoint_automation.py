@@ -91,15 +91,49 @@ def test_record_click_delta_does_not_mutate_global_line_height():
     assert cal["source"] == "dpi_auto"
 
 
+def test_click_more_prompt_link_uses_alt_m_shortcut_first(monkeypatch):
+    """Alt+M is tried before any click logic; when it succeeds the scroll
+    and coordinate fan-out must not run."""
+    automation = SmartpointAutomation()
+    text = "ROW\n  More Flights\n>"
+    changed_text = "NEXT PAGE\nEND"
+    copy_calls = iter([changed_text])  # Alt+M succeeds on first copy
+    hotkeys = []
+    moves = []
+
+    class _Rect:
+        left = 100; top = 100; right = 500; bottom = 300
+        def width(self): return self.right - self.left
+        def height(self): return self.bottom - self.top
+
+    monkeypatch.setattr(automation, "focus", lambda force=False: True)
+    monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _Rect())
+    monkeypatch.setattr(automation, "_copy_terminal_text", lambda: next(copy_calls))
+    monkeypatch.setattr(automation, "_has_dropdown_activated", lambda t: False)
+    monkeypatch.setattr(spa.pyautogui, "hotkey", lambda *a: hotkeys.append(a))
+    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda x, y, duration=None: moves.append((x, y)))
+    monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
+    monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
+
+    assert automation.click_more_prompt_link(text) is True
+    assert ("alt", "m") in hotkeys
+    assert moves == []  # no coordinate click attempted
+
+
 def test_click_more_prompt_link_rereads_layout_after_scroll(monkeypatch):
     automation = SmartpointAutomation()
     # "More Flights" must have >= total_lines_capacity (9) lines after it so that
     # _bottom_base returns None (lines_from_bottom >= capacity), ensuring the
-    # scroll fallback path actually fires.
+    # scroll fallback path actually fires.  Alt+M is mocked to return unchanged
+    # text so the code falls through to the coordinate click path.
     long_text = "\n".join(["ROW"] * 20 + ["          More Flights"] + ["ROW"] * 10)
     scrolled_text = "HEADER\n  More Flights\n>"
     next_page_text = "NEXT PAGE\nEND"
-    copied_texts = iter([scrolled_text, next_page_text])
+    # First copy (after Alt+M) returns unchanged text → Alt+M failed.
+    # Second copy (after pagedown scroll) returns scrolled layout.
+    # Third copy (after click) returns next page → success.
+    copied_texts = iter([long_text, scrolled_text, next_page_text])
     moves = []
     presses = []
 
@@ -119,6 +153,7 @@ def test_click_more_prompt_link_rereads_layout_after_scroll(monkeypatch):
     monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _Rect())
     monkeypatch.setattr(automation, "_copy_terminal_text", lambda: next(copied_texts))
     monkeypatch.setattr(automation, "_has_dropdown_activated", lambda text: False)
+    monkeypatch.setattr(spa.pyautogui, "hotkey", lambda *args: None)
     monkeypatch.setattr(spa.pyautogui, "click", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         spa.pyautogui,
