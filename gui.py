@@ -23,6 +23,7 @@ import logging
 import os
 import queue
 import re
+import shutil
 import sys
 import threading
 import time
@@ -394,6 +395,61 @@ def _build_updater_script(
     )
 
 
+def _build_folder_updater_script(
+    current_exe: str, staging_folder: str, state_file: str, log_file: str, target_version: str
+) -> str:
+    """Generate the batch script that xcopy's an extracted update folder over the install dir."""
+    clean_version = (target_version or "").replace("|", "/").strip() or "unknown"
+    folder = os.path.dirname(current_exe)
+    return (
+        "@echo off\n"
+        "setlocal EnableExtensions EnableDelayedExpansion\n"
+        f'set "SRC={staging_folder}"\n'
+        f'set "DST={folder}"\n'
+        f'set "EXE={current_exe}"\n'
+        f'set "STATE={state_file}"\n'
+        f'set "LOG={log_file}"\n'
+        f'set "TARGET_VERSION={clean_version}"\n'
+        '> "%LOG%" echo Starting folder updater for %TARGET_VERSION%\n'
+        "timeout /t 5 /nobreak > nul\n"
+        'if not exist "%SRC%" (\n'
+        '  > "%STATE%" echo failed^|%TARGET_VERSION%^|Staging folder not found.\n'
+        "  goto launch\n"
+        ")\n"
+        # Back up user-customisable files before xcopy overwrites them with zip defaults.
+        'if exist "%DST%\\preferences.json" copy /y "%DST%\\preferences.json" "%DST%\\preferences.json.bak" >nul 2>&1\n'
+        'if exist "%DST%\\commands.txt" copy /y "%DST%\\commands.txt" "%DST%\\commands.txt.bak" >nul 2>&1\n'
+        'xcopy /s /y /e "%SRC%\\*" "%DST%\\" >> "%LOG%" 2>&1\n'
+        "if errorlevel 1 (\n"
+        '  >> "%LOG%" echo xcopy failed; retrying after 3s...\n'
+        "  timeout /t 3 /nobreak > nul\n"
+        '  xcopy /s /y /e "%SRC%\\*" "%DST%\\" >> "%LOG%" 2>&1\n'
+        ")\n"
+        "if errorlevel 1 (\n"
+        '  if exist "%DST%\\preferences.json.bak" copy /y "%DST%\\preferences.json.bak" "%DST%\\preferences.json" >nul 2>&1\n'
+        '  if exist "%DST%\\commands.txt.bak" copy /y "%DST%\\commands.txt.bak" "%DST%\\commands.txt" >nul 2>&1\n'
+        '  > "%STATE%" echo failed^|%TARGET_VERSION%^|Could not copy update files. Staging folder: %SRC%\n'
+        "  goto launch\n"
+        ")\n"
+        # Restore user files that xcopy may have overwritten with zip defaults.
+        'if exist "%DST%\\preferences.json.bak" (\n'
+        '  copy /y "%DST%\\preferences.json.bak" "%DST%\\preferences.json" >nul 2>&1\n'
+        '  del /f /q "%DST%\\preferences.json.bak"\n'
+        ")\n"
+        'if exist "%DST%\\commands.txt.bak" (\n'
+        '  copy /y "%DST%\\commands.txt.bak" "%DST%\\commands.txt" >nul 2>&1\n'
+        '  del /f /q "%DST%\\commands.txt.bak"\n'
+        ")\n"
+        'rd /s /q "%SRC%" 2>nul\n'
+        '> "%STATE%" echo installed^|%TARGET_VERSION%^|Update installed successfully.\n'
+        ":launch\n"
+        'start "" "%EXE%"\n'
+        'del "%~f0"\n'
+        "endlocal\n"
+        "exit /b\n"
+    )
+
+
 def _check_for_update(current_version: str) -> dict | None:
     """Return release dict if a newer version is available, else None."""
     try:
@@ -424,7 +480,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.20"
+    VERSION = "v1.5.21"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -1626,36 +1682,23 @@ class TravelportGUI:
         update_btn.pack(side="right", padx=(0, 6))
 
     def _start_update(self, info, dlg, progress_var, btn):
-        if not info.get("exe_url"):
-            # v1.5.x releases ship as a folder zip — the in-app one-click swap
-            # flow only handles a single exe.  Open the release page so the
-            # user can download and install the zip manually.
-            release_url = info.get("release_url") or info.get("zip_url")
-            if release_url:
-                webbrowser.open(release_url)
-                messagebox.showinfo(
-                    "Manual update",
-                    "This release ships as a folder zip. Your browser has been "
-                    "opened to the release page — download the zip, extract it, "
-                    "and replace your TravelportAuto folder.",
-                )
-                try:
-                    dlg.destroy()
-                except Exception:
-                    pass
-                return
-            messagebox.showerror(
-                "Update Error",
-                "No download link was found for this release.",
-            )
+        if not info.get("exe_url") and not info.get("zip_url"):
+            messagebox.showerror("Update Error", "No download link was found for this release.")
             return
         btn.configure(state="disabled")
         progress_var.set("Downloading…")
-        threading.Thread(
-            target=self._download_and_replace,
-            args=(info, dlg, progress_var),
-            daemon=True,
-        ).start()
+        if info.get("exe_url"):
+            threading.Thread(
+                target=self._download_and_replace,
+                args=(info, dlg, progress_var),
+                daemon=True,
+            ).start()
+        else:
+            threading.Thread(
+                target=self._download_and_replace_zip,
+                args=(info, dlg, progress_var),
+                daemon=True,
+            ).start()
 
     def _download_and_replace(self, info, dlg, progress_var):
         """Download new exe, verify SHA256 hash, write an updater batch, then restart."""
@@ -1738,6 +1781,89 @@ class TravelportGUI:
                     _build_updater_script(
                         current_exe=current_exe,
                         new_exe=new_exe,
+                        state_file=_UPDATE_STATE_FILE,
+                        log_file=_UPDATE_LOG_FILE,
+                        target_version=target_version,
+                    )
+                )
+
+            import subprocess
+
+            subprocess.Popen(
+                ["cmd", "/c", bat],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+            )
+            self.log_queue.put(("update_restart", None))
+
+        except Exception as exc:
+            _write_update_state(
+                "failed",
+                str(info.get("version") or "").strip(),
+                f"Updater error: {exc}",
+            )
+            progress_var.set(f"Error: {exc}")
+
+    def _download_and_replace_zip(self, info, dlg, progress_var):
+        """Download update zip, extract it to a staging folder, then run a folder-swap batch."""
+        import zipfile as _zipfile
+
+        try:
+            if not getattr(sys, "frozen", False):
+                import webbrowser
+
+                self.log_queue.put(("update_open_browser", info.get("release_url", "")))
+                return
+
+            target_version = str(info.get("version") or "").strip()
+            appdata_dir = os.environ.get("APPDATA", os.path.dirname(sys.executable))
+            tpa_appdata = os.path.join(appdata_dir, "TravelportAuto")
+            os.makedirs(tpa_appdata, exist_ok=True)
+            zip_path = os.path.join(tpa_appdata, "TravelportAuto_update.zip")
+            staging_root = os.path.join(tpa_appdata, "_update_staging")
+
+            shutil.rmtree(staging_root, ignore_errors=True)
+            try:
+                os.remove(zip_path)
+            except OSError:
+                pass
+
+            _write_update_state("pending", target_version, "Downloading update zip...")
+            try:
+                os.remove(_UPDATE_LOG_FILE)
+            except OSError:
+                pass
+
+            def _reporthook(count, block_size, total):
+                if total > 0:
+                    pct = min(int(count * block_size * 100 / total), 100)
+                    progress_var.set(f"Downloading… {pct}%")
+
+            urllib.request.urlretrieve(info["zip_url"], zip_path, _reporthook)
+            progress_var.set("Extracting…")
+
+            os.makedirs(staging_root, exist_ok=True)
+            with _zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(staging_root)
+            os.remove(zip_path)
+
+            # Find the directory inside the staging area that contains TravelportAuto.exe.
+            staging_app_folder = staging_root
+            for dirpath, _dirs, files in os.walk(staging_root):
+                if any(f.lower() == "travelportauto.exe" for f in files):
+                    staging_app_folder = dirpath
+                    break
+
+            progress_var.set("Installing…")
+            current_exe = sys.executable
+            install_folder = os.path.dirname(current_exe)
+
+            bat = os.path.join(install_folder, "_tpa_update.bat")
+            with open(bat, "w", encoding="utf-8") as f:
+                f.write(
+                    _build_folder_updater_script(
+                        current_exe=current_exe,
+                        staging_folder=staging_app_folder,
                         state_file=_UPDATE_STATE_FILE,
                         log_file=_UPDATE_LOG_FILE,
                         target_version=target_version,
