@@ -31,15 +31,26 @@ DEFAULT_API_BASE_URL = (
 AUTH_API_ROOT = "https://aero-pulse-api-591603094460.asia-south1.run.app"
 
 # Google OAuth 2.0 client ID for the desktop "Sign in with Google" flow.
-# Precedence: GOOGLE_OAUTH_CLIENT_ID env var → agent_config.json key → "".
+# Precedence: GOOGLE_OAUTH_CLIENT_ID env var → agent_config.json key → built-in fallback.
+# The client ID is not a secret (desktop app OAuth IDs are public); embedding it here
+# ensures sign-in works even when agent_config.json is absent (e.g. after a bare update).
+_BUILTIN_GOOGLE_OAUTH_CLIENT_ID = (
+    "591603094460-c857c9s563bicpmikml3i34n9rt887eq.apps.googleusercontent.com"
+)
+
+
 def _load_google_client_id() -> str:
     if os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip():
         return os.environ["GOOGLE_OAUTH_CLIENT_ID"].strip()
     try:
         with open(DEFAULT_AGENT_CONFIG_PATH, "r", encoding="utf-8-sig") as _f:
-            return str(json.load(_f).get("google_oauth_client_id", "")).strip()
+            val = str(json.load(_f).get("google_oauth_client_id", "")).strip()
+            if val:
+                return val
     except Exception:
-        return ""
+        pass
+    return _BUILTIN_GOOGLE_OAUTH_CLIENT_ID
+
 
 GOOGLE_OAUTH_CLIENT_ID: str = _load_google_client_id()
 

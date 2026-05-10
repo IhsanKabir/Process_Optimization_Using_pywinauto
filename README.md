@@ -2,6 +2,18 @@
 
 A Python-based automation solution for controlling the Travelport Smartpoint terminal, extracting complex Global Distribution System (GDS) data, and structuring the output into clean Excel reports.
 
+## ⚠️ Disclaimer
+
+This tool automates the Travelport Smartpoint desktop client using UI automation (pywinauto). Automation of GDS clients may be restricted under your organization's Travelport agreement.
+
+**Before using this tool:**
+
+- Confirm desktop automation is permitted under your company's Travelport contract
+- Use only with PCCs and credentials you are authorized to access
+- This project is not affiliated with or endorsed by Travelport
+
+Use at your own risk. The author assumes no liability for misuse, contract violations, or any consequences arising from use of this software.
+
 [![CI Tests](https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/actions/workflows/test.yml/badge.svg)](https://github.com/IhsanKabir/Process_Optimization_Using_pywinauto/actions/workflows/test.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
