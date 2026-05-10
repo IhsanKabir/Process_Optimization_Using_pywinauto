@@ -419,6 +419,8 @@ def _build_folder_updater_script(
         # Back up user-customisable files before xcopy overwrites them with zip defaults.
         'if exist "%DST%\\preferences.json" copy /y "%DST%\\preferences.json" "%DST%\\preferences.json.bak" >nul 2>&1\n'
         'if exist "%DST%\\commands.txt" copy /y "%DST%\\commands.txt" "%DST%\\commands.txt.bak" >nul 2>&1\n'
+        # agent_config.json backup: restore only if the new zip didn't include one.
+        'if exist "%DST%\\agent_config.json" copy /y "%DST%\\agent_config.json" "%DST%\\agent_config.json.bak" >nul 2>&1\n'
         'xcopy /s /y /e "%SRC%\\*" "%DST%\\" >> "%LOG%" 2>&1\n'
         "if errorlevel 1 (\n"
         '  >> "%LOG%" echo xcopy failed; retrying after 3s...\n'
@@ -428,6 +430,7 @@ def _build_folder_updater_script(
         "if errorlevel 1 (\n"
         '  if exist "%DST%\\preferences.json.bak" copy /y "%DST%\\preferences.json.bak" "%DST%\\preferences.json" >nul 2>&1\n'
         '  if exist "%DST%\\commands.txt.bak" copy /y "%DST%\\commands.txt.bak" "%DST%\\commands.txt" >nul 2>&1\n'
+        '  if exist "%DST%\\agent_config.json.bak" copy /y "%DST%\\agent_config.json.bak" "%DST%\\agent_config.json" >nul 2>&1\n'
         '  > "%STATE%" echo failed^|%TARGET_VERSION%^|Could not copy update files. Staging folder: %SRC%\n'
         "  goto launch\n"
         ")\n"
@@ -439,6 +442,11 @@ def _build_folder_updater_script(
         'if exist "%DST%\\commands.txt.bak" (\n'
         '  copy /y "%DST%\\commands.txt.bak" "%DST%\\commands.txt" >nul 2>&1\n'
         '  del /f /q "%DST%\\commands.txt.bak"\n'
+        ")\n"
+        # Restore agent_config.json only if the new zip didn't supply one.
+        'if exist "%DST%\\agent_config.json.bak" (\n'
+        '  if not exist "%DST%\\agent_config.json" copy /y "%DST%\\agent_config.json.bak" "%DST%\\agent_config.json" >nul 2>&1\n'
+        '  del /f /q "%DST%\\agent_config.json.bak"\n'
         ")\n"
         'rd /s /q "%SRC%" 2>nul\n'
         '> "%STATE%" echo installed^|%TARGET_VERSION%^|Update installed successfully.\n'
