@@ -35,6 +35,8 @@ test_*.py
 # Build artifacts
 build/
 dist/
+dist_new/
+*.zip
 *.spec
 
 # IDE
