@@ -1751,8 +1751,16 @@ def _write_individual_tables_sheet(
                 ]
             )
 
+            baggage = route_info.get("baggage", {}) if isinstance(route_info, dict) else {}
+            baggage_parts = []
+            if baggage.get("checked"):
+                baggage_parts.append(f"Checked: {baggage['checked']}")
+            if baggage.get("carry_on"):
+                baggage_parts.append(f"Carry-on: {baggage['carry_on']}")
+            baggage_str = ("  |  Baggage: " + "  ".join(baggage_parts)) if baggage_parts else ""
+
             # Use plain text instead of CellRichText to avoid Excel corruption
-            summary_text = f"Charges (BDT): {yq_str} | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): {total_tax_val}"
+            summary_text = f"Charges (BDT): {yq_str} | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): {total_tax_val}{baggage_str}"
 
             summary_cell = ws.cell(row=row, column=col_offset)
             summary_cell.value = summary_text
