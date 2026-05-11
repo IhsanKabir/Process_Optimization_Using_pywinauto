@@ -488,7 +488,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.24"
+    VERSION = "v1.5.26"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -725,6 +725,7 @@ class TravelportGUI:
         self.mode_var = tk.StringVar(value="fare")
         for label, val in [
             ("Fares", "fare"),
+            ("Baggage Allowance", "baggage"),
             ("Future Tax", "tax"),
             ("Penalties", "penalty"),
             ("Currency Rate", "currency"),
@@ -822,14 +823,47 @@ class TravelportGUI:
         g_only_flags = tk.Frame(parent, bg="#f2f2f2")
         self.only_fd_var = tk.BooleanVar(value=False)
         self.only_yq_var = tk.BooleanVar(value=False)
+        self.baggage_inline_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             g_only_flags, text="Fares only (skip taxes)", variable=self.only_fd_var
         ).pack(anchor="w", pady=1)
         ttk.Checkbutton(
             g_only_flags, text="Taxes only (skip fares)", variable=self.only_yq_var
         ).pack(anchor="w", pady=1)
+        ttk.Checkbutton(
+            g_only_flags,
+            text="Include baggage (BOOK+FQC)",
+            variable=self.baggage_inline_var,
+        ).pack(anchor="w", pady=1)
 
         # â”€â”€ Group 5: Compare against (hidden in Currency / Manual) â”€â”€â”€â”€â”€â”€
+
+        # ── Group 4c: Baggage file (Fares + Baggage modes) ─────────────────
+        g_baggage_file = tk.Frame(parent, bg="#f2f2f2")
+        tk.Label(
+            g_baggage_file,
+            text="Baggage file (optional):",
+            bg="#f2f2f2",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(6, 0))
+        self.baggage_file_var = tk.StringVar()
+        bag_row = tk.Frame(g_baggage_file, bg="#f2f2f2")
+        bag_row.pack(fill="x")
+        ttk.Entry(bag_row, textvariable=self.baggage_file_var).pack(
+            side="left", fill="x", expand=True
+        )
+        self._baggage_browse_btn = ttk.Button(
+            bag_row, text="Browse", width=7, command=self._browse_baggage_file
+        )
+        self._baggage_browse_btn.pack(side="left", padx=(4, 0))
+        tk.Label(
+            g_baggage_file,
+            text="Leave blank to extract live  |  browse for saved baggage JSON",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+        ).pack(anchor="w")
+
         g_compare = tk.Frame(parent, bg="#f2f2f2")
         tk.Label(
             g_compare, text="Compare against:", bg="#f2f2f2", font=("Segoe UI", 9)
@@ -905,9 +939,10 @@ class TravelportGUI:
         self._left_sections = [
             (g_extract, lambda m: True),
             (g_speed, lambda m: True),
-            (g_filters, lambda m: m != "currency"),
-            (g_options_core, lambda m: True),
+            (g_filters, lambda m: m not in {"currency", "baggage"}),
+            (g_options_core, lambda m: m != "baggage"),
             (g_only_flags, lambda m: m == "fare"),
+            (g_baggage_file, lambda m: m in {"fare", "baggage"}),
             (g_compare, lambda m: m in {"fare", "tax", "penalty"}),
             (g_prev_rates, lambda m: m == "currency"),
             (g_output, lambda m: True),
@@ -921,6 +956,10 @@ class TravelportGUI:
         _Tooltip(
             self._prev_rates_browse_btn,
             "Browse for JSON / CSV / XLSX from a prior currency run.",
+        )
+        _Tooltip(
+            self._baggage_browse_btn,
+            "Browse for a saved baggage JSON from a prior baggage-only run.",
         )
         _Tooltip(
             self._output_browse_btn,
@@ -1518,6 +1557,9 @@ class TravelportGUI:
         elif mode == "tax":
             self.tree.heading("airline", text="Airline")
             self.tree.heading("route", text="Airport")
+        elif mode == "baggage":
+            self.tree.heading("airline", text="Airline")
+            self.tree.heading("route", text="Route")
         else:  # fare, penalty, quickpaste
             self.tree.heading("airline", text="Airline")
             self.tree.heading("route", text="Route")
@@ -2013,6 +2055,18 @@ class TravelportGUI:
                 "Reset D-click calibration",
                 f"Could not reset D-click calibration:\n\n{exc}",
             )
+
+    def _browse_baggage_file(self):
+        raw_dir = os.path.join("data", "raw")
+        if not os.path.isdir(raw_dir):
+            raw_dir = "."
+        path = filedialog.askopenfilename(
+            title="Select saved baggage JSON",
+            initialdir=raw_dir,
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if path:
+            self.baggage_file_var.set(path)
 
     def _browse_compare_file(self):
         archive_dir = os.path.join("data", "archive")
@@ -2542,6 +2596,7 @@ class TravelportGUI:
         is_quickpaste = mode == "quickpaste"
         is_currency = mode == "currency"
         is_tax = mode == "tax"
+        is_baggage = mode == "baggage"
         primary_filter = self.route_var.get().strip() or None
         airline_filter = self.airline_var.get().strip() or None
         return argparse.Namespace(
@@ -2552,15 +2607,18 @@ class TravelportGUI:
             currency_report=is_currency,
             load_previous_rates=getattr(self, "_prev_rates_path", None) if is_currency else None,
             previous_date=getattr(self, "_prev_rates_date", None) if is_currency else None,
-            route=None if is_tax else primary_filter,
+            route=None if (is_tax or is_baggage) else primary_filter,
             airport=primary_filter if is_tax else None,
             one_direction=False,
-            airline=None if is_tax else airline_filter,
+            airline=None if (is_tax or is_baggage) else airline_filter,
             limit=limit,
             only_fd=self.only_fd_var.get(),
             only_yq=self.only_yq_var.get(),
             only_currency=False,
             include_ftax=False,
+            only_baggage=is_baggage,
+            baggage=self.baggage_inline_var.get() if not is_baggage else False,
+            baggage_file=self.baggage_file_var.get().strip() or None,
             speed=speed if speed != "normal" else None,
             checkpoint=self.checkpoint_var.get(),
             resume=None,
