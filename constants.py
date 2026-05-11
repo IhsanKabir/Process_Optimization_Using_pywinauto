@@ -153,6 +153,7 @@ BOTTOM_MARGIN = 0  # Pixels at bottom of terminal (text flush against bottom)
 # D button click position (empirically calibrated)
 # The 'D' (Details) button in FS results is consistently at ~85.5% of terminal width
 D_BUTTON_X_RATIO = 0.855  # Horizontal position ratio (0.0=left, 1.0=right)
+BOOK_BUTTON_X_RATIO = 0.15  # BOOK link is on the left side of the +TQ/BOOK line
 
 # Currency link click position
 CURRENCY_LINK_X_RATIO = 0.5  # Click center of "BDT CURRENCY FARES EXISTS" link (changed from 0.3 to avoid clicking Fare section header)

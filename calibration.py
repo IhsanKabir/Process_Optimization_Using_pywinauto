@@ -218,6 +218,50 @@ def clear_d_click_offset(calibration: dict) -> dict:
     return calibration
 
 
+# ── BOOK-click calibration (parallel to D-click) ─────────────────────────────
+
+def record_book_click_offset(
+    calibration: dict,
+    x_off: int,
+    y_off: int,
+    char_x_off: int | None = None,
+) -> dict:
+    """Persist the offset(s) that produced a successful BOOK click on this PC."""
+    calibration["book_click_offset"] = [int(x_off), int(y_off)]
+    if char_x_off is not None:
+        calibration["book_click_char_x_offset"] = [int(char_x_off), int(y_off)]
+    return calibration
+
+
+def get_book_click_offset(calibration: dict) -> tuple[int, int] | None:
+    """Return the previously-saved base_x-relative BOOK-click offset, or None."""
+    raw = calibration.get("book_click_offset")
+    if isinstance(raw, list) and len(raw) == 2:
+        try:
+            return int(raw[0]), int(raw[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def get_book_click_char_x_offset(calibration: dict) -> tuple[int, int] | None:
+    """Return the previously-saved char_x-relative BOOK-click offset, or None."""
+    raw = calibration.get("book_click_char_x_offset")
+    if isinstance(raw, list) and len(raw) == 2:
+        try:
+            return int(raw[0]), int(raw[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def clear_book_click_offset(calibration: dict) -> dict:
+    """Remove every saved BOOK-click offset so the next run re-learns it."""
+    calibration.pop("book_click_offset", None)
+    calibration.pop("book_click_char_x_offset", None)
+    return calibration
+
+
 # ── Internal ──────────────────────────────────────────────────────────────────
 
 def _write(data: dict) -> None:
