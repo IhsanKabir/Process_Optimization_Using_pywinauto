@@ -1497,6 +1497,23 @@ def main(prebuilt_args=None, stop_event=None):
         help="Extract Rule 16 penalties per fare basis in a separate run",
     )
     arg_parser.add_argument(
+        "--only-baggage",
+        action="store_true",
+        help="Extract only baggage allowance data (no fare extraction) → creates standalone baggage report",
+    )
+    arg_parser.add_argument(
+        "--baggage",
+        action="store_true",
+        help="Include inline baggage extraction alongside fare run (BOOK+FQC in FS loop); requires --auto",
+    )
+    arg_parser.add_argument(
+        "--baggage-file",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Load pre-extracted baggage JSON file and merge into fare report (e.g. data/raw/baggage_data.json)",
+    )
+    arg_parser.add_argument(
         "--include-ftax",
         action="store_true",
         help="Extract global FTAX data alongside the specific route fares",
@@ -1703,7 +1720,12 @@ def main(prebuilt_args=None, stop_event=None):
             sys.exit(1)
 
     logger.info("=" * 60)
-    mode_label = "PENALTY" if args.penalty else ("TAX" if args.tax else "FARE")
+    mode_label = (
+        "PENALTY" if args.penalty
+        else "TAX" if args.tax
+        else "BAGGAGE" if getattr(args, "only_baggage", False)
+        else "FARE"
+    )
     logger.info(f"  TRAVELPORT {mode_label} AUTOMATION TOOL")
     logger.info(f"  {datetime.now().strftime('%d-%b-%Y %H:%M')}")
     logger.info("=" * 60)
@@ -1735,6 +1757,12 @@ def main(prebuilt_args=None, stop_event=None):
     tax_airports = {}
     if args.penalty and args.tax:
         logger.error("  Use either --tax or --penalty, not both together.")
+        sys.exit(1)
+    if getattr(args, "only_baggage", False) and (args.tax or args.penalty):
+        logger.error("  --only-baggage cannot be combined with --tax or --penalty.")
+        sys.exit(1)
+    if getattr(args, "baggage", False) and getattr(args, "only_baggage", False):
+        logger.error("  Use either --baggage or --only-baggage, not both.")
         sys.exit(1)
 
     if args.tax:
@@ -2313,6 +2341,136 @@ def main(prebuilt_args=None, stop_event=None):
             return _stop_run("  [STOP] Stop requested - skipping tax report generation.", partial_data=all_route_data)
         logger.info("")
 
+    # BAGGAGE-ONLY MODE EXTRACTION
+    elif getattr(args, "only_baggage", False):
+        if not args.auto:
+            logger.error("  --only-baggage requires --auto.")
+            sys.exit(1)
+        if not commands:
+            logger.error("  No commands found to auto-run.")
+            sys.exit(1)
+
+        from smartpoint_automation import SmartpointAutomation, StopRequested
+        from baggage_report import generate_baggage_report, save_baggage_json
+
+        automation = SmartpointAutomation(stop_event=_stop)
+        if not automation.connect():
+            logger.error("  Please ensure Smartpoint is open and the title matches.")
+            sys.exit(1)
+
+        raw_baggage_data: dict[str, dict] = {}
+        failed_commands: list = []
+
+        try:
+            logger.info("[2/3] Extracting baggage allowance via FS + BOOK + FQC...")
+            for i, cmd in enumerate(commands, 1):
+                if _stop and _stop.is_set():
+                    break
+                base_cmd = cmd["command"].strip()
+                if not (
+                    len(base_cmd) >= 11
+                    and base_cmd.startswith("FD")
+                    and "/" in base_cmd
+                    and len(base_cmd.split("/")[0]) == 8
+                ):
+                    continue
+                src = base_cmd[2:5]
+                dst = base_cmd[5:8]
+                airline = base_cmd.split("/")[1][:2]
+                file_key = generate_file_key(cmd)
+
+                logger.info(f"  [{i}/{len(commands)}] {airline} {src}-{dst}")
+
+                for window_start in (FS_DATE_OFFSET_START, FS_DATE_FALLBACK_OFFSET):
+                    _got_bag = False
+                    for fs_date_offset in range(window_start, window_start + FS_DATE_WINDOW_DAYS, FS_DATE_STEP):
+                        if _stop and _stop.is_set():
+                            break
+                        date_str = (
+                            (datetime.now() + timedelta(days=fs_date_offset))
+                            .strftime("%d%b")
+                            .upper()
+                        )
+                        fs_result = automation.run_fs_command(src, dst, date_str, airline)
+                        if not fs_result or _fs_output_is_no_results(fs_result):
+                            continue
+
+                        target_option_index, _, _ = _find_pure_airline_option_in_fs_page(
+                            fs_result, airline
+                        )
+                        if target_option_index is None:
+                            continue
+
+                        try:
+                            _book_screen = automation.click_book_link(
+                                target_option_index, fs_result
+                            )
+                            if _book_screen and not is_no_bf_error(_book_screen):
+                                _fqc_text = automation.run_fqc_command(airline)
+                                if not is_no_bf_error(_fqc_text) and _fqc_text:
+                                    _bag = parse_baggage_allowance(_fqc_text)
+                                    if _bag:
+                                        raw_baggage_data[file_key] = _bag
+                                        logger.info(
+                                            f"    [BAG] Checked:{_bag.get('checked','?')} "
+                                            f"Carry-on:{_bag.get('carry_on','?')}"
+                                        )
+                                        _got_bag = True
+                            elif _book_screen:
+                                logger.info(f"    [BAG] NO B.F. TO DISPLAY for {file_key}.")
+                            automation.send_ignore_command()
+                        except Exception as _be:
+                            logger.warning(f"    [BAG] Error for {file_key}: {_be}")
+                            try:
+                                automation.send_ignore_command()
+                            except Exception:
+                                pass
+
+                        if _got_bag:
+                            break
+                    if _got_bag:
+                        break
+
+                if file_key not in raw_baggage_data:
+                    logger.warning(f"  [!] No baggage data retrieved for {file_key}.")
+                    failed_commands.append(file_key)
+
+            try:
+                automation.show_completion_signal()
+            except Exception:
+                pass
+        except StopRequested:
+            logger.info("  [STOP] Stop requested during baggage extraction.")
+
+        logger.info("")
+        logger.info("[3/3] Generating baggage report...")
+
+        # Save JSON for later reference
+        _bag_json = os.path.join(RAW_DATA_DIR, "baggage_data.json")
+        try:
+            save_baggage_json(raw_baggage_data, _bag_json)
+            logger.info(f"  Baggage data saved to: {_bag_json}")
+        except Exception as _je:
+            logger.warning(f"  Could not save baggage JSON: {_je}")
+
+        _bag_output = args.output or os.path.join(
+            REPORTS_DIR,
+            f"baggage_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        )
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        _bag_path = generate_baggage_report(raw_baggage_data, config, _bag_output)
+        logger.info(f"  Report: {_bag_path}")
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info(f"  BAGGAGE REPORT COMPLETE")
+        logger.info(f"  Report:   {_bag_path}")
+        logger.info(f"  JSON:     {_bag_json}")
+        logger.info("=" * 60)
+
+        if prebuilt_args is not None:
+            return _bag_path
+        return _bag_path
+
     # FARE MODE EXTRACTION
     else:
         raw_texts = {}
@@ -2673,50 +2831,49 @@ def main(prebuilt_args=None, stop_event=None):
                                     _time.sleep(0.5)
                                     continue
 
-                                # -- Baggage phase: BOOK click → FQC → Ignore --
-                                # Must happen before D-click; sends I to cancel so
-                                # terminal returns to clean prompt, then we re-run FS.
-                                try:
-                                    _book_screen = automation.click_book_link(
-                                        target_option_index, fs_result
-                                    )
-                                    if _book_screen and not is_no_bf_error(_book_screen):
-                                        _fqc_text = automation.run_fqc_command(airline)
-                                        if is_no_bf_error(_fqc_text):
-                                            logger.info(
-                                                "      [BAG] NO B.F. TO DISPLAY — skipping baggage."
-                                            )
-                                        elif _fqc_text:
-                                            _bag = parse_baggage_allowance(_fqc_text)
-                                            if _bag:
-                                                raw_baggage_data[file_key] = _bag
-                                                logger.info(
-                                                    f"      [BAG] Checked:{_bag.get('checked','?')} "
-                                                    f"Carry-on:{_bag.get('carry_on','?')}"
-                                                )
-                                    elif _book_screen:
-                                        logger.info(
-                                            "      [BAG] NO B.F. TO DISPLAY on BOOK — skipping baggage."
-                                        )
-                                    automation.send_ignore_command()
-                                except Exception as _bag_exc:
-                                    logger.warning(f"      [BAG] Baggage error: {_bag_exc}")
+                                # -- Baggage phase (only when --baggage inline mode) --
+                                if getattr(args, "baggage", False):
                                     try:
+                                        _book_screen = automation.click_book_link(
+                                            target_option_index, fs_result
+                                        )
+                                        if _book_screen and not is_no_bf_error(_book_screen):
+                                            _fqc_text = automation.run_fqc_command(airline)
+                                            if is_no_bf_error(_fqc_text):
+                                                logger.info(
+                                                    "      [BAG] NO B.F. TO DISPLAY — skipping baggage."
+                                                )
+                                            elif _fqc_text:
+                                                _bag = parse_baggage_allowance(_fqc_text)
+                                                if _bag:
+                                                    raw_baggage_data[file_key] = _bag
+                                                    logger.info(
+                                                        f"      [BAG] Checked:{_bag.get('checked','?')} "
+                                                        f"Carry-on:{_bag.get('carry_on','?')}"
+                                                    )
+                                        elif _book_screen:
+                                            logger.info(
+                                                "      [BAG] NO B.F. TO DISPLAY on BOOK — skipping baggage."
+                                            )
                                         automation.send_ignore_command()
-                                    except Exception:
-                                        pass
+                                    except Exception as _bag_exc:
+                                        logger.warning(f"      [BAG] Baggage error: {_bag_exc}")
+                                        try:
+                                            automation.send_ignore_command()
+                                        except Exception:
+                                            pass
 
-                                # Re-run FS to restore the pricing options screen for D-click.
-                                _fs_rerun = automation.run_fs_command(
-                                    src, dst, date_str, airline
-                                )
-                                if _fs_rerun:
-                                    _new_idx, _, _ = _find_pure_airline_option_in_fs_page(
-                                        _fs_rerun, airline
+                                    # Re-run FS to restore the pricing options screen for D-click.
+                                    _fs_rerun = automation.run_fs_command(
+                                        src, dst, date_str, airline
                                     )
-                                    if _new_idx is not None:
-                                        target_option_index = _new_idx
-                                        fs_result = _fs_rerun
+                                    if _fs_rerun:
+                                        _new_idx, _, _ = _find_pure_airline_option_in_fs_page(
+                                            _fs_rerun, airline
+                                        )
+                                        if _new_idx is not None:
+                                            target_option_index = _new_idx
+                                            fs_result = _fs_rerun
 
                                 # Click the D button using text-to-coordinate mapping
                                 fs_expanded = automation.click_d_button(
@@ -2894,6 +3051,18 @@ def main(prebuilt_args=None, stop_event=None):
         # partial report contains all the data that was scraped.  Forwarding stop_event
         # here would cause process_route_data to break on the very first iteration and
         # return an empty dict, producing no partial report.
+        # Load baggage from --baggage-file if provided (overrides any inline data)
+        _baggage_file = getattr(args, "baggage_file", None)
+        if _baggage_file:
+            try:
+                import json as _json
+                with open(_baggage_file, "r", encoding="utf-8") as _bf:
+                    _loaded = _json.load(_bf)
+                raw_baggage_data.update(_loaded)
+                logger.info(f"  [BAG] Loaded baggage data for {len(_loaded)} route(s) from {_baggage_file}")
+            except Exception as _bfe:
+                logger.warning(f"  [BAG] Could not load --baggage-file: {_bfe}")
+
         _parse_stop = None if (_stop and _stop.is_set()) else _stop
         all_route_data = process_route_data(
             raw_texts,
