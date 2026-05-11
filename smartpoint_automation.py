@@ -1941,6 +1941,125 @@ class SmartpointAutomation:
         self.logger.debug(f"      FQ result: {len(result)} chars captured.")
         return result
 
+    def click_book_link(self, option_index: int, fs_text: str) -> str:
+        """
+        Click the «BOOK» hyperlink for a Pricing Option in FS results.
+
+        Returns the booking confirmation screen text (used to then run FQC for
+        baggage data).  The caller must send_ignore_command() after use.
+        """
+        if not self.focus():
+            return ""
+
+        lines = fs_text.split("\n")
+        option_headers = [
+            idx for idx, line in enumerate(lines) if _RE_PRICING_OPTION.search(line)
+        ]
+
+        target_line = None
+        if option_index < len(option_headers):
+            block_start = option_headers[option_index]
+            block_end = (
+                option_headers[option_index + 1]
+                if option_index + 1 < len(option_headers)
+                else len(lines)
+            )
+            for idx in range(block_start, block_end):
+                if "+TQ" in lines[idx] or "BOOK" in lines[idx] or "\xabBOOK\xbb" in lines[idx]:
+                    target_line = idx
+                    break
+
+        if target_line is None:
+            self.logger.warning("      [BOOK] Could not locate BOOK/+TQ line in FS text.")
+            return ""
+
+        line_text = lines[target_line]
+        m = re.search(r"\xabBOOK\xbb|(?<!\w)BOOK(?!\w)", line_text)
+        book_col = m.start() if m else 0
+        line_len = max(len(line_text), 1)
+        x_ratio = max(0.01, min(book_col / line_len, 0.40))
+
+        click_x, click_y = self._text_line_to_pixel(
+            fs_text, target_line, x_ratio=x_ratio
+        )
+
+        text_before = self._copy_terminal_text()
+        self._safe_focus_click(click_x, click_y)
+        time.sleep(0.4)
+
+        result = self._wait_for_response(
+            text_before,
+            timeout=constants.COMMAND_WAIT_FS + 1.5,
+            min_wait=0.4,
+            stability_checks=2,
+        )
+
+        self.logger.info(
+            f"      [BOOK] Clicked at line {target_line}, col {book_col} "
+            f"→ {len(result)} chars"
+        )
+        return result
+
+    def run_fqc_command(self, airline_code: str) -> str:
+        """
+        Send FQC{airline}/ET to get fare quote with baggage allowance info.
+        Requires an active booking context created by click_book_link().
+        """
+        if not self.focus():
+            return ""
+
+        command = f"FQC{airline_code.upper()}/ET"
+        self.logger.info(f"      Sending: {command}")
+
+        text_before = self._copy_terminal_text()
+        pyautogui.typewrite(command, interval=constants.KEYBOARD_INTERVAL)
+        pyautogui.press("enter")
+
+        accumulated = self._wait_for_response(
+            text_before,
+            timeout=constants.COMMAND_WAIT_FS + 2.0,
+            min_wait=0.5,
+            stability_checks=2,
+        )
+
+        # Paginate through multi-page responses (baggage note sections can be long)
+        for _ in range(8):
+            if self._has_end_signal(accumulated) or self._has_invalid(accumulated):
+                break
+            prev = accumulated
+            pyautogui.typewrite("MD", interval=constants.KEYBOARD_INTERVAL)
+            pyautogui.press("enter")
+            page = self._wait_for_response(
+                prev,
+                timeout=constants.COMMAND_WAIT_FS,
+                min_wait=0.3,
+                stability_checks=1,
+            )
+            if not page or page.strip() == prev.strip() or self._has_invalid(page):
+                break
+            accumulated += "\n" + page
+
+        self.logger.debug(f"      FQC: {len(accumulated)} chars captured.")
+        return accumulated
+
+    def send_ignore_command(self) -> str:
+        """Send 'I' (Ignore) to cancel the current booking context and return to a clean prompt."""
+        if not self.focus():
+            return ""
+
+        text_before = self._copy_terminal_text()
+        pyautogui.typewrite("I", interval=constants.KEYBOARD_INTERVAL)
+        pyautogui.press("enter")
+
+        result = self._wait_for_response(
+            text_before,
+            timeout=constants.COMMAND_WAIT_SHORT + 0.5,
+            min_wait=0.2,
+            stability_checks=1,
+        )
+        self.logger.info("      [BOOK] Sent I (Ignore) — booking context cleared.")
+        return result
+
     def expand_fs_tax_breakdown(self, tabs_to_press: int) -> str:
         """
         Press Tab 'tabs_to_press' times to reach the 'D' (Tax Breakdown)

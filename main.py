@@ -52,6 +52,7 @@ from parser import (
 from penalty_parser import parse_penalty_text
 from penalty_report import generate_penalty_report
 from tax_breakdown_parser import parse_fs_tax_breakdown, looks_like_fs_tax_breakdown
+from baggage_parser import parse_baggage_allowance, is_no_bf_error
 from excel_report import generate_report
 from change_detector import (
     detect_changes,
@@ -461,6 +462,7 @@ def process_route_data(
     enable_validation: bool = True,
     show_progress: bool = True,
     stop_event=None,
+    raw_baggage_data: dict | None = None,
 ) -> dict:
     """Process raw text files into route data with optional validation."""
     rbd_sort_order = config.get("rbd_sort_order", [])
@@ -533,6 +535,7 @@ def process_route_data(
                 "rbd_data": grouped,
                 "currency": currency,
                 "fs_taxes": fs_taxes,
+                "baggage": (raw_baggage_data or {}).get(file_key, {}),
             }
 
             # Only log if not using tqdm (to avoid cluttering progress bar)
@@ -2314,6 +2317,7 @@ def main(prebuilt_args=None, stop_event=None):
     else:
         raw_texts = {}
         raw_fs_texts = {}
+        raw_baggage_data: dict[str, dict] = {}
         if args.auto:
             logger.info("[2/4] AUTO MODE: Connecting to Smartpoint UI...")
             if not commands:
@@ -2669,6 +2673,51 @@ def main(prebuilt_args=None, stop_event=None):
                                     _time.sleep(0.5)
                                     continue
 
+                                # -- Baggage phase: BOOK click → FQC → Ignore --
+                                # Must happen before D-click; sends I to cancel so
+                                # terminal returns to clean prompt, then we re-run FS.
+                                try:
+                                    _book_screen = automation.click_book_link(
+                                        target_option_index, fs_result
+                                    )
+                                    if _book_screen and not is_no_bf_error(_book_screen):
+                                        _fqc_text = automation.run_fqc_command(airline)
+                                        if is_no_bf_error(_fqc_text):
+                                            logger.info(
+                                                "      [BAG] NO B.F. TO DISPLAY — skipping baggage."
+                                            )
+                                        elif _fqc_text:
+                                            _bag = parse_baggage_allowance(_fqc_text)
+                                            if _bag:
+                                                raw_baggage_data[file_key] = _bag
+                                                logger.info(
+                                                    f"      [BAG] Checked:{_bag.get('checked','?')} "
+                                                    f"Carry-on:{_bag.get('carry_on','?')}"
+                                                )
+                                    elif _book_screen:
+                                        logger.info(
+                                            "      [BAG] NO B.F. TO DISPLAY on BOOK — skipping baggage."
+                                        )
+                                    automation.send_ignore_command()
+                                except Exception as _bag_exc:
+                                    logger.warning(f"      [BAG] Baggage error: {_bag_exc}")
+                                    try:
+                                        automation.send_ignore_command()
+                                    except Exception:
+                                        pass
+
+                                # Re-run FS to restore the pricing options screen for D-click.
+                                _fs_rerun = automation.run_fs_command(
+                                    src, dst, date_str, airline
+                                )
+                                if _fs_rerun:
+                                    _new_idx, _, _ = _find_pure_airline_option_in_fs_page(
+                                        _fs_rerun, airline
+                                    )
+                                    if _new_idx is not None:
+                                        target_option_index = _new_idx
+                                        fs_result = _fs_rerun
+
                                 # Click the D button using text-to-coordinate mapping
                                 fs_expanded = automation.click_d_button(
                                     target_option_index, fs_result
@@ -2853,6 +2902,7 @@ def main(prebuilt_args=None, stop_event=None):
             enable_validation,
             show_progress=use_tqdm,
             stop_event=_parse_stop,
+            raw_baggage_data=raw_baggage_data,
         )
         if _stop and _stop.is_set():
             return _stop_run("  [STOP] Stop requested - saving partial report.", partial_data=all_route_data)
