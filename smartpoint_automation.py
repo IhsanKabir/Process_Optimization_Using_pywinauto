@@ -33,6 +33,7 @@ from constants import (
     BOTTOM_MARGIN,
     # Click positions
     D_BUTTON_X_RATIO,
+    BOOK_BUTTON_X_RATIO,
     CURRENCY_LINK_X_RATIO,
     MORE_LINK_X_RATIO,
     SAFE_CLICK_X_OFFSET,
@@ -178,6 +179,9 @@ _RE_CURRENCY_CODE_FARES = re.compile(r"([A-Z]{3})\s+CURRENCY\s+FARES?\s+EXISTS?"
 _RE_FARE_LINE = re.compile(r"^\s*O?\d+\s+-?[A-Z0-9]{2}\s+\d+\.?\d*R?\s+\S+\s+[A-Z]\s+")
 _RE_MORE_FARES = re.compile(r"More|More\s+Fares", re.IGNORECASE)
 _RE_MORE_PROMPT = re.compile(r"(MORE\s+(?:FARES|FLIGHTS|OPTIONS))", re.IGNORECASE)
+_RE_FS_PRICING_SCREEN = re.compile(
+    r"PRICING\s+OPTION.+TOTAL\s+AMOUNT", re.IGNORECASE | re.DOTALL
+)
 _SMARTPOINT_WINDOW_HINTS = (
     "travelport smartpoint",
     "travelport smartpoint desktop",
@@ -1943,10 +1947,15 @@ class SmartpointAutomation:
 
     def click_book_link(self, option_index: int, fs_text: str) -> str:
         """
-        Click the «BOOK» hyperlink for a Pricing Option in FS results.
+        Click the BOOK hyperlink for a Pricing Option in FS results.
 
-        Returns the booking confirmation screen text (used to then run FQC for
-        baggage data).  The caller must send_ignore_command() after use.
+        Uses the same multi-attempt fan-out approach as click_d_button so that
+        per-machine pixel offsets are learned and persisted, making subsequent
+        runs reliable without manual calibration.
+
+        Returns the booking context screen text (pass to run_fqc_command).
+        The caller must call send_ignore_command() after use to cancel the
+        booking context.
         """
         if not self.focus():
             return ""
@@ -1956,6 +1965,7 @@ class SmartpointAutomation:
             idx for idx, line in enumerate(lines) if _RE_PRICING_OPTION.search(line)
         ]
 
+        # ── Phase A: locate the +TQ/BOOK line for the requested option ────────
         target_line = None
         if option_index < len(option_headers):
             block_start = option_headers[option_index]
@@ -1968,37 +1978,299 @@ class SmartpointAutomation:
                 if "+TQ" in lines[idx] or "BOOK" in lines[idx] or "\xabBOOK\xbb" in lines[idx]:
                     target_line = idx
                     break
+            if target_line is not None:
+                self.logger.info(
+                    f"      [BOOK] Option {option_index+1}: block lines "
+                    f"{block_start}-{block_end - 1}, BOOK row={target_line}"
+                )
+
+        # Fallback: search all lines for BOOK/+TQ
+        book_lines = [
+            idx for idx, line in enumerate(lines)
+            if "+TQ" in line or "BOOK" in line or "\xabBOOK\xbb" in line
+        ]
+        self.logger.info(
+            f"      [BOOK] Found {len(book_lines)} BOOK/+TQ lines: {book_lines}"
+        )
 
         if target_line is None:
-            self.logger.warning("      [BOOK] Could not locate BOOK/+TQ line in FS text.")
-            return ""
+            if option_index < len(book_lines):
+                target_line = book_lines[option_index]
+            elif book_lines:
+                target_line = book_lines[0]
+            else:
+                self.logger.warning("      [BOOK] Could not locate BOOK/+TQ line.")
+                return ""
 
+        # ── Phase B: resolve BOOK char column → pixel ─────────────────────────
         line_text = lines[target_line]
         m = re.search(r"\xabBOOK\xbb|(?<!\w)BOOK(?!\w)", line_text)
-        book_col = m.start() if m else 0
-        line_len = max(len(line_text), 1)
-        x_ratio = max(0.01, min(book_col / line_len, 0.40))
+        book_col = m.start() if m else None
 
-        click_x, click_y = self._text_line_to_pixel(
-            fs_text, target_line, x_ratio=x_ratio
+        ratio_x, base_y = self._text_line_to_pixel(
+            fs_text, target_line, x_ratio=BOOK_BUTTON_X_RATIO
         )
+        char_x: int | None = None
+        if book_col is not None:
+            char_x, _ = self._text_line_to_pixel(
+                fs_text, target_line, char_idx=book_col
+            )
+            # BOOK glyph: add a small right bias (half a char) to land on the
+            # link centre rather than its left edge.
+            clean_lines = [line.strip("\r") for line in lines if line.strip()]
+            terminal_width_chars = max((len(line) for line in clean_lines), default=0)
+            if terminal_width_chars > 0:
+                char_width = self._get_terminal_rect().width() / terminal_width_chars
+                right_bias = max(4, min(16, int(round(char_width * 1.5))))
+            else:
+                right_bias = 8
+            base_x = char_x + right_bias
+            self.logger.info(
+                f"      [BOOK] Option {option_index+1}: line {target_line}, "
+                f"BOOK at col {book_col} -> char_x={char_x}, ratio_x={ratio_x}, "
+                f"using x={base_x} [right-bias={right_bias}px]"
+            )
+        else:
+            base_x = ratio_x
+            self.logger.info(
+                f"      [BOOK] Option {option_index+1}: line {target_line}, "
+                f"BOOK col not found — using ratio {BOOK_BUTTON_X_RATIO} -> ({base_x}, {base_y})"
+            )
 
-        text_before = self._copy_terminal_text()
-        self._safe_focus_click(click_x, click_y)
-        time.sleep(0.4)
+        # Clear any selection before clicking
+        pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
+        time.sleep(constants.ESCAPE_CLEAR_DELAY)
 
-        result = self._wait_for_response(
-            text_before,
-            timeout=constants.COMMAND_WAIT_FS + 1.5,
-            min_wait=0.4,
-            stability_checks=2,
-        )
+        # ── Phase C: fan-out offsets ──────────────────────────────────────────
+        offsets: list[tuple[int, int]] = [
+            (0, 0),
+            (15, 0),
+            (-15, 0),
+            (0, -9),
+            (0, 9),
+            (15, -9),
+            (-15, -9),
+            (15, 9),
+            (-15, 9),
+        ]
+        if char_x is not None:
+            char_x_delta = char_x - base_x
+            if abs(char_x_delta) >= 8:
+                offsets.extend([
+                    (char_x_delta, 0),
+                    (char_x_delta, -9),
+                    (char_x_delta, 9),
+                    (char_x_delta + 12, 0),
+                    (char_x_delta - 12, 0),
+                ])
+        offsets.extend([(0, -18), (0, 18)])
 
-        self.logger.info(
-            f"      [BOOK] Clicked at line {target_line}, col {book_col} "
-            f"→ {len(result)} chars"
-        )
-        return result
+        # ── Phase D: prepend saved calibration offset so known-good column
+        #    is tried first ──────────────────────────────────────────────────
+        saved_offset = _calibration_mod.get_book_click_offset(self._cal)
+        saved_char_x_offset = _calibration_mod.get_book_click_char_x_offset(self._cal)
+
+        try:
+            _rect_width = self._get_terminal_rect().width()
+        except Exception:
+            _rect_width = 0
+        if (
+            _rect_width > 0
+            and saved_offset is not None
+            and not self._saved_offset_is_sane(
+                saved_offset[0], saved_offset[1], _rect_width, self._line_height
+            )
+        ):
+            self.logger.warning(
+                f"      [BOOK] Saved offset {saved_offset} out of bounds; clearing."
+            )
+            self._cal = _calibration_mod.clear_book_click_offset(self._cal)
+            _calibration_mod.save_calibration(self._cal)
+            saved_offset = None
+            saved_char_x_offset = None
+
+        effective_saved_offset: tuple[int, int] | None = None
+        saved_offset_source: str = ""
+        if saved_char_x_offset is not None and char_x is not None:
+            cx_off, cy_off = saved_char_x_offset
+            effective_saved_offset = ((char_x - base_x) + cx_off, cy_off)
+            saved_offset_source = "char_x"
+        elif saved_offset is not None:
+            effective_saved_offset = saved_offset
+            saved_offset_source = "base_x"
+
+        if effective_saved_offset is not None:
+            sx, sy = effective_saved_offset
+            saved_prefix = [
+                (sx, sy), (sx, 0), (sx, -9), (sx, 9), (sx, -18), (sx, 18),
+            ]
+            seen: set[tuple[int, int]] = set()
+            reordered: list[tuple[int, int]] = []
+            for off in saved_prefix + offsets:
+                if off not in seen:
+                    seen.add(off)
+                    reordered.append(off)
+            offsets = reordered
+            self.logger.debug(
+                f"      [BOOK] Trying saved-X variants first "
+                f"(saved_x={sx}, source={saved_offset_source})."
+            )
+
+        # ── Background click monitor ──────────────────────────────────────────
+        class _POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        _mon_clicks: list[tuple[float, int, int]] = []
+        _mon_stop = threading.Event()
+
+        def _monitor_clicks() -> None:
+            _get_key = ctypes.windll.user32.GetAsyncKeyState
+            _get_pos = ctypes.windll.user32.GetCursorPos
+            prev_dn = bool(_get_key(0x01) & 0x8000)
+            while not _mon_stop.is_set():
+                time.sleep(0.02)
+                dn = bool(_get_key(0x01) & 0x8000)
+                if prev_dn and not dn:
+                    _pt = _POINT()
+                    _get_pos(ctypes.byref(_pt))
+                    _mon_clicks.append((time.time(), _pt.x, _pt.y))
+                prev_dn = dn
+
+        _mon_thread = threading.Thread(target=_monitor_clicks, daemon=True)
+        _mon_thread.start()
+
+        def _record_success(learned_x: int, learned_y: int) -> None:
+            store_y = learned_y
+            if store_y != 0 and target_line > 0:
+                implied_lh = self._line_height + store_y / target_line
+                new_lh = round(max(17.0, min(28.0, implied_lh)), 1)
+                self._cal["line_height"] = new_lh
+                self._line_height = new_lh
+                store_y = 0
+            char_x_off: int | None = None
+            if char_x is not None:
+                char_x_off = learned_x - (char_x - base_x)
+            self._cal = _calibration_mod.record_book_click_offset(
+                self._cal, learned_x, store_y, char_x_off=char_x_off
+            )
+            _calibration_mod.save_calibration(self._cal)
+
+        def _is_in_book_region(ux: int, uy: int) -> bool:
+            try:
+                rect = self._get_terminal_rect()
+            except Exception:
+                return False
+            if not (rect.left <= ux <= rect.right and rect.top <= uy <= rect.bottom):
+                return False
+            base_y_in_rect = rect.top <= base_y <= rect.bottom
+            if base_y_in_rect:
+                y_tol = int(self._line_height * 4.0)
+                if abs(uy - base_y) > y_tol:
+                    return False
+            if abs(ux - base_x) > 150:  # wider X tolerance: BOOK is a word, not a glyph
+                return False
+            return True
+
+        try:
+            text_before = fs_text
+
+            # Manual window — only when no saved offset exists
+            if effective_saved_offset is None:
+                self.logger.warning(
+                    "      [BOOK] No saved position for this PC. "
+                    "Click the BOOK link now (5 s) — auto-click starts after."
+                )
+                init_deadline = time.time() + 5.0
+                init_seen = len(_mon_clicks)
+                while time.time() < init_deadline:
+                    try:
+                        self._raise_if_stopped()
+                    except Exception:
+                        break
+                    self._sleep(0.05)
+                    if len(_mon_clicks) > init_seen:
+                        _, ux, uy = _mon_clicks[-1]
+                        init_seen = len(_mon_clicks)
+                        if not _is_in_book_region(ux, uy):
+                            self.logger.info(
+                                f"      [BOOK] Ignored stray click at ({ux},{uy})"
+                            )
+                            continue
+                        self._sleep(0.5)
+                        result = self._copy_terminal_text()
+                        if result.strip() and not _RE_FS_PRICING_SCREEN.search(result):
+                            lx, ly = ux - base_x, uy - base_y
+                            self.logger.info(
+                                f"      [BOOK] Manual click at ({ux},{uy}) "
+                                f"[x_off={lx}, y_off={ly}] — learned."
+                            )
+                            _record_success(lx, ly)
+                            return result
+
+            for x_off, y_off in offsets:
+                click_x = base_x + x_off
+                click_y = base_y + y_off
+                self.logger.debug(
+                    f"      [BOOK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]"
+                )
+
+                pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+                post_click_t = time.time()
+                pyautogui.click()
+                result = self._wait_for_response(
+                    text_before,
+                    timeout=constants.COMMAND_WAIT_LONG + 0.5,
+                    min_wait=constants.COMMAND_WAIT_SHORT,
+                    stability_checks=1,
+                )
+                result = self._wait_for_stable_screen(
+                    initial_text=result, max_polls=4, interval=0.25
+                )
+
+                if result.strip() == text_before.strip():
+                    continue  # no change, try next offset
+
+                # Screen changed — is this the booking context (success)?
+                if not _RE_FS_PRICING_SCREEN.search(result):
+                    # Check if this was a manual click
+                    user_click = None
+                    for click in reversed(_mon_clicks):
+                        if click[0] <= post_click_t + 0.1:
+                            break
+                        _, ux, uy = click
+                        if _is_in_book_region(ux, uy):
+                            user_click = click
+                            break
+                    if user_click:
+                        _, ux, uy = user_click
+                        lx, ly = ux - base_x, uy - base_y
+                        self.logger.info(
+                            f"      [BOOK] Manual click at ({ux},{uy}) "
+                            f"[x_off={lx}, y_off={ly}] — learned."
+                        )
+                        _record_success(lx, ly)
+                    else:
+                        self.logger.info(
+                            f"      [BOOK] Booking screen at offset=({x_off},{y_off})"
+                        )
+                        _record_success(x_off, y_off)
+                    return result
+
+                # Still on FS pricing page — try next offset without hard reset
+                self.logger.debug(
+                    "      [BOOK] Screen changed but still looks like pricing options. "
+                    "Continuing fan-out..."
+                )
+                text_before = result
+                pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
+                time.sleep(constants.ESCAPE_CLEAR_DELAY)
+
+            self.logger.warning(
+                f"      [BOOK] Fan-out exhausted — all {len(offsets)} offsets failed."
+            )
+            return ""
+        finally:
+            _mon_stop.set()
 
     def run_fqc_command(self, airline_code: str) -> str:
         """
