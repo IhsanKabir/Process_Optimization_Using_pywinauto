@@ -488,7 +488,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.27"
+    VERSION = "v1.5.28"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -1144,6 +1144,16 @@ class TravelportGUI:
             "D button on the FS screen during that window so the new\n"
             "position is learned. Use this if D-click keeps landing\n"
             "on the wrong glyph (e.g. BOOK instead of D).",
+        )
+
+        self.time_calc_btn = ttk.Button(
+            bar, text="Time Calc", command=self._open_time_calculator, width=12
+        )
+        self.time_calc_btn.pack(side="left", padx=4)
+        _Tooltip(
+            self.time_calc_btn,
+            "Calculate local arrival time from origin/destination\n"
+            "UTC offsets, departure time, and flight duration.",
         )
 
         self._user_label = tk.Label(
@@ -2586,6 +2596,106 @@ class TravelportGUI:
         self._feedback_status_var.set(payload.get("error", "Could not send feedback."))
 
     # â”€â”€ Args builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+    def _open_time_calculator(self):
+        """Popup dialog: compute local arrival time from two UTC offsets + duration."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Time Calculator")
+        dlg.geometry("360x280")
+        dlg.minsize(320, 260)
+        dlg.resizable(True, True)
+        dlg.grab_set()
+
+        pad = {"padx": 10, "pady": 4}
+
+        tk.Label(dlg, text="Origin UTC Offset (e.g. +6, -5)",
+                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w", **pad)
+        origin_tz = tk.StringVar(value="+6")
+        ttk.Entry(dlg, textvariable=origin_tz, width=12).grid(row=0, column=1, sticky="w", **pad)
+
+        tk.Label(dlg, text="Arrival UTC Offset (e.g. +3, -5)",
+                 font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", **pad)
+        arrival_tz = tk.StringVar(value="+3")
+        ttk.Entry(dlg, textvariable=arrival_tz, width=12).grid(row=1, column=1, sticky="w", **pad)
+
+        tk.Label(dlg, text="Origin Local Departure (HH:MM)",
+                 font=("Segoe UI", 9)).grid(row=2, column=0, sticky="w", **pad)
+        depart_time = tk.StringVar(value="")
+        ttk.Entry(dlg, textvariable=depart_time, width=12).grid(row=2, column=1, sticky="w", **pad)
+
+        tk.Label(dlg, text="Flight Duration (HH:MM)",
+                 font=("Segoe UI", 9)).grid(row=3, column=0, sticky="w", **pad)
+        duration = tk.StringVar(value="")
+        ttk.Entry(dlg, textvariable=duration, width=12).grid(row=3, column=1, sticky="w", **pad)
+
+        ttk.Separator(dlg, orient="horizontal").grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=8, padx=10
+        )
+
+        result_frame = tk.Frame(dlg, bg="#f0f4f8", relief="flat", bd=1)
+        result_frame.grid(row=5, column=0, columnspan=2, sticky="ew", padx=10, pady=2)
+
+        tk.Label(result_frame, text="Arrival Time (destination local):",
+                 bg="#f0f4f8", font=("Segoe UI", 9)).pack(anchor="w", padx=8, pady=(6, 0))
+        arrival_result = tk.StringVar(value="--:-- (+0 day)")
+        tk.Label(result_frame, textvariable=arrival_result,
+                 bg="#f0f4f8", fg="#0f3758", font=("Segoe UI", 14, "bold")).pack(
+            anchor="w", padx=8, pady=(0, 6)
+        )
+
+        error_label = tk.Label(dlg, text="", fg="#c0392b", font=("Segoe UI", 8))
+        error_label.grid(row=6, column=0, columnspan=2, sticky="w", padx=10)
+
+        def _parse_offset(s):
+            s = s.strip().replace(" ", "")
+            sign = 1
+            if s.startswith("+"):
+                s = s[1:]
+            elif s.startswith("-"):
+                sign = -1
+                s = s[1:]
+            if ":" in s:
+                h, m = s.split(":", 1)
+                return sign * (int(h) * 60 + int(m))
+            return sign * int(s) * 60
+
+        def _parse_hhmm(s):
+            s = s.strip()
+            if ":" in s:
+                h, m = s.split(":", 1)
+                return int(h) * 60 + int(m)
+            if len(s) == 4 and s.isdigit():
+                return int(s[:2]) * 60 + int(s[2:])
+            raise ValueError(f"Cannot parse time: {s!r}")
+
+        def _calculate(*_):
+            error_label.config(text="")
+            try:
+                origin_off = _parse_offset(origin_tz.get())
+                arr_off = _parse_offset(arrival_tz.get())
+                dep_mins = _parse_hhmm(depart_time.get())
+                dur_mins = _parse_hhmm(duration.get())
+            except Exception as exc:
+                error_label.config(text=f"Input error: {exc}")
+                arrival_result.set("--:--")
+                return
+            utc_dep = dep_mins - origin_off
+            utc_arr = utc_dep + dur_mins
+            local_arr = utc_arr + arr_off
+            day_offset = local_arr // (24 * 60)
+            local_arr = local_arr % (24 * 60)
+            h, m = divmod(local_arr, 60)
+            day_str = "" if day_offset == 0 else f"  (+{day_offset}d)" if day_offset > 0 else f"  ({day_offset}d)"
+            arrival_result.set(f"{h:02d}:{m:02d}{day_str}")
+
+        for var in (origin_tz, arrival_tz, depart_time, duration):
+            var.trace_add("write", _calculate)
+
+        ttk.Button(dlg, text="Close", command=dlg.destroy, width=10).grid(
+            row=7, column=1, sticky="e", padx=10, pady=8
+        )
+        dlg.columnconfigure(0, weight=1)
 
     def _build_args(self) -> argparse.Namespace:
         mode = self.mode_var.get()
