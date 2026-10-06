@@ -9,6 +9,5 @@ extend-exclude = '''
   | htmlcov
   | data
   | aviation_web_integration
-  | er\.py
 )
 '''

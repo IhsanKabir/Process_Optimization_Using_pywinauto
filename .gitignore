@@ -56,3 +56,6 @@ tmp*/
 preferences.json
 # Added by code-review-graph
 .code-review-graph/
+
+# Per-user Claude Code permissions
+.claude/settings.local.json
