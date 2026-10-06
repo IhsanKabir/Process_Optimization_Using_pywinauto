@@ -140,6 +140,9 @@ class _KeyboardMouse:
             time.sleep(duration)
 
 
+_log = logging.getLogger("travelport.automation")
+
+
 class _Clipboard:
     """Resilient clipboard adapter for Smartpoint terminal capture."""
 
@@ -148,13 +151,13 @@ class _Clipboard:
         try:
             clipboard_copy(text)
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug(f"      [CLIPBOARD] copy failed, trying pyperclip: {exc}")
         if _real_pyperclip is not None:
             try:
                 _real_pyperclip.copy(text)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning(f"      [CLIPBOARD] pyperclip copy failed: {exc}")
 
     @staticmethod
     def paste():
@@ -162,15 +165,16 @@ class _Clipboard:
             text = clipboard_paste()
             if text:
                 return text
-        except Exception:
+        except Exception as exc:
+            _log.debug(f"      [CLIPBOARD] paste failed, trying pyperclip: {exc}")
             text = ""
         if _real_pyperclip is not None:
             try:
                 fallback = _real_pyperclip.paste()
                 if fallback:
                     return fallback
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning(f"      [CLIPBOARD] pyperclip paste failed: {exc}")
         return text
 
 
@@ -328,8 +332,10 @@ class SmartpointAutomation:
                             f"  Successfully connected to Smartpoint ({wtext})."
                         )
                         return True
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.debug(
+                    f"    exact title connect failed for '{title}': {exc}"
+                )
 
             # Strategy 2: Win32 exact title match (legacy fallback)
             try:
@@ -350,8 +356,10 @@ class SmartpointAutomation:
                             f"  Successfully connected to Smartpoint ({wtext})."
                         )
                         return True
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.debug(
+                    f"    win32 exact title connect failed for '{title}': {exc}"
+                )
 
             #  Strategy 3: UIA best_match (fuzzy accessibility name)
             try:
@@ -371,8 +379,10 @@ class SmartpointAutomation:
                             f"  Successfully connected to Smartpoint ({wtext})."
                         )
                         return True
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.debug(
+                    f"    UIA best_match connect failed for '{title}': {exc}"
+                )
 
         # Nothing worked — list every visible window title to aid diagnosis.
         # Strategy 4: Visible-window scan + handle attach for alias titles.
@@ -415,8 +425,8 @@ class SmartpointAutomation:
                         f"  Successfully connected to Smartpoint ({resolved_title or wtext})."
                     )
                     return True
-        except Exception:
-            pass
+        except Exception as exc:
+            self.logger.debug(f"    Visible-window alias scan failed: {exc}")
 
         try:
             visible_titles = sorted(
@@ -525,7 +535,8 @@ class SmartpointAutomation:
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(hwnd_pid))
             user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(fg_pid))
             return bool(hwnd_pid.value) and hwnd_pid.value == fg_pid.value
-        except Exception:
+        except Exception as exc:
+            self.logger.debug(f"      [FOCUS] foreground check failed: {exc}")
             return False
 
     def _get_terminal_focus_point(self) -> tuple[int, int]:
@@ -533,7 +544,8 @@ class SmartpointAutomation:
         rect = None
         try:
             rect = self._get_terminal_rect()
-        except Exception:
+        except Exception as exc:
+            self.logger.debug(f"      [FOCUS] terminal rect unavailable: {exc}")
             rect = None
 
         if rect is None and self.window:
@@ -2100,7 +2112,8 @@ class SmartpointAutomation:
 
         try:
             _rect_width = self._get_terminal_rect().width()
-        except Exception:
+        except Exception as exc:
+            self.logger.debug(f"      [BOOK] terminal rect unavailable: {exc}")
             _rect_width = 0
         if (
             _rect_width > 0
@@ -2216,10 +2229,7 @@ class SmartpointAutomation:
                 init_deadline = time.time() + 5.0
                 init_seen = len(_mon_clicks)
                 while time.time() < init_deadline:
-                    try:
-                        self._raise_if_stopped()
-                    except Exception:
-                        break
+                    self._raise_if_stopped()
                     self._sleep(0.05)
                     if len(_mon_clicks) > init_seen:
                         _, ux, uy = _mon_clicks[-1]
@@ -2864,7 +2874,8 @@ class SmartpointAutomation:
         try:
             _rect_for_sanity = self._get_terminal_rect()
             _rect_width = _rect_for_sanity.width()
-        except Exception:
+        except Exception as exc:
+            self.logger.debug(f"      [D-CLICK] terminal rect unavailable: {exc}")
             _rect_width = 0
         if (
             _rect_width > 0
@@ -2987,10 +2998,7 @@ class SmartpointAutomation:
                 init_deadline = time.time() + 5.0
                 init_seen = len(_mon_clicks)
                 while time.time() < init_deadline:
-                    try:
-                        self._raise_if_stopped()
-                    except Exception:
-                        break
+                    self._raise_if_stopped()
                     self._sleep(0.05)
                     if len(_mon_clicks) > init_seen:
                         _, ux, uy = _mon_clicks[-1]
@@ -3155,7 +3163,8 @@ class SmartpointAutomation:
                 _base_y_in_rect = (
                     _rect_for_clear.top <= base_y <= _rect_for_clear.bottom
                 )
-            except Exception:
+            except Exception as exc:
+                self.logger.debug(f"      [D-CLICK] terminal rect unavailable: {exc}")
                 _base_y_in_rect = True  # assume on-screen if rect unreadable
 
             if (
@@ -3187,10 +3196,7 @@ class SmartpointAutomation:
             deadline = time.time() + 15.0
             seen_clicks = len(_mon_clicks)
             while time.time() < deadline:
-                try:
-                    self._raise_if_stopped()
-                except Exception:
-                    break
+                self._raise_if_stopped()
                 self._sleep(0.05)
                 if len(_mon_clicks) > seen_clicks:
                     _, ux, uy = _mon_clicks[-1]
