@@ -283,6 +283,23 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Weakness-analysis cleanup (2026-10-06):**
+  - **CI was red on every push** (black step). Repo black-formatted once; `.flake8` and
+    `pyproject.toml` exclude build/dist/tmp dirs; CI actions bumped, fail-fast off,
+    coverage floor 53% (ratchet up). `keyring` added to `requirements.txt`.
+  - **FTAX parser:** 9 of 33 real captures with a TAX RATE block parsed to zero rates.
+    Now handles amount-first (`1 MYR`, `45AED`), trailing percent (`ECONOMY  5 PERCENT`),
+    chained multi-line `...AND` conditions, and no longer dedupes identical rate lines
+    across airports. Tests in `tests/test_tax_parser.py` are built from real captures.
+  - **Tax report:** taxes that parsed to no rates were silently missing from the
+    summary (misindented placeholder row). Fixed; report modules now tested.
+  - **Terminal driver:** silent `except: pass` handlers now log (debug, or warning
+    when every clipboard backend fails).
+  - **main.py split:** pure helpers moved to `route_filters.py`, `tax_airports.py`,
+    `fs_screens.py`, `db_url.py`. `main()` itself (~1950 lines) is not yet decomposed:
+    that needs live Smartpoint runs to verify each mode.
+  - Coverage 49% -> 54%.
+
 - **Server-side Google OAuth code exchange (2026-04-26):**
   - **Why:** Shipping `agent_config.json` with `google_oauth_client_secret` in the zip
     exposes the secret to anyone who downloads it. Even though Google marks Desktop
