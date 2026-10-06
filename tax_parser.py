@@ -19,8 +19,11 @@ logger = logging.getLogger("travelport.tax_parser")
 
 # Pre-compiled regex patterns
 _RE_FTAX_LIST = re.compile(r"(.+?)>FTAX-[A-Z]{2}/([A-Z0-9]{2,3})")
-_RE_AMOUNT_CHECK = re.compile(r"(?:\s|^)[A-Z]{3}\s+\d+\.?\d*\s*$")
 _RE_AMOUNT = re.compile(r"(?:\s|^)([A-Z]{3})\s*(\d+(?:\.\d+)?)\s*$")
+# Amount-first variant seen on some countries: "1 MYR", "4.00 USD", "45AED"
+# Requires a column gap (2+ spaces) or line start before the number so prose such
+# as "UNDER 12 YRS" or "WITHIN 24 HRS" is not read as an amount.
+_RE_AMOUNT_FIRST = re.compile(r"(?:\s{2,}|^)(\d+(?:\.\d+)?)\s?([A-Z]{3})\s*$")
 _RE_LEADING_DASH = re.compile(r"^[-–]\s*")
 _RE_AIRPORT_CODE = re.compile(r"^[A-Z]{3}\s*[-–]\s+[A-Z]")
 _RE_HAS_AMOUNT = re.compile(r"(?:\s|^)[A-Z]{3}\s*\d+\.\d+\s*$")
@@ -31,6 +34,13 @@ _RE_PERCENT = re.compile(
     r"^(\d+(?:\.\d+)?)\s+PERCENT\s+(?:ON|OF)\s+(.+?)\s*\.?\s*$",
     re.IGNORECASE,
 )
+# Percent at end of line: "ECONOMY   5 PERCENT", "TVL ON/BEFORE 29FEB24  6 PERCENT",
+#                         "- 5 PERCENT"
+_RE_PERCENT_TRAILING = re.compile(
+    # Same column-gap rule as _RE_AMOUNT_FIRST: rejects "SEE NOTE 5 PERCENT"
+    r"^(?:(.*?\S)\s{2,}|-?\s*)(\d+(?:\.\d+)?)\s+PERCENT\s*\.?$",
+    re.IGNORECASE,
+)
 _RE_BASIS_CODE_TRAILING = re.compile(r"\s+-+\s*([A-Z][A-Z0-9]?)\s*$")
 _RE_BASIS_CODE_EMBEDDED = re.compile(r"-([A-Z][A-Z0-9]?)-")
 # Standalone condition line that precedes percent rates (no currency+amount on same line)
@@ -38,6 +48,18 @@ _RE_DATE_COND = re.compile(
     r"\b(?:TKT(?:/TVL)?|TVL)\b.+\b(?:ON/BEFORE|ON/AFTER)\b",
     re.IGNORECASE,
 )
+
+
+def _match_amount(line: str) -> Optional[tuple[str, float, int]]:
+    """Return (currency, amount, start_index) for a trailing amount in either
+    "SGD 46.40" or "4.00 USD" order, or None."""
+    m = _RE_AMOUNT.search(line)
+    if m:
+        return m.group(1), float(m.group(2)), m.start()
+    m = _RE_AMOUNT_FIRST.search(line)
+    if m:
+        return m.group(2), float(m.group(1)), m.start()
+    return None
 
 
 def parse_ftax_list(raw_text: str) -> list[dict]:
@@ -125,10 +147,20 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
         # Deduplicate: skip lines we've already seen, unless they're rate lines.
         # Both fixed-amount lines AND percent-rate lines can repeat legitimately
         # (e.g. "15 PERCENT ON P7..." appears in both TAX RATE and EXEMPTIONS).
-        amount_match_check = _RE_AMOUNT_CHECK.search(stripped)
-        pct_match_check = _RE_PERCENT.match(stripped)
+        amount_match_check = _match_amount(stripped)
+        pct_match_check = _RE_PERCENT.match(stripped) or _RE_PERCENT_TRAILING.match(
+            stripped
+        )
         line_key = stripped.rstrip()
-        if not amount_match_check and not pct_match_check and line_key in seen_lines:
+        # Lines after "...AND" finish a multi-line condition and can legitimately
+        # repeat across airports, so they are never deduplicated.
+        continues_condition = bool(all_lines) and all_lines[-1].upper().endswith("AND")
+        if (
+            not amount_match_check
+            and not pct_match_check
+            and not continues_condition
+            and line_key in seen_lines
+        ):
             continue
         seen_lines.add(line_key)
         all_lines.append(stripped)
@@ -138,15 +170,12 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
     current_category = ""
     current_subcategory = ""
     current_rates = []
-    pending_condition = ""       # "... AND" multi-line continuation
-    last_condition_prefix = ""   # standalone date-condition line preceding percent rates
+    pending_condition = ""  # "... AND" multi-line continuation
+    last_condition_prefix = ""  # standalone date-condition line preceding percent rates
 
     in_exemptions = False
-    current_exempt_pax = ""      # "INFANTS", "CHILDREN", "ADULTS"
+    current_exempt_pax = ""  # "INFANTS", "CHILDREN", "ADULTS"
     current_exempt_rates: list = []
-
-    # Amount pattern: e.g. "SGD 46.40", "CNY 172", "AED 75"
-    amount_pattern = _RE_AMOUNT
 
     # PAX type keywords that introduce an exemption sub-section
     _PAX_KEYWORDS = ("INFANTS", "CHILDREN", "ADULTS")
@@ -216,7 +245,10 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
                 if pax in upper:
                     if current_exempt_rates:
                         result["exemptions"].append(
-                            {"pax_type": current_exempt_pax, "rates": current_exempt_rates}
+                            {
+                                "pax_type": current_exempt_pax,
+                                "rates": current_exempt_rates,
+                            }
                         )
                     current_exempt_pax = pax
                     current_exempt_rates = []
@@ -235,7 +267,7 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
                 _append_percent_rate(current_exempt_rates, pct, basis_code, condition)
             elif upper.endswith("AND"):
                 pending_condition = _RE_LEADING_DASH.sub("", stripped).strip()
-            elif _RE_DATE_COND.search(stripped) and not amount_pattern.search(stripped):
+            elif _RE_DATE_COND.search(stripped) and not _match_amount(stripped):
                 last_condition_prefix = _RE_LEADING_DASH.sub("", stripped).strip()
             continue
 
@@ -247,13 +279,13 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
             "TAXES APPLY",
             "TAX INFORMATION",
         ]
-        if any(h in upper for h in header_patterns) and not amount_pattern.search(stripped):
+        if any(h in upper for h in header_patterns) and not _match_amount(stripped):
             in_tax_rate = True
             seen_tax_rate_block = True
             continue
 
         # Fallback: auto-trigger on a valid amount line when header was absent
-        if not in_tax_rate and amount_pattern.search(stripped):
+        if not in_tax_rate and _match_amount(stripped):
             if not any(upper.startswith(p) for p in ["FTAX", "MD", "END", "FARE"]):
                 in_tax_rate = True
                 seen_tax_rate_block = True
@@ -290,12 +322,12 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
         ):
             continue
 
-        amount_match = amount_pattern.search(stripped)
+        amount_match = _match_amount(stripped)
+        trailing_pct_m = _RE_PERCENT_TRAILING.match(stripped)
 
         if amount_match:
-            currency = amount_match.group(1)
-            amount = float(amount_match.group(2))
-            condition_text = stripped[: amount_match.start()].strip()
+            currency, amount, amount_start = amount_match
+            condition_text = stripped[:amount_start].strip()
             if pending_condition:
                 condition_text = f"{pending_condition} {condition_text}"
                 pending_condition = ""
@@ -324,9 +356,26 @@ def parse_ftax_detail(raw_text: str, tax_code: str = "", tax_name: str = "") -> 
             _append_percent_rate(current_rates, pct, basis_code, condition)
             # Keep last_condition_prefix — next percent line in same block reuses it
 
+        elif trailing_pct_m:
+            # Percent at end of line: "ECONOMY   5 PERCENT", "- 5 PERCENT"
+            pct = float(trailing_pct_m.group(2))
+            condition = _RE_LEADING_DASH.sub("", trailing_pct_m.group(1) or "").strip()
+            condition = condition or last_condition_prefix
+            if pending_condition:
+                condition = f"{pending_condition} {condition}".strip()
+                pending_condition = ""
+            _append_percent_rate(current_rates, pct, None, condition)
+
         elif upper.endswith("AND"):
             text = _RE_LEADING_DASH.sub("", stripped).strip()
-            pending_condition = text
+            # Chain "A AND / B AND / C" instead of overwriting the first part
+            pending_condition = (
+                f"{pending_condition} {text}" if pending_condition else text
+            )
+
+        elif _RE_DATE_COND.search(stripped) and pending_condition:
+            # Second half of "-TKT ON/AFTER 02MAY25 AND / TVL ON/AFTER 01JUL25"
+            pending_condition = f"{pending_condition} {stripped}"
 
         elif _RE_DATE_COND.search(stripped) and not amount_match:
             # Standalone date-condition line preceding percent rates
