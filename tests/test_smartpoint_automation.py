@@ -102,16 +102,25 @@ def test_click_more_prompt_link_uses_alt_m_shortcut_first(monkeypatch):
     moves = []
 
     class _Rect:
-        left = 100; top = 100; right = 500; bottom = 300
-        def width(self): return self.right - self.left
-        def height(self): return self.bottom - self.top
+        left = 100
+        top = 100
+        right = 500
+        bottom = 300
+
+        def width(self):
+            return self.right - self.left
+
+        def height(self):
+            return self.bottom - self.top
 
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
     monkeypatch.setattr(automation, "_get_terminal_rect", lambda: _Rect())
     monkeypatch.setattr(automation, "_copy_terminal_text", lambda: next(copy_calls))
     monkeypatch.setattr(automation, "_has_dropdown_activated", lambda t: False)
     monkeypatch.setattr(spa.pyautogui, "hotkey", lambda *a: hotkeys.append(a))
-    monkeypatch.setattr(spa.pyautogui, "moveTo", lambda x, y, duration=None: moves.append((x, y)))
+    monkeypatch.setattr(
+        spa.pyautogui, "moveTo", lambda x, y, duration=None: moves.append((x, y))
+    )
     monkeypatch.setattr(spa.pyautogui, "click", lambda *a, **kw: None)
     monkeypatch.setattr(spa.pyautogui, "press", lambda *a, **kw: None)
     monkeypatch.setattr(spa.time, "sleep", lambda *a, **kw: None)
@@ -210,7 +219,9 @@ def test_run_command_skips_extra_settle_when_initial_text_already_has_end(monkey
 
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
     monkeypatch.setattr(automation, "_copy_terminal_text", lambda: "BEFORE")
-    monkeypatch.setattr(automation, "_wait_for_response", lambda *args, **kwargs: "PAGE 1\nEND")
+    monkeypatch.setattr(
+        automation, "_wait_for_response", lambda *args, **kwargs: "PAGE 1\nEND"
+    )
     monkeypatch.setattr(
         automation,
         "_wait_for_stable_screen",
@@ -237,9 +248,7 @@ def test_run_command_skips_extra_settle_when_initial_text_already_has_end(monkey
 def test_run_command_keeps_base_page_when_fu_expansion_is_unchanged(monkeypatch):
     automation = SmartpointAutomation()
     sent_commands = []
-    base_page = (
-        "MCTDAC\nUNSALEABLE FARES MAY EXIST\n  1  BG  360.00R  KBD6M    K\nEND"
-    )
+    base_page = "MCTDAC\nUNSALEABLE FARES MAY EXIST\n  1  BG  360.00R  KBD6M    K\nEND"
     responses = iter([base_page, base_page])
 
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
@@ -423,7 +432,9 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
         automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237)
     )
     monkeypatch.setattr(
-        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+        automation,
+        "_get_terminal_rect",
+        lambda: type("Rect", (), {"width": lambda self: 716})(),
     )
     monkeypatch.setattr(
         automation, "_wait_for_response", lambda *args, **kwargs: "INTERIM"
@@ -481,7 +492,9 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
     monkeypatch.setattr(automation, "focus", lambda force=False: True)
     monkeypatch.setattr(automation, "_text_line_to_pixel", fake_text_line_to_pixel)
     monkeypatch.setattr(
-        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+        automation,
+        "_get_terminal_rect",
+        lambda: type("Rect", (), {"width": lambda self: 716})(),
     )
     monkeypatch.setattr(
         automation, "_wait_for_response", lambda *args, **kwargs: "INTERIM"
@@ -531,7 +544,9 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
         automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237)
     )
     monkeypatch.setattr(
-        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+        automation,
+        "_get_terminal_rect",
+        lambda: type("Rect", (), {"width": lambda self: 716})(),
     )
     monkeypatch.setattr(
         automation, "_wait_for_response", lambda *args, **kwargs: next(response_texts)
@@ -562,7 +577,9 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
     assert len(move_calls) >= 2
 
 
-def test_click_d_button_keeps_trying_when_screen_returns_to_pricing_options(monkeypatch):
+def test_click_d_button_keeps_trying_when_screen_returns_to_pricing_options(
+    monkeypatch,
+):
     automation = SmartpointAutomation()
     sent_keys = []
     move_calls = []
@@ -597,7 +614,9 @@ FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564
         automation, "_text_line_to_pixel", lambda *args, **kwargs: (933, 237)
     )
     monkeypatch.setattr(
-        automation, "_get_terminal_rect", lambda: type("Rect", (), {"width": lambda self: 716})()
+        automation,
+        "_get_terminal_rect",
+        lambda: type("Rect", (), {"width": lambda self: 716})(),
     )
     monkeypatch.setattr(
         automation, "_wait_for_response", lambda *args, **kwargs: next(response_texts)
@@ -763,7 +782,9 @@ def test_is_window_foreground_accepts_related_foreground_handle(monkeypatch):
             return 1
 
     automation.window = _Window()
-    monkeypatch.setattr(spa.ctypes, "windll", type("Windll", (), {"user32": _User32()})())
+    monkeypatch.setattr(
+        spa.ctypes, "windll", type("Windll", (), {"user32": _User32()})()
+    )
 
     assert automation._is_window_foreground() is True
 
@@ -1123,8 +1144,7 @@ def test_click_d_button_prefers_char_x_anchored_offset_when_present(monkeypatch)
         ]
     )
     settled_tax_text = (
-        "FS-1 ADT\n"
-        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
+        "FS-1 ADT\n" "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
     )
 
     # Simulate a different terminal width on this run vs when the offset
@@ -1207,8 +1227,7 @@ def test_click_d_button_falls_back_to_base_x_offset_when_char_x_anchored_missing
         ]
     )
     settled_tax_text = (
-        "FS-1 ADT\n"
-        "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
+        "FS-1 ADT\n" "FARE USD955.00 EQU BDT117408 YQ0 TAXES BDT10156 TOT BDT127564\n"
     )
 
     pixel_returns = iter([(1752, 540), (1801, 540)])
@@ -1252,9 +1271,10 @@ def test_click_d_button_falls_back_to_base_x_offset_when_char_x_anchored_missing
     automation.click_d_button(0, fs_text)
 
     # Falls back to base_x + saved_x = 1752 + 49 = 1801.
-    assert move_calls[0] == (1801, 540), (
-        f"Legacy fallback must use base_x + saved_x.  Got: {move_calls[0]!r}"
-    )
+    assert move_calls[0] == (
+        1801,
+        540,
+    ), f"Legacy fallback must use base_x + saved_x.  Got: {move_calls[0]!r}"
 
 
 def test_click_d_button_clears_stale_saved_offset_after_fanout_exhausts(monkeypatch):
@@ -1311,9 +1331,9 @@ def test_click_d_button_clears_stale_saved_offset_after_fanout_exhausts(monkeypa
 
     assert result == ""
     assert saved_calls, "Expected save_calibration to be called for invalidation"
-    assert "d_click_offset" not in saved_calls[-1], (
-        f"Saved offset must be cleared after fan-out exhausts, got: {saved_calls[-1]!r}"
-    )
+    assert (
+        "d_click_offset" not in saved_calls[-1]
+    ), f"Saved offset must be cleared after fan-out exhausts, got: {saved_calls[-1]!r}"
     assert "d_click_offset" not in automation._cal
 
 
@@ -1364,9 +1384,9 @@ def test_click_d_button_does_not_clear_offset_when_none_was_saved(monkeypatch):
 
     automation.click_d_button(0, fs_text)
 
-    assert saved_calls == [], (
-        "save_calibration must NOT be called when there was no saved offset"
-    )
+    assert (
+        saved_calls == []
+    ), "save_calibration must NOT be called when there was no saved offset"
 
 
 # ── v1.5.17: manual-click region validation + saved-offset sanity + FS-N ──────
@@ -1507,9 +1527,9 @@ def test_click_d_button_clears_bogus_saved_offset_on_load(monkeypatch):
 
     # The bogus saved offset must have been cleared on entry.
     assert saved_calls, "Expected save_calibration to be called for the clear"
-    assert "d_click_offset" not in saved_calls[0], (
-        f"Saved offset must be cleared on load when out of sane bounds: {saved_calls[0]!r}"
-    )
+    assert (
+        "d_click_offset" not in saved_calls[0]
+    ), f"Saved offset must be cleared on load when out of sane bounds: {saved_calls[0]!r}"
     assert "d_click_offset" not in automation._cal
 
 
@@ -1560,6 +1580,6 @@ def test_click_d_button_ignores_stray_manual_click_during_initial_window(
     automation.click_d_button(0, fs_text)
 
     # Even if a stray click had been recorded, no learn should happen.
-    assert "d_click_offset" not in automation._cal, (
-        "A stray click outside the D-row region must not be learned"
-    )
+    assert (
+        "d_click_offset" not in automation._cal
+    ), "A stray click outside the D-row region must not be learned"

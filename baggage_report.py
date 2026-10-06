@@ -4,6 +4,7 @@ baggage_report.py — Standalone Excel report for baggage allowance data.
 Layout mirrors the YQ/YR charges report: grouped by route, one table per
 destination, airlines as rows with Checked and Carry-on columns.
 """
+
 from __future__ import annotations
 
 import json
@@ -70,7 +71,9 @@ def generate_baggage_report(
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
     row += 1
     _c(
-        ws, row, 1,
+        ws,
+        row,
+        1,
         f"Generated: {datetime.now().strftime('%d-%b-%Y %H:%M')}",
         Font(name="Calibri", italic=True, size=10),
     )
@@ -85,7 +88,7 @@ def generate_baggage_report(
         if len(parts) != 2 or "-" not in parts[1]:
             continue
         airline = parts[0]
-        route_str = parts[1]           # e.g. "DAC-DXB"
+        route_str = parts[1]  # e.g. "DAC-DXB"
         src, dst = route_str.split("-", 1)
         is_domestic_src = src in domestic_airports
         is_domestic_dst = dst in domestic_airports
@@ -106,15 +109,21 @@ def generate_baggage_report(
 
         # Section header
         _c(
-            ws, row, 1,
+            ws,
+            row,
+            1,
             f"{arrow} {intl_name} ({intl_code})",
-            _SECTION_FONT, _SECTION_FILL, _LEFT,
+            _SECTION_FONT,
+            _SECTION_FILL,
+            _LEFT,
         )
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
         row += 1
 
         # Column headers
-        for col, label in enumerate(["Airline", "Checked", "Carry-on", "Route"], start=1):
+        for col, label in enumerate(
+            ["Airline", "Checked", "Carry-on", "Route"], start=1
+        ):
             _c(ws, row, col, label, _HEADER_FONT, _HEADER_FILL, _CENTER)
         row += 1
 
@@ -127,7 +136,15 @@ def generate_baggage_report(
             carry_on = bag.get("carry_on") or "—"
             route_label = f"{src}-{dst}"
 
-            _c(ws, row, 1, al_name, _BOLD if not fill else Font(name="Calibri", bold=True), fill, _LEFT)
+            _c(
+                ws,
+                row,
+                1,
+                al_name,
+                _BOLD if not fill else Font(name="Calibri", bold=True),
+                fill,
+                _LEFT,
+            )
             _c(ws, row, 2, checked, _NORMAL, fill, _CENTER)
             _c(ws, row, 3, carry_on, _NORMAL, fill, _CENTER)
             _c(ws, row, 4, route_label, _NORMAL, fill, _CENTER)

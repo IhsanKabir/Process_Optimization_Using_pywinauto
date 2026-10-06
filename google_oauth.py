@@ -8,6 +8,7 @@ server-stored client secret.  The desktop never holds the client secret.
 
 No third-party libraries required — stdlib only.
 """
+
 from __future__ import annotations
 
 import base64
@@ -68,12 +69,14 @@ def _exchange_via_server(
     Google, then returns {user, session_token, session}.
     """
     endpoint = f"{api_base_url.rstrip('/')}/api/v1/user-auth/google-code-exchange"
-    body = json.dumps({
-        "code": code,
-        "code_verifier": code_verifier,
-        "redirect_uri": redirect_uri,
-        "client_id": client_id,
-    }).encode("utf-8")
+    body = json.dumps(
+        {
+            "code": code,
+            "code_verifier": code_verifier,
+            "redirect_uri": redirect_uri,
+            "client_id": client_id,
+        }
+    ).encode("utf-8")
     req = urllib.request.Request(
         endpoint,
         data=body,

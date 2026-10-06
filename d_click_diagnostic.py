@@ -25,7 +25,6 @@ No dependencies beyond pyautogui (already a TravelportAuto requirement).
 import time
 import pyautogui
 
-
 COMPUTED_FROM_LATEST_LOG = (1752, 248)  # Update if your log differs
 
 
@@ -65,7 +64,9 @@ def main() -> None:
         print("Cursor is OUTSIDE the fan-out range. This is the bug.")
         print()
         print(f"The fix is to shift TravelportAuto's computed position by")
-        print(f"({actual_x - expected_x:+d}, {actual_y - expected_y:+d}) pixels on this machine.")
+        print(
+            f"({actual_x - expected_x:+d}, {actual_y - expected_y:+d}) pixels on this machine."
+        )
 
 
 if __name__ == "__main__":

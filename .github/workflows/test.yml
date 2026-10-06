@@ -10,14 +10,15 @@ jobs:
   test:
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -32,7 +33,7 @@ jobs:
         # Stop the build if there are Python syntax errors or undefined names
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # Exit-zero treats all errors as warnings
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        flake8 . --count --exit-zero --statistics  # limits live in .flake8
 
     - name: Check code formatting with black
       run: |
@@ -50,10 +51,10 @@ jobs:
 
     - name: Run tests with pytest
       run: |
-        pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
+        pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=48  # ratchet up as coverage improves
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
-        file: ./coverage.xml
+        files: ./coverage.xml
         fail_ci_if_error: false

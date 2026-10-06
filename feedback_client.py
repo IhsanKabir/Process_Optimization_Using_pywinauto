@@ -80,6 +80,7 @@ def build_feedback_payload(
     merged_context = dict(context or {})
     try:
         from usage_tracker import get_today_context
+
         merged_context.update(get_today_context())
     except Exception:
         pass
@@ -103,12 +104,14 @@ def _resolve_session_token() -> str | None:
     """Return the user session token from keyring → env var, or None."""
     try:
         from auth_manager import get_token
+
         token = get_token()
         if token:
             return token
     except Exception:
         pass
     import os
+
     return os.environ.get("TRAVELPORT_USER_TOKEN") or None
 
 

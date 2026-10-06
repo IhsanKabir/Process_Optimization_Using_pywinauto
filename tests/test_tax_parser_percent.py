@@ -1,8 +1,10 @@
 """Tests for percent-based rate parsing and exemption parsing in tax_parser."""
+
 import pytest
 from tax_parser import parse_ftax_detail
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _parse(raw: str, code: str = "E5") -> dict:
     return parse_ftax_detail(raw, code, "VALUE ADDED TAX ON EMBARKATION FEES")

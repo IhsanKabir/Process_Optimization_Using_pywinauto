@@ -938,7 +938,9 @@ def _precompute_rbd_lookups(entries, changes):
             for fare_key in ("ow_fare", "rt_fare"):
                 fare = rbd_info.get(fare_key)
                 if fare is not None:
-                    best_fare_map[rbd] = max(best_fare_map.get(rbd, float("-inf")), fare)
+                    best_fare_map[rbd] = max(
+                        best_fare_map.get(rbd, float("-inf")), fare
+                    )
 
             # Check sold_out changes
             change_info = changes.get(route_key, {}).get(rbd) if changes else None
@@ -946,7 +948,9 @@ def _precompute_rbd_lookups(entries, changes):
                 for fare_key in ("old_ow_fare", "old_rt_fare"):
                     fare = change_info.get(fare_key)
                     if fare is not None:
-                        best_fare_map[rbd] = max(best_fare_map.get(rbd, float("-inf")), fare)
+                        best_fare_map[rbd] = max(
+                            best_fare_map.get(rbd, float("-inf")), fare
+                        )
 
     return unsaleable_set, best_fare_map
 
@@ -1232,11 +1236,7 @@ def _write_section(
     for airline, domestic, _rk, _ri in entries:
         al_name = airline_names.get(airline, airline)
         dom_name = city_names.get(domestic, domestic)
-        label = (
-            f"{al_name} ({dom_name})"
-            if multi_domestic
-            else al_name
-        )
+        label = f"{al_name} ({dom_name})" if multi_domestic else al_name
 
         _styled_cell(
             ws,
@@ -1751,13 +1751,17 @@ def _write_individual_tables_sheet(
                 ]
             )
 
-            baggage = route_info.get("baggage", {}) if isinstance(route_info, dict) else {}
+            baggage = (
+                route_info.get("baggage", {}) if isinstance(route_info, dict) else {}
+            )
             baggage_parts = []
             if baggage.get("checked"):
                 baggage_parts.append(f"Checked: {baggage['checked']}")
             if baggage.get("carry_on"):
                 baggage_parts.append(f"Carry-on: {baggage['carry_on']}")
-            baggage_str = ("  |  Baggage: " + "  ".join(baggage_parts)) if baggage_parts else ""
+            baggage_str = (
+                ("  |  Baggage: " + "  ".join(baggage_parts)) if baggage_parts else ""
+            )
 
             # Use plain text instead of CellRichText to avoid Excel corruption
             summary_text = f"Charges (BDT): {yq_str} | Taxes (BDT): {tax_breakdown_str} | Total Tax (BDT): {total_tax_val}{baggage_str}"
@@ -2363,8 +2367,16 @@ def _write_yq_charges_sheet(
             # IATA), so multiply by ROE (local-per-NUC) to get base.  ROE
             # defaults to 1.0 for USD-base fares, in which case
             # q_in_base == q_in_usd, the raw value.
-            yq = round((fs_taxes.get("yq_charge", 0) or 0) / exch_rate, 2) if exch_rate else (fs_taxes.get("yq_charge", 0) or 0)
-            yr = round((fs_taxes.get("yr_charge", 0) or 0) / exch_rate, 2) if exch_rate else (fs_taxes.get("yr_charge", 0) or 0)
+            yq = (
+                round((fs_taxes.get("yq_charge", 0) or 0) / exch_rate, 2)
+                if exch_rate
+                else (fs_taxes.get("yq_charge", 0) or 0)
+            )
+            yr = (
+                round((fs_taxes.get("yr_charge", 0) or 0) / exch_rate, 2)
+                if exch_rate
+                else (fs_taxes.get("yr_charge", 0) or 0)
+            )
             q = round((fs_taxes.get("q_charge", 0) or 0) * roe, 2)
 
             for label, val, fill in [

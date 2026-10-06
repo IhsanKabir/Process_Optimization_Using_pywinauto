@@ -18,7 +18,9 @@ class _FakeKeyring:
 
     def __init__(self):
         self._store: dict[tuple, str] = {}
-        self.errors = types.SimpleNamespace(PasswordDeleteError=_FakePasswordDeleteError)
+        self.errors = types.SimpleNamespace(
+            PasswordDeleteError=_FakePasswordDeleteError
+        )
 
     def get_password(self, service, username):
         return self._store.get((service, username))
@@ -105,7 +107,9 @@ def test_save_token_raises_keyring_unavailable_on_failure():
 
     broken = types.SimpleNamespace(
         get_password=lambda *a: None,
-        set_password=lambda *a: (_ for _ in ()).throw(RuntimeError("credential store locked")),
+        set_password=lambda *a: (_ for _ in ()).throw(
+            RuntimeError("credential store locked")
+        ),
         delete_password=lambda *a: None,
         errors=types.SimpleNamespace(PasswordDeleteError=Exception),
     )

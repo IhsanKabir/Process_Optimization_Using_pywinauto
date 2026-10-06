@@ -276,8 +276,16 @@ class TestDetectFsTaxChanges:
         assert detect_fs_tax_changes(curr, prev) == {}
 
     def test_detects_multiple_field_changes(self):
-        prev = {"BG_DAC-MCT": self._entry({"yq_charge": 50, "total_taxes": 80, "yr_charge": 0})}
-        curr = {"BG_DAC-MCT": self._entry({"yq_charge": 55, "total_taxes": 90, "yr_charge": 5})}
+        prev = {
+            "BG_DAC-MCT": self._entry(
+                {"yq_charge": 50, "total_taxes": 80, "yr_charge": 0}
+            )
+        }
+        curr = {
+            "BG_DAC-MCT": self._entry(
+                {"yq_charge": 55, "total_taxes": 90, "yr_charge": 5}
+            )
+        }
         changes = detect_fs_tax_changes(curr, prev)
         assert "BG_DAC-MCT" in changes
         assert len(changes["BG_DAC-MCT"]) == 3

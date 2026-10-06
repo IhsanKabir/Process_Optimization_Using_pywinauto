@@ -15,6 +15,7 @@ import pytest
 def _make_temp_dir() -> Path:
     """Create a unique temp dir under cwd to avoid Windows %TEMP% permission issues."""
     import uuid
+
     d = Path.cwd() / f"tmp_test_usage_{uuid.uuid4().hex[:8]}"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -45,6 +46,7 @@ def _load_raw(appdata_root: str) -> dict:
 
 def test_increment_creates_file(monkeypatch):
     from usage_tracker import increment
+
     appdata = os.environ["APPDATA"]
     increment("fare_routes")
     data = _load_raw(appdata)
@@ -54,6 +56,7 @@ def test_increment_creates_file(monkeypatch):
 
 def test_increment_accumulates(monkeypatch):
     from usage_tracker import increment
+
     appdata = os.environ["APPDATA"]
     increment("fare_routes", 3)
     increment("fare_routes", 2)
@@ -64,6 +67,7 @@ def test_increment_accumulates(monkeypatch):
 
 def test_all_metrics_tracked_independently(monkeypatch):
     from usage_tracker import increment
+
     appdata = os.environ["APPDATA"]
     increment("fare_routes", 5)
     increment("ftax_airports", 3)
@@ -79,6 +83,7 @@ def test_all_metrics_tracked_independently(monkeypatch):
 
 def test_invalid_metric_ignored(monkeypatch):
     from usage_tracker import increment
+
     appdata = os.environ["APPDATA"]
     increment("not_a_real_metric")
     # File may not even exist
@@ -88,6 +93,7 @@ def test_invalid_metric_ignored(monkeypatch):
 
 def test_get_today_context_returns_zeros_when_empty():
     from usage_tracker import get_today_context
+
     ctx = get_today_context()
     assert ctx["usage_fare_routes_today"] == 0
     assert ctx["usage_ftax_airports_today"] == 0
@@ -98,6 +104,7 @@ def test_get_today_context_returns_zeros_when_empty():
 
 def test_get_today_context_reflects_increments():
     from usage_tracker import get_today_context, increment
+
     increment("fare_routes", 7)
     increment("penalty_runs", 2)
     ctx = get_today_context()
@@ -117,8 +124,18 @@ def test_days_active_counts_distinct_days(monkeypatch):
     two_days_ago = (date.today() - timedelta(days=2)).isoformat()
 
     seed = {
-        yesterday: {"fare_routes": 4, "ftax_airports": 0, "penalty_runs": 0, "currency_runs": 0},
-        two_days_ago: {"fare_routes": 0, "ftax_airports": 2, "penalty_runs": 0, "currency_runs": 0},
+        yesterday: {
+            "fare_routes": 4,
+            "ftax_airports": 0,
+            "penalty_runs": 0,
+            "currency_runs": 0,
+        },
+        two_days_ago: {
+            "fare_routes": 0,
+            "ftax_airports": 2,
+            "penalty_runs": 0,
+            "currency_runs": 0,
+        },
     }
     path = ut._stats_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,14 +154,25 @@ def test_prune_drops_old_entries(monkeypatch):
     recent_day = (date.today() - timedelta(days=5)).isoformat()
 
     seed = {
-        old_day: {"fare_routes": 10, "ftax_airports": 0, "penalty_runs": 0, "currency_runs": 0},
-        recent_day: {"fare_routes": 3, "ftax_airports": 0, "penalty_runs": 0, "currency_runs": 0},
+        old_day: {
+            "fare_routes": 10,
+            "ftax_airports": 0,
+            "penalty_runs": 0,
+            "currency_runs": 0,
+        },
+        recent_day: {
+            "fare_routes": 3,
+            "ftax_airports": 0,
+            "penalty_runs": 0,
+            "currency_runs": 0,
+        },
     }
     path = ut._stats_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(seed))
 
     from usage_tracker import increment
+
     increment("fare_routes")
 
     data = _load_raw(os.environ["APPDATA"])
@@ -154,11 +182,13 @@ def test_prune_drops_old_entries(monkeypatch):
 
 def test_malformed_json_does_not_crash():
     import usage_tracker as ut
+
     path = ut._stats_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{{not valid json")
 
     from usage_tracker import increment, get_today_context
+
     increment("fare_routes")  # should not raise
     ctx = get_today_context()
     assert ctx["usage_fare_routes_today"] == 1
@@ -167,11 +197,14 @@ def test_malformed_json_does_not_crash():
 def test_usage_injected_into_feedback_payload(monkeypatch):
     """get_today_context() values appear in the feedback context automatically."""
     from usage_tracker import increment
+
     increment("fare_routes", 3)
 
     import sys
+
     # Patch keyring so feedback_client loads cleanly
     import types
+
     fake_kr = types.ModuleType("keyring")
     fake_kr.get_password = lambda *a: None
     fake_kr.errors = types.SimpleNamespace(PasswordDeleteError=Exception)
@@ -185,7 +218,9 @@ def test_usage_injected_into_feedback_payload(monkeypatch):
         subject="Test subject",
         message="Test message body",
         app_version="v1.0.0",
-        config=AgentConfig(api_base_url="https://x.com", device_token="dt", device_id="d1"),
+        config=AgentConfig(
+            api_base_url="https://x.com", device_token="dt", device_id="d1"
+        ),
     )
     ctx = payload["context"]
     assert ctx["usage_fare_routes_today"] == 3

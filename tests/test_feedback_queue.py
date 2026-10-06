@@ -36,7 +36,7 @@ def test_enqueue_cap_drops_oldest(isolated_queue):
         fq.enqueue_feedback({"idx": i})
     entries = fq._load_queue()
     assert len(entries) == 50
-    assert entries[0]["idx"] == 5   # oldest 5 dropped
+    assert entries[0]["idx"] == 5  # oldest 5 dropped
     assert entries[-1]["idx"] == 54
 
 

@@ -4,6 +4,7 @@ Covers the precision contract requested by the user: the parser must preserve
 the exact rate emitted by the terminal (e.g. ``33.760812``) instead of rounding
 to a fixed number of decimals.
 """
+
 import pytest
 
 from fzs_parser import parse_fzs_output

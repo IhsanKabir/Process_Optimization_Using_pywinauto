@@ -4,6 +4,7 @@ The FS extractor now tries two 7-day windows before giving up on an airline:
 one starting ~1 month out and one starting ~3 months out. These tests pin
 that contract so a future refactor can't silently regress it.
 """
+
 import pytest
 
 import constants

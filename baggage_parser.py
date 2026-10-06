@@ -3,6 +3,7 @@ baggage_parser.py — Parse FQC baggage allowance from Smartpoint terminal outpu
 
 Handles: FQCBS/ET output containing BAGGAGE ALLOWANCE and CARRY ON ALLOWANCE blocks.
 """
+
 from __future__ import annotations
 
 import re

@@ -1,0 +1,14 @@
+[tool.black]
+line-length = 88
+extend-exclude = '''
+^/(
+    \.venv.*
+  | build.*
+  | dist.*
+  | tmp.*
+  | htmlcov
+  | data
+  | aviation_web_integration
+  | er\.py
+)
+'''

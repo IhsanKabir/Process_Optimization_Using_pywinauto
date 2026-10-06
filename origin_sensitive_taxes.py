@@ -11,6 +11,7 @@ This module compensates for that artifact by stripping origin-sensitive
 codes from the RT total when the outbound origin doesn't match the tax's
 required country.
 """
+
 from __future__ import annotations
 
 import logging
@@ -18,7 +19,9 @@ from functools import lru_cache
 
 try:
     import airportsdata
-except ImportError:  # pragma: no cover — packaged dependency, exercised in tests via fallback
+except (
+    ImportError
+):  # pragma: no cover — packaged dependency, exercised in tests via fallback
     airportsdata = None  # type: ignore[assignment]
 
 logger = logging.getLogger("travelport.origin_sensitive_taxes")

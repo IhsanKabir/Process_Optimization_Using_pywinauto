@@ -69,7 +69,9 @@ def _batch_insert(client, table: str, rows: list[dict]) -> int:
         batch = rows[i : i + _BQ_BATCH_SIZE]
         errors = client.insert_rows_json(table, batch)
         if errors:
-            logger.error("  [BQ] Insert errors (batch %d): %s", i // _BQ_BATCH_SIZE, errors[:3])
+            logger.error(
+                "  [BQ] Insert errors (batch %d): %s", i // _BQ_BATCH_SIZE, errors[:3]
+            )
             return -1
         total += len(batch)
     return total
@@ -300,6 +302,7 @@ def push_tax_snapshot(
 def _rbd_to_cabin(rbd: str) -> str:
     """Map RBD code to cabin class name."""
     from constants import RBD_CABIN
+
     return RBD_CABIN.get((rbd or "").upper().strip()[:1], "Economy")
 
 

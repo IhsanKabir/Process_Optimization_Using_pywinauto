@@ -37,9 +37,7 @@ _ERROR_MARKERS = (
 )
 
 
-def parse_fzs_output(
-    text: str, from_currency: str, to_currency: str
-) -> dict:
+def parse_fzs_output(text: str, from_currency: str, to_currency: str) -> dict:
     """
     Parse FZS command output to extract exchange rate.
 
@@ -87,5 +85,7 @@ def parse_fzs_output(
     logger.warning(
         f"  Could not parse FZS rate from output for {from_currency}->{to_currency}"
     )
-    logger.debug(f"  FZS raw output ({from_currency}->{to_currency}): {result['raw_text']!r}")
+    logger.debug(
+        f"  FZS raw output ({from_currency}->{to_currency}): {result['raw_text']!r}"
+    )
     return result
