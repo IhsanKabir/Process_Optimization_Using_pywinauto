@@ -90,7 +90,7 @@ Single pipeline: **drive terminal → scrape clipboard → parse → report**. E
 
 - `config.json` (gitignored) + `config_schema.json` (JSON Schema) loaded through `config_manager.py`. `APP_ENV=dev|prod` picks `config.{env}.json`.
 - `validators.py` — every user-facing string (airline, route, airport, limit) goes through a `validate_*` call before being used in commands. `validate_airport_code` is what the new global-airport-directory resolver relies on.
-- `credential_manager.py` — Smartpoint login via env vars (`SMARTPOINT_USERNAME`, `SMARTPOINT_PASSWORD`, `SMARTPOINT_PCC`) or `.env`. Never hardcoded.
+- `credential_manager.py` — Smartpoint login via env vars (`SMARTPOINT_USERNAME`, `SMARTPOINT_PASSWORD`, `SMARTPOINT_PCC`) or `.env`. Never hardcoded. Automatic sign-on is **opt-in** (`SMARTPOINT_AUTO_LOGIN=1`, see `main._auto_login_if_enabled`): credentials merely being present used to make every run type them over an already signed-in session. Note `load_dotenv()` walks up parent folders, so the repo's `.env` also applies to `dist\TravelportAuto\TravelportAuto.exe`.
 
 ### FS date schedule
 

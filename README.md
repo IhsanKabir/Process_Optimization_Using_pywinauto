@@ -153,9 +153,12 @@ cp config.dev.json.example config.json
 # Edit config.json with your settings
 ```
 
-4. (Optional) Set up credentials via environment variables:
+4. (Optional) Automatic terminal sign-on. By default the app uses whatever
+   Smartpoint session is already signed in and never types credentials. To have
+   it send `SON/Z` with stored credentials, opt in with `SMARTPOINT_AUTO_LOGIN=1`:
 ```powershell
 # Windows PowerShell
+$env:SMARTPOINT_AUTO_LOGIN="1"
 $env:SMARTPOINT_USERNAME="your_username"
 $env:SMARTPOINT_PASSWORD="your_password"
 $env:SMARTPOINT_PCC="your_pcc"  # Optional
@@ -168,6 +171,7 @@ pip install python-dotenv
 
 ```env
 # .env file
+SMARTPOINT_AUTO_LOGIN=1
 SMARTPOINT_USERNAME=your_username
 SMARTPOINT_PASSWORD=your_password
 SMARTPOINT_PCC=your_pcc
