@@ -9,5 +9,4 @@ extend-exclude =
     tmp*,
     htmlcov,
     data,
-    aviation_web_integration,
-    er.py
+    aviation_web_integration
