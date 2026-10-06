@@ -156,6 +156,11 @@ def _build_summary_sheet(ws, data, config):
 
                     row_idx += 1
 
+                if not section.get("rates"):
+                    row_idx = _append_empty_rate_row(
+                        ws, row_idx, [airport_code, country_name, code, name, terminals]
+                    )
+
             # Exemption rows (e.g. INFANTS: 15% of P7+P8)
             for exemption in tax_type.get("exemptions", []):
                 pax_label = f"[{exemption.get('pax_type', 'EXEMPT')}]"
@@ -197,24 +202,12 @@ def _build_summary_sheet(ws, data, config):
 
                     row_idx += 1
 
-                # If section has no rates, show one row with dashes
-                if not section.get("rates", []):
-                    ws.append(
-                        [
-                            airport_code,
-                            country_name,
-                            code,
-                            name,
-                            terminals,
-                            "—",
-                            "—",
-                            "—",
-                            "—",
-                        ]
-                    )
-                    for col in range(1, len(headers) + 1):
-                        ws.cell(row=row_idx, column=col).border = THIN_BORDER
-                    row_idx += 1
+            # A tax that parsed to no rates still gets a row so it is visibly
+            # missing data rather than silently absent from the report.
+            if not tax_type.get("sections") and not tax_type.get("exemptions"):
+                row_idx = _append_empty_rate_row(
+                    ws, row_idx, [airport_code, country_name, code, name, ""]
+                )
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:I{row_idx-1}"
@@ -223,6 +216,14 @@ def _build_summary_sheet(ws, data, config):
     widths = [10, 15, 10, 30, 40, 40, 10, 12, 12]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
+
+
+def _append_empty_rate_row(ws, row_idx: int, identity: list) -> int:
+    """Append identity columns plus four dashes; return the next row index."""
+    ws.append(identity + ["—", "—", "—", "—"])
+    for col in range(1, len(identity) + 5):
+        ws.cell(row=row_idx, column=col).border = THIN_BORDER
+    return row_idx + 1
 
 
 def _build_details_sheet(ws, data, config):
