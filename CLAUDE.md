@@ -51,7 +51,8 @@ Single pipeline: **drive terminal → scrape clipboard → parse → report**. E
 
 ### Orchestration
 
-- `main.py` — CLI entry point and the per-run orchestrator for every mode (fares, tax, penalty, currency, quick-paste). Parses args, loads+validates config, routes to the correct scraper/parser/reporter. Very large (~2900 lines); new behavior is usually added as a helper near existing modes rather than a new top-level block.
+- `main.py` — CLI entry point and the per-run orchestrator for every mode (fares, tax, penalty, currency, quick-paste). Parses args, loads+validates config, routes to the correct scraper/parser/reporter. Very large (~2900 lines, mostly the `main()` function); put new pure helpers in a focused module rather than in `main.py`.
+- Helpers split out of `main.py` and re-imported there (so `from main import _x` still works): `route_filters.py` (`--route`/`--airline` filters), `tax_airports.py` (tax-airport resolution), `fs_screens.py` (FD/FS screen predicates), `db_url.py` (DATABASE_URL resolution). Functions that read `SCRIPT_DIR`/`DEFAULT_CONFIG` stay in `main.py` because tests monkeypatch those on `main`.
 - `gui.py` — Tk GUI that builds an `argparse.Namespace` in `_build_args` and hands off to `main.main(prebuilt_args=...)`. The GUI is just an args-builder plus a live log pane; no business logic lives here.
 - Both entry points call `ctypes.windll.shcore.SetProcessDpiAwareness(2)` at module-top (before any window creation). Both calls run when gui.py imports main.py; the second one raises and is swallowed by `try/except` — intentional.
 
@@ -95,7 +96,7 @@ Single pipeline: **drive terminal → scrape clipboard → parse → report**. E
 
 ### Tax airport resolution
 
-- `_build_searchable_tax_airports` (main.py) is the single source of truth for "which airports can `--tax --airport X` accept". It merges three layers:
+- `_build_searchable_tax_airports` (`tax_airports.py`) is the single source of truth for "which airports can `--tax --airport X` accept". It merges three layers:
   1. Global IATA directory from the `airportsdata` package (marked `_source=global`).
   2. `airport_country_codes` from config.
   3. `tax_airports` from config (marked `_source=config`, wins on duplicates).

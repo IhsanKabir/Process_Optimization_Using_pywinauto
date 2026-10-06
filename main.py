@@ -27,15 +27,8 @@ import shutil
 import sys
 import time as _time
 import constants
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from collections import OrderedDict
-from functools import lru_cache
-
-try:
-    import airportsdata
-except ImportError:
-    airportsdata = None
 
 try:
     from tqdm import tqdm
@@ -70,16 +63,48 @@ from change_detector import (
 from exceptions import ConfigurationError, ValidationError
 from validators import (
     validate_config,
-    validate_airline_code,
-    validate_airport_code,
     validate_limit,
-    validate_route,
     sanitize_command,
     validate_parsed_fares,
     validate_currency_code,
 )
 from credential_manager import CredentialManager
 from checkpoint_manager import CheckpointManager
+from db_url import (  # noqa: F401 - re-exported for tests/callers
+    PLACEHOLDER_DATABASE_URLS,
+    _is_placeholder_database_url,
+    _normalize_database_url,
+    _resolve_database_url,
+)
+from fs_screens import (  # noqa: F401
+    _fd_output_has_fares,
+    _fd_output_is_no_fares,
+    _find_pure_airline_option_in_fs_page,
+    _fs_output_is_no_results,
+    _should_recheck_same_fs_page,
+    _should_run_fs_extraction,
+)
+from route_filters import (  # noqa: F401
+    _build_explicit_route_commands,
+    _command_matches_route,
+    _parse_requested_routes,
+    _resolve_explicit_airline_codes,
+    _route_variants,
+)
+from tax_airports import (  # noqa: F401
+    DEFAULT_AIRPORT_COUNTRY_CODES,
+    _build_searchable_tax_airports,
+    _configured_airport_country_codes,
+    _configured_route_airports,
+    _extract_tax_airport_queries,
+    _filter_tax_airports_by_configured_routes,
+    _format_tax_airport_candidates,
+    _has_global_tax_airport_search,
+    _load_global_airport_directory,
+    _resolve_tax_airport_query,
+    _tax_airport_display_name,
+    _tax_airport_name_aliases,
+)
 from constants import (
     MAX_RETRIES_COMMAND,
     FS_DATE_OFFSET_START,
@@ -122,10 +147,6 @@ ARCHIVE_DIR = os.path.join(SCRIPT_DIR, "data", "archive")
 LOG_DIR = os.path.join(SCRIPT_DIR, "data", "logs")
 CHECKPOINT_DIR = os.path.join(SCRIPT_DIR, "data", "checkpoints")
 RAW_PENALTY_DIR = os.path.join(SCRIPT_DIR, "data", "raw_penalty")
-PLACEHOLDER_DATABASE_URLS = {
-    "postgresql://user:password@localhost/travelport_db",
-    "postgresql://user:password@localhost/GDS_Automation",
-}
 # Remote sources - admin updates these files on GitHub; all users get the
 # latest config automatically on next run without needing a new exe.
 REMOTE_CONFIG_URL = (
@@ -143,46 +164,7 @@ DEFAULT_COMMANDS_TEMPLATE = """# TravelportAuto route commands
 # FDDACBKK/BS
 # FDCGPMLE/BG
 """
-FS_OPTION_PATTERN = re.compile(
-    r"PRICING\s+OPTION\s+(\d+)(.*?(?=PRICING\s+OPTION\s+\d+|$))",
-    re.IGNORECASE | re.DOTALL,
-)
-FS_LEG_PATTERN = re.compile(r"^\s*(\d+)\s+[#@-]?([A-Z0-9]{2})\s+", re.MULTILINE)
 _RE_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
-DEFAULT_AIRPORT_COUNTRY_CODES = {
-    "DAC": "BD",
-    "CGP": "BD",
-    "ZYL": "BD",
-    "CXB": "BD",
-    "MLE": "MV",
-    "CAN": "CN",
-    "MCT": "OM",
-    "DOH": "QA",
-    "DXB": "AE",
-    "AUH": "AE",
-    "SHJ": "AE",
-    "RKT": "AE",
-    "RUH": "SA",
-    "JED": "SA",
-    "DMM": "SA",
-    "MED": "SA",
-    "KWI": "KW",
-    "BOM": "IN",
-    "DEL": "IN",
-    "MAA": "IN",
-    "BLR": "IN",
-    "CCU": "IN",
-    "SIN": "SG",
-    "BKK": "TH",
-    "KUL": "MY",
-    "HKT": "TH",
-    "MNL": "PH",
-    "SGN": "VN",
-    "HAN": "VN",
-    "PEK": "CN",
-    "PVG": "CN",
-    "SZX": "CN",
-}
 
 
 def setup_logging():
@@ -710,454 +692,6 @@ def _safe_filename(value: str) -> str:
     return cleaned.strip("_") or "unknown"
 
 
-def _is_placeholder_database_url(database_url: str | None) -> bool:
-    normalized = (database_url or "").strip()
-    if not normalized:
-        return True
-    if normalized in PLACEHOLDER_DATABASE_URLS:
-        return True
-    return "YOUR_" in normalized.upper()
-
-
-def _normalize_database_url(database_url: str | None) -> str:
-    """Normalize PostgreSQL URLs so psycopg2 can consume them reliably."""
-    normalized = (database_url or "").strip()
-    if not normalized:
-        return ""
-
-    if normalized.startswith("postgresql+"):
-        normalized = "postgresql://" + normalized.split("://", 1)[1]
-
-    if normalized.startswith("postgresql://"):
-        parts = urlsplit(normalized)
-        query = dict(parse_qsl(parts.query, keep_blank_values=True))
-        query.setdefault("connect_timeout", "5")
-        normalized = urlunsplit(
-            (
-                parts.scheme,
-                parts.netloc,
-                parts.path,
-                urlencode(query),
-                parts.fragment,
-            )
-        )
-
-    return normalized
-
-
-def _resolve_database_url(config: dict) -> str:
-    """Prefer DATABASE_URL, but fall back to config when it isn't a placeholder."""
-    env_database_url = _normalize_database_url(os.environ.get("DATABASE_URL"))
-    if env_database_url:
-        return env_database_url
-
-    config_database_url = config.get("database_url")
-    if _is_placeholder_database_url(config_database_url):
-        return ""
-
-    return _normalize_database_url(config_database_url)
-
-
-def _route_variants(route_code: str, one_direction: bool = False) -> set[str]:
-    """Return the route directions that should be treated as a match."""
-    normalized = (route_code or "").strip().upper().replace("-", "")
-    if len(normalized) != 6:
-        return set()
-    if one_direction:
-        return {normalized}
-    return {normalized, f"{normalized[3:]}{normalized[:3]}"}
-
-
-def _command_matches_route(
-    command_entry: dict, route_code: str, one_direction: bool = False
-) -> bool:
-    """Check whether a command matches a route filter."""
-    route_variants = _route_variants(route_code, one_direction=one_direction)
-    if not route_variants:
-        return False
-
-    origin = str(command_entry.get("origin") or "").upper()
-    destination = str(command_entry.get("destination") or "").upper()
-    if origin and destination:
-        return f"{origin}{destination}" in route_variants
-
-    raw_command = str(command_entry.get("command") or "").upper().replace("-", "")
-    return any(route_variant in raw_command for route_variant in route_variants)
-
-
-def _parse_requested_routes(route_query: str | None) -> list[str]:
-    """Normalize comma-separated route input into canonical `AAA-BBB` strings."""
-    if not route_query:
-        return []
-
-    normalized_routes: list[str] = []
-    seen_routes: set[str] = set()
-    for raw_route in str(route_query).split(","):
-        raw_route = raw_route.strip()
-        if not raw_route:
-            continue
-        origin, destination = validate_route(raw_route)
-        route_code = f"{origin}-{destination}"
-        if route_code in seen_routes:
-            continue
-        seen_routes.add(route_code)
-        normalized_routes.append(route_code)
-    return normalized_routes
-
-
-def _resolve_explicit_airline_codes(
-    airline_query: str | None, config: dict
-) -> list[str]:
-    """Resolve explicit fare/penalty airline filters or fall back to configured airlines."""
-    if airline_query:
-        airline_codes: list[str] = []
-        seen_codes: set[str] = set()
-        for raw_code in str(airline_query).split(","):
-            raw_code = raw_code.strip()
-            if not raw_code:
-                continue
-            code = validate_airline_code(raw_code)
-            if code in seen_codes:
-                continue
-            seen_codes.add(code)
-            airline_codes.append(code)
-        if airline_codes:
-            return airline_codes
-
-    airline_names = config.get("airline_names", {})
-    if isinstance(airline_names, dict) and airline_names:
-        return [str(code).upper() for code in airline_names.keys()]
-
-    raise ConfigurationError(
-        "No airlines available to generate explicit route commands. Add airline_names or provide --airline."
-    )
-
-
-def _build_explicit_route_commands(
-    route_query: str,
-    airline_query: str | None,
-    config: dict,
-    one_direction: bool = False,
-) -> tuple[list[dict], list[str], list[str]]:
-    """Build FD commands directly from typed routes and airlines."""
-    routes = _parse_requested_routes(route_query)
-    if not routes:
-        return [], [], []
-
-    airline_codes = _resolve_explicit_airline_codes(airline_query, config)
-    commands: list[dict] = []
-    seen_commands: set[str] = set()
-
-    for route_code in routes:
-        origin, destination = route_code.split("-", 1)
-        direction_pairs = [(origin, destination)]
-        if not one_direction:
-            direction_pairs.append((destination, origin))
-
-        for dir_origin, dir_destination in direction_pairs:
-            for airline_code in airline_codes:
-                command = f"FD{dir_origin}{dir_destination}/{airline_code}"
-                if command in seen_commands:
-                    continue
-                seen_commands.add(command)
-                commands.append(
-                    {
-                        "origin": dir_origin,
-                        "destination": dir_destination,
-                        "airline": airline_code,
-                        "route": f"{dir_origin}-{dir_destination}",
-                        "command": command,
-                    }
-                )
-
-    return commands, routes, airline_codes
-
-
-def _extract_tax_airport_queries(
-    airport_query: str | None = None, route_query: str | None = None
-) -> list[str] | None:
-    """Normalize explicit tax-airport input from `--airport` or legacy `--route`."""
-    raw_query = (airport_query or "").strip() or (route_query or "").strip()
-    if not raw_query:
-        return None
-
-    normalized_queries: list[str] = []
-    for chunk in raw_query.split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-
-        if "-" in chunk:
-            route_candidate = re.sub(r"\s+", "", chunk)
-            try:
-                origin, _destination = validate_route(route_candidate)
-                normalized_queries.append(origin)
-                continue
-            except ValidationError:
-                pass
-
-        normalized_queries.append(chunk)
-
-    return normalized_queries or None
-
-
-def _tax_airport_display_name(
-    airport_code: str, airport_info: dict, config: dict
-) -> str:
-    """Return the most user-friendly label for a configured tax airport."""
-    city_name = str(config.get("city_names", {}).get(airport_code, "") or "").strip()
-    if city_name:
-        return city_name
-    city = str(airport_info.get("city", "") or "").strip()
-    if city:
-        return city
-    info_name = str(airport_info.get("name", "") or "").strip()
-    if info_name:
-        return info_name
-    return airport_code
-
-
-def _tax_airport_name_aliases(
-    airport_code: str, airport_info: dict, config: dict
-) -> list[str]:
-    """Return configured non-code aliases that can identify a tax airport."""
-    aliases: list[str] = []
-    for alias in (
-        config.get("city_names", {}).get(airport_code),
-        airport_info.get("city"),
-        airport_info.get("name"),
-    ):
-        text = str(alias or "").strip()
-        if not text:
-            continue
-        if text.casefold() == airport_code.casefold():
-            continue
-        if any(text.casefold() == existing.casefold() for existing in aliases):
-            continue
-        aliases.append(text)
-    return aliases
-
-
-@lru_cache(maxsize=1)
-def _load_global_airport_directory() -> dict[str, dict]:
-    """Load a global IATA airport directory for explicit Future Tax searches."""
-    if airportsdata is None:
-        return {}
-
-    searchable: dict[str, dict] = {}
-    for airport_code, airport_info in airportsdata.load("IATA").items():
-        normalized_code = str(airport_code or "").upper().strip()
-        try:
-            normalized_code = validate_airport_code(normalized_code)
-        except ValidationError:
-            continue
-
-        country_code = str(airport_info.get("country", "") or "").upper().strip()
-        if not country_code:
-            continue
-
-        entry = {
-            "country": country_code,
-            "_source": "global",
-        }
-        city_name = str(airport_info.get("city", "") or "").strip()
-        if city_name:
-            entry["city"] = city_name
-        airport_name = str(airport_info.get("name", "") or "").strip()
-        if airport_name:
-            entry["name"] = airport_name
-
-        searchable[normalized_code] = entry
-
-    return searchable
-
-
-def _configured_airport_country_codes(config: dict) -> dict[str, str]:
-    """Return known airport -> country code mappings for explicit tax searches."""
-    country_codes = dict(DEFAULT_AIRPORT_COUNTRY_CODES)
-    for airport_code, country_code in config.get("airport_country_codes", {}).items():
-        country_codes[str(airport_code).upper()] = str(country_code).upper()
-    for airport_code, airport_info in config.get("tax_airports", {}).items():
-        country_code = str(airport_info.get("country", "") or "").upper()
-        if country_code:
-            country_codes[str(airport_code).upper()] = country_code
-    return country_codes
-
-
-def _build_searchable_tax_airports(config: dict) -> dict[str, dict]:
-    """Return airports that can be used for explicit Future Tax lookups."""
-    searchable = {
-        airport_code: dict(airport_info)
-        for airport_code, airport_info in _load_global_airport_directory().items()
-    }
-
-    for airport_code, country_code in _configured_airport_country_codes(config).items():
-        existing = dict(searchable.get(airport_code, {}))
-        existing["country"] = country_code
-        if not existing.get("_source"):
-            existing["_source"] = "config"
-        searchable[airport_code] = existing
-
-    for airport_code, city_name in config.get("city_names", {}).items():
-        normalized_code = str(airport_code).upper()
-        if normalized_code not in searchable:
-            continue
-        text = str(city_name or "").strip()
-        if text:
-            searchable[normalized_code]["city"] = text
-
-    for airport_code, airport_info in config.get("tax_airports", {}).items():
-        existing = dict(searchable.get(airport_code, {}))
-        existing.update(dict(airport_info))
-        existing["_source"] = "config"
-        searchable[airport_code] = existing
-
-    return searchable
-
-
-def _format_tax_airport_candidates(
-    airport_codes: list[str], tax_airports: dict, config: dict, max_candidates: int = 12
-) -> str:
-    """Return a compact list of configured tax-airport choices."""
-    labels = []
-    shown_codes = airport_codes[:max_candidates]
-    for airport_code in shown_codes:
-        airport_info = tax_airports.get(airport_code, {})
-        display_name = _tax_airport_display_name(airport_code, airport_info, config)
-        extra_name = str(airport_info.get("name", "") or "").strip()
-        if extra_name and extra_name.casefold() != display_name.casefold():
-            labels.append(f"{airport_code} ({display_name} / {extra_name})")
-        else:
-            labels.append(f"{airport_code} ({display_name})")
-    if len(airport_codes) > max_candidates:
-        labels.append(f"... ({len(airport_codes) - max_candidates} more)")
-    return ", ".join(labels)
-
-
-def _has_global_tax_airport_search(tax_airports: dict) -> bool:
-    """Return True when the explicit tax resolver includes the global airport directory."""
-    return any(
-        str(airport_info.get("_source", "")).casefold() == "global"
-        for airport_info in tax_airports.values()
-    )
-
-
-def _resolve_tax_airport_query(
-    query: str, tax_airports: dict, config: dict
-) -> tuple[str, dict, str]:
-    """Resolve a single airport code or configured airport name to one tax airport."""
-    query_text = str(query or "").strip()
-    if not query_text:
-        raise ValidationError("airport", query, "cannot be empty")
-
-    query_key = query_text.casefold()
-    search_scope = (
-        "airports"
-        if _has_global_tax_airport_search(tax_airports)
-        else "configured tax airports"
-    )
-
-    for airport_code, airport_info in tax_airports.items():
-        if airport_code.casefold() == query_key:
-            return airport_code, airport_info, airport_code
-
-    exact_name_matches: list[tuple[str, str]] = []
-    partial_matches: list[tuple[str, str]] = []
-
-    for airport_code, airport_info in tax_airports.items():
-        aliases = _tax_airport_name_aliases(airport_code, airport_info, config)
-        exact_alias = next(
-            (alias for alias in aliases if alias.casefold() == query_key),
-            None,
-        )
-        if exact_alias:
-            exact_name_matches.append((airport_code, exact_alias))
-            continue
-
-        partial_alias = next(
-            (alias for alias in aliases if query_key in alias.casefold()),
-            None,
-        )
-        if partial_alias:
-            partial_matches.append((airport_code, partial_alias))
-
-    if len(exact_name_matches) == 1:
-        airport_code, matched_alias = exact_name_matches[0]
-        return airport_code, tax_airports[airport_code], matched_alias
-
-    if len(exact_name_matches) > 1:
-        matched_codes = [airport_code for airport_code, _alias in exact_name_matches]
-        raise ValidationError(
-            "airport",
-            query,
-            f"matches multiple {search_scope}: "
-            + _format_tax_airport_candidates(matched_codes, tax_airports, config),
-        )
-
-    if len(partial_matches) == 1:
-        airport_code, matched_alias = partial_matches[0]
-        return airport_code, tax_airports[airport_code], matched_alias
-
-    if len(partial_matches) > 1:
-        matched_codes = [airport_code for airport_code, _alias in partial_matches]
-        raise ValidationError(
-            "airport",
-            query,
-            f"matches multiple {search_scope}: "
-            + _format_tax_airport_candidates(matched_codes, tax_airports, config),
-        )
-
-    if _has_global_tax_airport_search(tax_airports):
-        raise ValidationError(
-            "airport",
-            query,
-            "not found in known airports. Try a 3-letter airport code like SYD or a more specific airport or city name.",
-        )
-
-    raise ValidationError(
-        "airport",
-        query,
-        "not found in configured tax airports. Valid options: "
-        + _format_tax_airport_candidates(
-            sorted(tax_airports.keys()), tax_airports, config
-        ),
-    )
-
-
-def _configured_route_airports(commands_file: str) -> set[str]:
-    """Return airport codes referenced by configured FD commands."""
-    route_airports: set[str] = set()
-    if not os.path.exists(commands_file):
-        return route_airports
-
-    with open(commands_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("FD") and "/" in line and len(line) >= 8:
-                route_airports.add(line[2:5].upper())
-                route_airports.add(line[5:8].upper())
-    return route_airports
-
-
-def _filter_tax_airports_by_configured_routes(
-    tax_airports: dict, commands_file: str
-) -> tuple[dict, int]:
-    """Filter tax airports to those appearing in configured routes when possible."""
-    route_airports = _configured_route_airports(commands_file)
-    if not route_airports:
-        return tax_airports, 0
-
-    filtered = {
-        airport_code: airport_info
-        for airport_code, airport_info in tax_airports.items()
-        if airport_code.upper() in route_airports
-    }
-    if not filtered:
-        return tax_airports, 0
-
-    return filtered, len(tax_airports) - len(filtered)
-
-
 def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
     """Select which configured tax airports should run for the current invocation."""
     tax_airports = dict(config.get("tax_airports", {}))
@@ -1228,95 +762,6 @@ def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
         }
 
     return tax_airports, metadata
-
-
-def _fd_output_has_fares(raw_text: str) -> bool:
-    """Return True when FD output contains actual fare rows."""
-    if not raw_text or not raw_text.strip():
-        return False
-    parsed = parse_fare_display(raw_text)
-    return bool(parsed.get("fares"))
-
-
-def _fd_output_is_no_fares(raw_text: str) -> bool:
-    """Return True when Smartpoint definitively says the FD request has no fares."""
-    upper = (raw_text or "").upper()
-    return "NO FARES FOUND" in upper and "INPUT REQUEST" in upper
-
-
-def _fs_output_is_no_results(raw_text: str) -> bool:
-    """Return True when FS checkout has returned a final no-result/error screen."""
-    upper = (raw_text or "").upper()
-    return any(
-        marker in upper
-        for marker in (
-            "NO FARES FOUND",
-            "CHECK ACTION CODE",
-            "INVALID",
-        )
-    )
-
-
-def _should_run_fs_extraction(args, fd_terminal_text: str) -> bool:
-    """Skip FS when normal FD extraction produced no fare rows."""
-    if getattr(args, "only_fd", False):
-        return False
-    if getattr(args, "only_yq", False) or getattr(args, "only_currency", False):
-        return True
-    return _fd_output_has_fares(fd_terminal_text)
-
-
-def _find_pure_airline_option_in_fs_page(
-    fs_text: str, airline: str
-) -> tuple[int | None, str | None, int]:
-    """Find the first pricing option on the current FS page containing only the target airline."""
-    options = list(FS_OPTION_PATTERN.finditer(fs_text or ""))
-    airline_upper = (airline or "").upper()
-
-    for option_index, opt_match in enumerate(options):
-        opt_num = opt_match.group(1)
-        block = opt_match.group(2)
-        leg_matches = FS_LEG_PATTERN.findall(block)
-        if not leg_matches:
-            continue
-
-        leg_airlines = [match[1].upper().strip() for match in leg_matches]
-        if all(code == airline_upper for code in leg_airlines):
-            return option_index, opt_num, len(options)
-
-    return None, None, len(options)
-
-
-def _should_recheck_same_fs_page(
-    current_fs_page: str, refreshed_fs_page: str, airline: str
-) -> bool:
-    """Return True when a same-date FS page looks more complete after settling."""
-    current_text = (current_fs_page or "").strip()
-    refreshed_text = (refreshed_fs_page or "").strip()
-    if not refreshed_text or refreshed_text == current_text:
-        return False
-
-    (
-        current_option_index,
-        _current_option_number,
-        current_option_count,
-    ) = _find_pure_airline_option_in_fs_page(current_text, airline)
-    (
-        refreshed_option_index,
-        _refreshed_option_number,
-        refreshed_option_count,
-    ) = _find_pure_airline_option_in_fs_page(refreshed_text, airline)
-
-    if refreshed_option_index is not None and current_option_index is None:
-        return True
-
-    if refreshed_option_count > current_option_count:
-        return True
-
-    return (
-        "PRICING OPTION" in refreshed_text.upper()
-        and len(refreshed_text) > len(current_text) + 40
-    )
 
 
 def run_with_args(args, stop_event=None):
