@@ -85,8 +85,7 @@ def get_today_context() -> dict[str, Any]:
         today = _today()
         today_entry = data.get(today, {})
         days_active = sum(
-            1 for d in data.values()
-            if any(d.get(m, 0) > 0 for m in _METRICS)
+            1 for d in data.values() if any(d.get(m, 0) > 0 for m in _METRICS)
         )
         return {
             "usage_fare_routes_today": today_entry.get("fare_routes", 0),

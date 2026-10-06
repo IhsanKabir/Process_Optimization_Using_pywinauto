@@ -13,6 +13,7 @@ Run directly:  python gui.py
 # both use physical pixel coordinates on DPI-scaled displays.
 try:
     import ctypes as _ctypes
+
     _ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
     pass
@@ -140,6 +141,7 @@ class _Tooltip:
 
 
 # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 
 def _runtime_dir() -> str:
     """Return the folder that should hold user-visible runtime files."""
@@ -396,7 +398,11 @@ def _build_updater_script(
 
 
 def _build_folder_updater_script(
-    current_exe: str, staging_folder: str, state_file: str, log_file: str, target_version: str
+    current_exe: str,
+    staging_folder: str,
+    state_file: str,
+    log_file: str,
+    target_version: str,
 ) -> str:
     """Generate the batch script that xcopy's an extracted update folder over the install dir."""
     clean_version = (target_version or "").replace("|", "/").strip() or "unknown"
@@ -578,17 +584,19 @@ class TravelportGUI:
 
     def _save_preferences(self):
         """Persist current UI settings to disk."""
-        _save_prefs({
-            "mode": self.mode_var.get(),
-            "speed": self.speed_var.get(),
-            "route": self.route_var.get(),
-            "airline": self.airline_var.get(),
-            "limit": self.limit_var.get(),
-            "checkpoint": self.checkpoint_var.get(),
-            "no_changes": self.no_changes_var.get(),
-            "only_fd": self.only_fd_var.get(),
-            "only_yq": self.only_yq_var.get(),
-        })
+        _save_prefs(
+            {
+                "mode": self.mode_var.get(),
+                "speed": self.speed_var.get(),
+                "route": self.route_var.get(),
+                "airline": self.airline_var.get(),
+                "limit": self.limit_var.get(),
+                "checkpoint": self.checkpoint_var.get(),
+                "no_changes": self.no_changes_var.get(),
+                "only_fd": self.only_fd_var.get(),
+                "only_yq": self.only_yq_var.get(),
+            }
+        )
 
     def _on_close(self):
         """Handle window close: save prefs, then destroy."""
@@ -1079,9 +1087,7 @@ class TravelportGUI:
         self.log_text.configure(height=8 if self._log_visible else 0)
         self._toggle_btn.configure(
             text=(
-                "â–¼  Hide technical log"
-                if self._log_visible
-                else "Show technical log"
+                "â–¼  Hide technical log" if self._log_visible else "Show technical log"
             )
         )
 
@@ -1091,9 +1097,7 @@ class TravelportGUI:
         bar = tk.Frame(self.root, bg="#dde3e8", pady=8)
         bar.pack(fill="x", side="bottom")
 
-        self.start_btn = ttk.Button(
-            bar, text="Start", command=self._start, width=14
-        )
+        self.start_btn = ttk.Button(bar, text="Start", command=self._start, width=14)
         self.start_btn.pack(side="left", padx=(12, 4))
 
         self.stop_btn = ttk.Button(
@@ -1191,6 +1195,7 @@ class TravelportGUI:
 
     def _drain_feedback_queue_async(self):
         """Drain the offline feedback queue in a background thread at startup."""
+
         def _worker():
             try:
                 import urllib.request
@@ -1286,16 +1291,12 @@ class TravelportGUI:
         )
         # â”€â”€ FZS pre-scan banner sets the total up-front so ETA has a denominator
         # even before the first currency completes.
-        m_fzs_total = re.search(
-            r"Extracting FZS rates for (\d+) currencies", text
-        )
+        m_fzs_total = re.search(r"Extracting FZS rates for (\d+) currencies", text)
         # â”€â”€ Tax progress: [N/M] Airport: KUL (Kuala Lumpur) -> FTAX-MY
         # Each line marks the START of a new airport, so by the time we see
         # line N, exactly N-1 airports are completed.  Without this the ETA
         # overlay stays stuck on "calculating..." for the whole tax run.
-        m_tax = re.search(
-            r"\[(\d+)/(\d+)\]\s+Airport:\s+[A-Z]{3}", text
-        )
+        m_tax = re.search(r"\[(\d+)/(\d+)\]\s+Airport:\s+[A-Z]{3}", text)
         if m_cmd:
             idx = int(m_cmd.group(1))
             total = int(m_cmd.group(2))
@@ -1402,9 +1403,7 @@ class TravelportGUI:
         """
         iid = f"row_{idx}"
         icon = "âœ“" if state == "done" else "âœ—"
-        detail = (
-            f"\u2192 BDT: {rate_str}" if state == "done" else "failed to parse"
-        )
+        detail = f"\u2192 BDT: {rate_str}" if state == "done" else "failed to parse"
         values = (icon, code, detail)
         if self.tree.exists(iid):
             self.tree.item(iid, values=values, tags=(state,))
@@ -1485,9 +1484,7 @@ class TravelportGUI:
         # time-since-tick so the displayed ETA counts down smoothly until
         # the next route finishes.
         units_remaining = max(0, self._total - self._completed_routes)
-        estimated_remaining_at_lock = (
-            self._eta_per_unit_seconds * units_remaining
-        )
+        estimated_remaining_at_lock = self._eta_per_unit_seconds * units_remaining
         elapsed_since_lock = (
             time.monotonic() - self._run_started_at - self._eta_locked_at_elapsed
         )
@@ -1744,7 +1741,9 @@ class TravelportGUI:
 
     def _start_update(self, info, dlg, progress_var, btn):
         if not info.get("exe_url") and not info.get("zip_url"):
-            messagebox.showerror("Update Error", "No download link was found for this release.")
+            messagebox.showerror(
+                "Update Error", "No download link was found for this release."
+            )
             return
         btn.configure(state="disabled")
         progress_var.set("Downloading...")
@@ -1804,9 +1803,7 @@ class TravelportGUI:
             import hashlib, re as _re
 
             notes = info.get("notes", "") or ""
-            hash_match = _re.search(
-                r'(?:sha256|SHA256)[:\s]+([0-9a-fA-F]{64})', notes
-            )
+            hash_match = _re.search(r"(?:sha256|SHA256)[:\s]+([0-9a-fA-F]{64})", notes)
             if hash_match:
                 expected_hash = hash_match.group(1).lower()
                 progress_var.set("Verifying integrity...")
@@ -2134,9 +2131,7 @@ class TravelportGUI:
             return
         self._prev_rates_path = path
         self._prev_rates_date = date_str.strip()
-        self._prev_rates_var.set(
-            f"{os.path.basename(path)}  ({self._prev_rates_date})"
-        )
+        self._prev_rates_var.set(f"{os.path.basename(path)}  ({self._prev_rates_date})")
 
     def _open_report(self):
         if self._last_report and os.path.exists(self._last_report):
@@ -2148,6 +2143,7 @@ class TravelportGUI:
         """Reset click calibration to DPI-auto values for this display."""
         try:
             import calibration as _cal_mod
+
             data = _cal_mod.reset_calibration()
             lh = data["line_height"]
             dpi = data.get("dpi", "?")
@@ -2190,21 +2186,25 @@ class TravelportGUI:
 
     def _sign_out(self) -> None:
         from auth_manager import clear_token
+
         clear_token()
         self._user_info = None
         self._refresh_user_label()
 
     def _check_auth_startup(self) -> None:
         """Background: read stored token; call /me to confirm it's still valid."""
+
         def _worker():
             try:
                 from auth_manager import get_token
+
                 token = get_token()
                 if not token:
                     return
                 from agent_config import AUTH_API_ROOT
                 import json as _json
                 import urllib.request as _req
+
                 request = _req.Request(
                     f"{AUTH_API_ROOT}/api/v1/user-auth/me",
                     headers={"X-User-Session": token},
@@ -2249,7 +2249,9 @@ class TravelportGUI:
         tk.Frame(sep, height=1, bg="#d0d0d0").pack(
             fill="x", side="left", expand=True, padx=(0, 8), pady=7
         )
-        tk.Label(sep, text="or sign in with email", font=("Segoe UI", 8), fg="#808080").pack(side="left")
+        tk.Label(
+            sep, text="or sign in with email", font=("Segoe UI", 8), fg="#808080"
+        ).pack(side="left")
         tk.Frame(sep, height=1, bg="#d0d0d0").pack(
             fill="x", side="left", expand=True, padx=(8, 0), pady=7
         )
@@ -2261,18 +2263,28 @@ class TravelportGUI:
 
         tk.Label(body, text="Password", anchor="w", font=("Segoe UI", 9)).pack(fill="x")
         self._login_password_var = tk.StringVar()
-        ttk.Entry(body, textvariable=self._login_password_var, show="â—").pack(fill="x", pady=(2, 8))
+        ttk.Entry(body, textvariable=self._login_password_var, show="â—").pack(
+            fill="x", pady=(2, 8)
+        )
 
         self._login_status_label = tk.Label(
-            body, textvariable=self._login_status_var,
-            fg="#c0392b", wraplength=320, justify="left", font=("Segoe UI", 9)
+            body,
+            textvariable=self._login_status_var,
+            fg="#c0392b",
+            wraplength=320,
+            justify="left",
+            font=("Segoe UI", 9),
         )
         self._login_status_label.pack(fill="x", pady=(0, 8))
 
         footer = tk.Frame(dialog, padx=24, pady=10)
         footer.pack(fill="x")
-        ttk.Button(footer, text="Cancel", command=self._close_login_dialog).pack(side="left")
-        self._login_submit_btn = ttk.Button(footer, text="Sign In", command=self._submit_login)
+        ttk.Button(footer, text="Cancel", command=self._close_login_dialog).pack(
+            side="left"
+        )
+        self._login_submit_btn = ttk.Button(
+            footer, text="Sign In", command=self._submit_login
+        )
         self._login_submit_btn.pack(side="right")
 
         self._login_email_var.set("")
@@ -2316,6 +2328,7 @@ class TravelportGUI:
 
         try:
             from agent_config import AUTH_API_ROOT
+
             body = _json.dumps({"email": email, "password": password}).encode("utf-8")
             request = _req.Request(
                 f"{AUTH_API_ROOT}/api/v1/user-auth/login",
@@ -2328,9 +2341,15 @@ class TravelportGUI:
             token = data.get("session_token", "")
             user = data.get("user") or {}
             if not token:
-                self.log_queue.put(("auth_done", {"ok": False, "error": "No session token in response."}))
+                self.log_queue.put(
+                    (
+                        "auth_done",
+                        {"ok": False, "error": "No session token in response."},
+                    )
+                )
                 return
             from auth_manager import KeyringUnavailableError, save_token
+
             try:
                 save_token(token)
             except KeyringUnavailableError as kr_exc:
@@ -2345,7 +2364,9 @@ class TravelportGUI:
                 msg = detail[:200] or f"Error {exc.code}"
             self.log_queue.put(("auth_done", {"ok": False, "error": str(msg)}))
         except Exception as exc:
-            self.log_queue.put(("auth_done", {"ok": False, "error": f"Could not connect: {exc}"}))
+            self.log_queue.put(
+                ("auth_done", {"ok": False, "error": f"Could not connect: {exc}"})
+            )
 
     def _on_auth_done(self, payload: dict) -> None:
         if payload.get("ok"):
@@ -2363,6 +2384,7 @@ class TravelportGUI:
 
     def _start_google_oauth(self) -> None:
         from agent_config import GOOGLE_OAUTH_CLIENT_ID, AUTH_API_ROOT
+
         if self._google_btn:
             self._google_btn.configure(state="disabled")
         if self._login_submit_btn:
@@ -2379,20 +2401,30 @@ class TravelportGUI:
     def _google_oauth_worker(self, client_id: str, api_base_url: str) -> None:
         try:
             from google_oauth import GoogleOAuthError, run_google_oauth_flow
+
             self.log_queue.put(("auth_status", "Completing Google sign-in..."))
             result = run_google_oauth_flow(client_id, api_base_url)
 
             from auth_manager import KeyringUnavailableError, save_token
+
             try:
                 save_token(result.session_token)
             except KeyringUnavailableError as exc:
                 self.log_queue.put(("auth_done", {"ok": False, "error": str(exc)}))
                 return
 
-            self.log_queue.put(("auth_done", {"ok": True, "user": {
-                "email": result.email,
-                "full_name": result.name,
-            }}))
+            self.log_queue.put(
+                (
+                    "auth_done",
+                    {
+                        "ok": True,
+                        "user": {
+                            "email": result.email,
+                            "full_name": result.name,
+                        },
+                    },
+                )
+            )
 
         except Exception as exc:
             self.log_queue.put(("auth_done", {"ok": False, "error": str(exc)}))
@@ -2567,9 +2599,13 @@ class TravelportGUI:
             )
             self.log_queue.put(("feedback_done", {"ok": True, "result": result}))
         except FeedbackQueuedForRetry as exc:
-            self.log_queue.put(("feedback_done", {"ok": False, "queued": True, "error": str(exc)}))
+            self.log_queue.put(
+                ("feedback_done", {"ok": False, "queued": True, "error": str(exc)})
+            )
         except Exception as exc:
-            self.log_queue.put(("feedback_done", {"ok": False, "queued": False, "error": str(exc)}))
+            self.log_queue.put(
+                ("feedback_done", {"ok": False, "queued": False, "error": str(exc)})
+            )
 
     def _on_feedback_done(self, payload: dict):
         if payload.get("ok"):
@@ -2596,7 +2632,6 @@ class TravelportGUI:
         self._feedback_status_var.set(payload.get("error", "Could not send feedback."))
 
     # â”€â”€ Args builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 
     def _open_time_calculator(self):
         """Popup: calculate local arrival time for up to two flights side-by-side."""
@@ -2633,16 +2668,16 @@ class TravelportGUI:
         def _calc(origin_tz, arr_tz, dep_time, duration, result_var, err_var):
             err_var.set("")
             try:
-                dep  = _parse_hhmm(dep_time.get())
-                dur  = _parse_hhmm(duration.get())
+                dep = _parse_hhmm(dep_time.get())
+                dur = _parse_hhmm(duration.get())
                 orig = _parse_offset(origin_tz.get())
-                arr  = _parse_offset(arr_tz.get())
+                arr = _parse_offset(arr_tz.get())
             except Exception:
                 result_var.set("--:--")
                 return
             local = (dep - orig + dur + arr) % (24 * 60)
-            days  = (dep - orig + dur + arr) // (24 * 60)
-            h, m  = divmod(local, 60)
+            days = (dep - orig + dur + arr) // (24 * 60)
+            h, m = divmod(local, 60)
             day_s = "" if days == 0 else f"  (+{days}d)" if days > 0 else f"  ({days}d)"
             result_var.set(f"{h:02d}:{m:02d}{day_s}")
 
@@ -2653,13 +2688,22 @@ class TravelportGUI:
         def _make_panel(parent, title, col):
             """Build one flight panel and return (origin_tz, arr_tz, dep, dur, result, err)."""
             frm = tk.LabelFrame(
-                parent, text=f"  {title}  ",
-                bg="#ffffff", fg="#0f3758",
+                parent,
+                text=f"  {title}  ",
+                bg="#ffffff",
+                fg="#0f3758",
                 font=("Segoe UI", 9, "bold"),
-                relief="groove", bd=1,
-                padx=10, pady=8,
+                relief="groove",
+                bd=1,
+                padx=10,
+                pady=8,
             )
-            frm.grid(row=0, column=col, sticky="nsew", padx=(0 if col else 0, 6 if col == 0 else 0))
+            frm.grid(
+                row=0,
+                column=col,
+                sticky="nsew",
+                padx=(0 if col else 0, 6 if col == 0 else 0),
+            )
 
             rows = [
                 ("Origin UTC Offset", "+6"),
@@ -2669,9 +2713,14 @@ class TravelportGUI:
             ]
             vars_ = []
             for r, (lbl, default) in enumerate(rows):
-                tk.Label(frm, text=lbl, bg="#ffffff",
-                         font=("Segoe UI", 9), anchor="w",
-                         width=20).grid(row=r, column=0, sticky="w", pady=3)
+                tk.Label(
+                    frm,
+                    text=lbl,
+                    bg="#ffffff",
+                    font=("Segoe UI", 9),
+                    anchor="w",
+                    width=20,
+                ).grid(row=r, column=0, sticky="w", pady=3)
                 v = tk.StringVar(value=default)
                 vars_.append(v)
                 e = ttk.Entry(frm, textvariable=v, width=10)
@@ -2683,20 +2732,33 @@ class TravelportGUI:
             res_var = tk.StringVar(value="--:--")
             err_var = tk.StringVar(value="")
 
-            tk.Label(frm, text="Arrival Time (destination local):",
-                     bg="#ffffff", font=("Segoe UI", 8), fg="#555").grid(
-                row=len(rows)+1, column=0, columnspan=2, sticky="w")
-            tk.Label(frm, textvariable=res_var,
-                     bg="#ffffff", fg="#0f3758",
-                     font=("Segoe UI", 15, "bold")).grid(
-                row=len(rows)+2, column=0, columnspan=2, sticky="w", pady=(2, 0))
-            tk.Label(frm, textvariable=err_var,
-                     bg="#ffffff", fg="#c0392b", font=("Segoe UI", 8)).grid(
-                row=len(rows)+3, column=0, columnspan=2, sticky="w")
+            tk.Label(
+                frm,
+                text="Arrival Time (destination local):",
+                bg="#ffffff",
+                font=("Segoe UI", 8),
+                fg="#555",
+            ).grid(row=len(rows) + 1, column=0, columnspan=2, sticky="w")
+            tk.Label(
+                frm,
+                textvariable=res_var,
+                bg="#ffffff",
+                fg="#0f3758",
+                font=("Segoe UI", 15, "bold"),
+            ).grid(row=len(rows) + 2, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            tk.Label(
+                frm,
+                textvariable=err_var,
+                bg="#ffffff",
+                fg="#c0392b",
+                font=("Segoe UI", 8),
+            ).grid(row=len(rows) + 3, column=0, columnspan=2, sticky="w")
 
             origin_tz, arr_tz, dep, dur = vars_
+
             def _on_change(*_):
                 _calc(origin_tz, arr_tz, dep, dur, res_var, err_var)
+
             for v in vars_:
                 v.trace_add("write", _on_change)
 
@@ -2714,7 +2776,9 @@ class TravelportGUI:
         # ── bottom bar ───────────────────────────────────────────────────────
         bar = tk.Frame(dlg, bg="#dde3e8", pady=6)
         bar.pack(fill="x", side="bottom")
-        ttk.Button(bar, text="Close", command=dlg.destroy, width=10).pack(side="right", padx=10)
+        ttk.Button(bar, text="Close", command=dlg.destroy, width=10).pack(
+            side="right", padx=10
+        )
 
     def _build_args(self) -> argparse.Namespace:
         mode = self.mode_var.get()
@@ -2735,8 +2799,12 @@ class TravelportGUI:
             penalty=(mode == "penalty"),
             quick_paste=is_quickpaste,
             currency_report=is_currency,
-            load_previous_rates=getattr(self, "_prev_rates_path", None) if is_currency else None,
-            previous_date=getattr(self, "_prev_rates_date", None) if is_currency else None,
+            load_previous_rates=(
+                getattr(self, "_prev_rates_path", None) if is_currency else None
+            ),
+            previous_date=(
+                getattr(self, "_prev_rates_date", None) if is_currency else None
+            ),
             route=None if (is_tax or is_baggage) else primary_filter,
             airport=primary_filter if is_tax else None,
             one_direction=False,
@@ -2834,6 +2902,7 @@ class TravelportGUI:
 
         def _poll_esc():
             import ctypes
+
             VK_ESCAPE = 0x1B
             get_key = ctypes.windll.user32.GetAsyncKeyState
             pressed_since = None
@@ -2886,7 +2955,9 @@ class TravelportGUI:
                     text=f"[x]  {os.path.basename(result_path)}", fg="#1d8a63"
                 )
         elif self.stop_event.is_set():
-            self.status_label.configure(text="Stopped - no data captured yet", fg="#b73632")
+            self.status_label.configure(
+                text="Stopped - no data captured yet", fg="#b73632"
+            )
         else:
             self.status_label.configure(text="Finished", fg="#555")
 
@@ -2910,5 +2981,3 @@ def launch():
 
 if __name__ == "__main__":
     launch()
-
-

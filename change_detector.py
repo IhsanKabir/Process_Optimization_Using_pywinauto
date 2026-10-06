@@ -289,7 +289,9 @@ def load_snapshot_by_reference(
             )
             return None, None
         snapshot_data = _load_snapshot_file(reference, os.path.basename(reference))
-        snapshot_id = os.path.basename(reference).removeprefix("snapshot_").removesuffix(".json")
+        snapshot_id = (
+            os.path.basename(reference).removeprefix("snapshot_").removesuffix(".json")
+        )
         return snapshot_data, snapshot_id
 
     snapshots = _list_snapshot_names(archive_dir)
@@ -596,10 +598,14 @@ def format_fs_tax_change_summary(changes: dict) -> str:
     for route_key, route_changes in changes.items():
         status = route_changes.get("status")
         if status == "tax_data_lost":
-            lines.append(f"  {route_key}: TAX DATA LOST (FS extraction failed this run)")
+            lines.append(
+                f"  {route_key}: TAX DATA LOST (FS extraction failed this run)"
+            )
             total += 1
         elif status == "tax_data_gained":
-            lines.append(f"  {route_key}: Tax data now available (was missing previously)")
+            lines.append(
+                f"  {route_key}: Tax data now available (was missing previously)"
+            )
             total += 1
         else:
             parts = []
@@ -657,5 +663,3 @@ def format_tax_change_summary(changes: dict) -> str:
     lines.append(f"Total changes: {total_changes}")
 
     return "\n".join(lines)
-
-

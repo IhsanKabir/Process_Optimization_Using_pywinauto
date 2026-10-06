@@ -71,14 +71,20 @@ from constants import (
 # imports, so all existing call-sites work without modification.
 
 _SEND_KEYS_SPECIAL = {
-    '+': '{+}', '^': '{^}', '%': '{%}', '~': '{~}',
-    '{': '{{', '}': '}}', '(': '{(}', ')': '{)}',
+    "+": "{+}",
+    "^": "{^}",
+    "%": "{%}",
+    "~": "{~}",
+    "{": "{{",
+    "}": "}}",
+    "(": "{(}",
+    ")": "{)}",
 }
 
 
 def _escape_keys(text: str) -> str:
     """Escape pywinauto send_keys() special characters in literal text."""
-    return ''.join(_SEND_KEYS_SPECIAL.get(c, c) for c in text)
+    return "".join(_SEND_KEYS_SPECIAL.get(c, c) for c in text)
 
 
 class _KeyboardMouse:
@@ -87,10 +93,19 @@ class _KeyboardMouse:
     FAILSAFE = True  # no-op attribute kept so old code doesn't crash
 
     _KEY_MAP = {
-        "enter": "{ENTER}", "tab": "{TAB}", "escape": "{ESC}",
-        "pagedown": "{PGDN}", "space": "{SPACE}", "backspace": "{BACKSPACE}",
-        "delete": "{DELETE}", "up": "{UP}", "down": "{DOWN}",
-        "left": "{LEFT}", "right": "{RIGHT}", "home": "{HOME}", "end": "{END}",
+        "enter": "{ENTER}",
+        "tab": "{TAB}",
+        "escape": "{ESC}",
+        "pagedown": "{PGDN}",
+        "space": "{SPACE}",
+        "backspace": "{BACKSPACE}",
+        "delete": "{DELETE}",
+        "up": "{UP}",
+        "down": "{DOWN}",
+        "left": "{LEFT}",
+        "right": "{RIGHT}",
+        "home": "{HOME}",
+        "end": "{END}",
     }
 
     @staticmethod
@@ -116,7 +131,7 @@ class _KeyboardMouse:
     @staticmethod
     def click(x=None, y=None):
         if x is not None and y is not None:
-            _pw_mouse.click(button='left', coords=(int(x), int(y)))
+            _pw_mouse.click(button="left", coords=(int(x), int(y)))
 
     @staticmethod
     def moveTo(x, y, duration=0.0):
@@ -211,12 +226,15 @@ class SmartpointAutomation:
         self._last_terminal_text = ""  # Cache for deduplicating reads
         self._cal = _calibration_mod.load_calibration()
         self._line_height = self._cal["line_height"]
-        self._content_top_padding = self._cal.get("content_top_padding", CONTENT_TOP_PADDING)
+        self._content_top_padding = self._cal.get(
+            "content_top_padding", CONTENT_TOP_PADDING
+        )
         self.logger.debug("Using Smartpoint input backend: %s", _INPUT_BACKEND)
         self.logger.debug("Using Smartpoint clipboard backend: %s", _CLIPBOARD_BACKEND)
         self.logger.debug(
             "Display calibration: line_height=%d, source=%s",
-            self._line_height, self._cal.get("source", "?")
+            self._line_height,
+            self._cal.get("source", "?"),
         )
 
     def _raise_if_stopped(self) -> None:
@@ -294,14 +312,14 @@ class SmartpointAutomation:
                 )
                 # Escape regex special chars so the title is matched literally as substring
                 title_pattern = re.escape(title)
-                app = _PWApp(backend="uia").connect(title_re=f".*{title_pattern}.*", timeout=0.5)
+                app = _PWApp(backend="uia").connect(
+                    title_re=f".*{title_pattern}.*", timeout=0.5
+                )
                 candidate = app.window(title_re=f".*{title_pattern}.*")
                 if candidate.exists():
                     wtext = candidate.window_text()
                     if self._is_self_window(wtext):
-                        self.logger.info(
-                            f"    Skipping self-match: '{wtext}'"
-                        )
+                        self.logger.info(f"    Skipping self-match: '{wtext}'")
                     else:
                         self.window = candidate
                         self.window_title = title
@@ -323,9 +341,7 @@ class SmartpointAutomation:
                 if candidate.exists():
                     wtext = candidate.window_text()
                     if self._is_self_window(wtext):
-                        self.logger.info(
-                            f"    Skipping self-match: '{wtext}'"
-                        )
+                        self.logger.info(f"    Skipping self-match: '{wtext}'")
                     else:
                         self.window = candidate
                         self.window_title = title
@@ -346,9 +362,7 @@ class SmartpointAutomation:
                 if candidate.exists():
                     wtext = candidate.window_text()
                     if self._is_self_window(wtext):
-                        self.logger.info(
-                            f"    Skipping self-match: '{wtext}'"
-                        )
+                        self.logger.info(f"    Skipping self-match: '{wtext}'")
                     else:
                         self.window = candidate
                         self.window_title = title
@@ -702,14 +716,18 @@ class SmartpointAutomation:
                                 for attr in ("DocumentRange", "documentRange"):
                                     rng = getattr(raw_pattern, attr, None)
                                     if rng is not None:
-                                        get_text = getattr(rng, "GetText", None) or getattr(rng, "getText", None)
+                                        get_text = getattr(
+                                            rng, "GetText", None
+                                        ) or getattr(rng, "getText", None)
                                         if get_text is not None:
                                             text = get_text(-1)
                                             if text and text.strip():
                                                 return text
                                         break
                     except Exception as exc:
-                        self.logger.debug(f"      [UIA] direct GetCurrentPattern failed: {exc}")
+                        self.logger.debug(
+                            f"      [UIA] direct GetCurrentPattern failed: {exc}"
+                        )
 
                     # Path 3: Legacy IAccessible Value (smaller text but sometimes works)
                     try:
@@ -718,7 +736,9 @@ class SmartpointAutomation:
                         if val and val.strip():
                             return val
                     except Exception as exc:
-                        self.logger.debug(f"      [UIA] legacy_properties failed: {exc}")
+                        self.logger.debug(
+                            f"      [UIA] legacy_properties failed: {exc}"
+                        )
 
                     break  # found the right element, no point checking siblings
                 except Exception:
@@ -734,9 +754,7 @@ class SmartpointAutomation:
             return text
         text = self._read_text_via_uia()
         if text.strip():
-            self.logger.info(
-                "      [COPY] Captured terminal text via UIA TextPattern."
-            )
+            self.logger.info("      [COPY] Captured terminal text via UIA TextPattern.")
             return text
         return ""
 
@@ -940,7 +958,9 @@ class SmartpointAutomation:
                 self._sleep(max(constants.CLICK_DELAY, 0.1))
 
                 if self._is_window_foreground():
-                    text = _copy_once(wait_after_copy=max(0.15, constants.COPY_DELAY * 2))
+                    text = _copy_once(
+                        wait_after_copy=max(0.15, constants.COPY_DELAY * 2)
+                    )
                 else:
                     self.logger.warning(
                         "      [FOCUS] Heavy clipboard fallback could not confirm foreground; trying focus-independent paths."
@@ -1338,7 +1358,6 @@ class SmartpointAutomation:
             (popup_text, restored_page_text)
         """
 
-
         if not self.focus():
             return "", page_text
 
@@ -1357,8 +1376,8 @@ class SmartpointAutomation:
                 continue
 
             if raw_line:
-                normalized_line = _RE_WHITESPACE.sub(" ",upper_line.strip())
-                normalized_raw_line = _RE_WHITESPACE.sub(" ",raw_line)
+                normalized_line = _RE_WHITESPACE.sub(" ", upper_line.strip())
+                normalized_raw_line = _RE_WHITESPACE.sub(" ", raw_line)
                 if normalized_line == normalized_raw_line:
                     amount_match = re.search(amount_pattern, line)
                     if amount_match:
@@ -1834,7 +1853,9 @@ class SmartpointAutomation:
 
         return result
 
-    def run_fzs_command(self, from_currency: str, to_currency: str, amount: int = 1) -> str:
+    def run_fzs_command(
+        self, from_currency: str, to_currency: str, amount: int = 1
+    ) -> str:
         """
         Run an FZS (Currency Conversion) command.
         Example: FZSUSD1BDT
@@ -1975,7 +1996,11 @@ class SmartpointAutomation:
                 else len(lines)
             )
             for idx in range(block_start, block_end):
-                if "+TQ" in lines[idx] or "BOOK" in lines[idx] or "\xabBOOK\xbb" in lines[idx]:
+                if (
+                    "+TQ" in lines[idx]
+                    or "BOOK" in lines[idx]
+                    or "\xabBOOK\xbb" in lines[idx]
+                ):
                     target_line = idx
                     break
             if target_line is not None:
@@ -1986,7 +2011,8 @@ class SmartpointAutomation:
 
         # Fallback: search all lines for BOOK/+TQ
         book_lines = [
-            idx for idx, line in enumerate(lines)
+            idx
+            for idx, line in enumerate(lines)
             if "+TQ" in line or "BOOK" in line or "\xabBOOK\xbb" in line
         ]
         self.logger.info(
@@ -2056,13 +2082,15 @@ class SmartpointAutomation:
         if char_x is not None:
             char_x_delta = char_x - base_x
             if abs(char_x_delta) >= 8:
-                offsets.extend([
-                    (char_x_delta, 0),
-                    (char_x_delta, -9),
-                    (char_x_delta, 9),
-                    (char_x_delta + 12, 0),
-                    (char_x_delta - 12, 0),
-                ])
+                offsets.extend(
+                    [
+                        (char_x_delta, 0),
+                        (char_x_delta, -9),
+                        (char_x_delta, 9),
+                        (char_x_delta + 12, 0),
+                        (char_x_delta - 12, 0),
+                    ]
+                )
         offsets.extend([(0, -18), (0, 18)])
 
         # ── Phase D: prepend saved calibration offset so known-good column
@@ -2102,7 +2130,12 @@ class SmartpointAutomation:
         if effective_saved_offset is not None:
             sx, sy = effective_saved_offset
             saved_prefix = [
-                (sx, sy), (sx, 0), (sx, -9), (sx, 9), (sx, -18), (sx, 18),
+                (sx, sy),
+                (sx, 0),
+                (sx, -9),
+                (sx, 9),
+                (sx, -18),
+                (sx, 18),
             ]
             seen: set[tuple[int, int]] = set()
             reordered: list[tuple[int, int]] = []
@@ -2214,7 +2247,9 @@ class SmartpointAutomation:
                     f"      [BOOK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]"
                 )
 
-                pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+                pyautogui.moveTo(
+                    click_x, click_y, duration=constants.MOUSE_MOVE_DURATION
+                )
                 post_click_t = time.time()
                 pyautogui.click()
                 result = self._wait_for_response(
@@ -2262,7 +2297,9 @@ class SmartpointAutomation:
                     "Continuing fan-out..."
                 )
                 text_before = result
-                pyautogui.press("escape", presses=2, interval=constants.KEYBOARD_INTERVAL)
+                pyautogui.press(
+                    "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
+                )
                 time.sleep(constants.ESCAPE_CLEAR_DELAY)
 
             self.logger.warning(
@@ -2436,7 +2473,6 @@ class SmartpointAutomation:
             y_offsets: List of vertical pixel offsets to try (deprecated if use_2d_offsets=True)
             use_2d_offsets: If True, use 2D (x,y) offset tuples for better tolerance
         """
-
 
         if not self.focus():
             return ""
@@ -2793,13 +2829,15 @@ class SmartpointAutomation:
         if char_x is not None:
             char_x_delta = char_x - base_x
             if char_x_delta >= 10:
-                offsets.extend([
-                    (char_x_delta, 0),
-                    (char_x_delta, -9),
-                    (char_x_delta, 9),
-                    (char_x_delta - 12, 0),
-                    (char_x_delta + 12, 0),
-                ])
+                offsets.extend(
+                    [
+                        (char_x_delta, 0),
+                        (char_x_delta, -9),
+                        (char_x_delta, 9),
+                        (char_x_delta - 12, 0),
+                        (char_x_delta + 12, 0),
+                    ]
+                )
 
         # Tertiary wave: wider Y (±18 ≈ ±1 line) for miscalibrated line_height.
         offsets.extend([(0, -18), (0, 18)])
@@ -2986,7 +3024,9 @@ class SmartpointAutomation:
                     f"      [D-CLICK] Trying ({click_x}, {click_y}) [x={x_off}, y={y_off}]"
                 )
 
-                pyautogui.moveTo(click_x, click_y, duration=constants.MOUSE_MOVE_DURATION)
+                pyautogui.moveTo(
+                    click_x, click_y, duration=constants.MOUSE_MOVE_DURATION
+                )
                 post_click_t = time.time()
                 pyautogui.click()
                 result = self._wait_for_response(
@@ -3056,7 +3096,9 @@ class SmartpointAutomation:
                             )
                             text_before = result
                             pyautogui.press(
-                                "escape", presses=2, interval=constants.KEYBOARD_INTERVAL
+                                "escape",
+                                presses=2,
+                                interval=constants.KEYBOARD_INTERVAL,
                             )
                             time.sleep(constants.ESCAPE_CLEAR_DELAY)
                             continue
@@ -3116,8 +3158,14 @@ class SmartpointAutomation:
             except Exception:
                 _base_y_in_rect = True  # assume on-screen if rect unreadable
 
-            if (saved_offset is not None or saved_char_x_offset is not None) and _base_y_in_rect:
-                stale = saved_char_x_offset if saved_char_x_offset is not None else saved_offset
+            if (
+                saved_offset is not None or saved_char_x_offset is not None
+            ) and _base_y_in_rect:
+                stale = (
+                    saved_char_x_offset
+                    if saved_char_x_offset is not None
+                    else saved_offset
+                )
                 self._cal = _calibration_mod.clear_d_click_offset(self._cal)
                 _calibration_mod.save_calibration(self._cal)
                 self.logger.warning(
@@ -3151,9 +3199,7 @@ class SmartpointAutomation:
                     # Stray clicks during the 15s wait (focus recovery,
                     # tab clicks, etc.) must not be attributed as D-learn
                     # events.
-                    if not self._is_manual_click_in_d_region(
-                        ux, uy, base_x, base_y
-                    ):
+                    if not self._is_manual_click_in_d_region(ux, uy, base_x, base_y):
                         self.logger.info(
                             f"      [D-CLICK] Ignored stray click at ({ux},{uy}) "
                             f"during 15s manual fallback — outside D-row region."
@@ -3191,7 +3237,6 @@ class SmartpointAutomation:
         This approach: find the line, click at multiple LEFT-side x_ratios (0.05-0.35)
         to reliably hit the actual green hyperlink text.
         """
-
 
         if not self.focus():
             return None
@@ -3235,7 +3280,9 @@ class SmartpointAutomation:
         target_line_text = lines[target_line_idx]
         link_col = self._find_link_char_column(target_line_text, _RE_CURRENCY_FARES)
         if link_col is not None:
-            base_x, _ = self._text_line_to_pixel(fd_text, target_line_idx, char_idx=link_col)
+            base_x, _ = self._text_line_to_pixel(
+                fd_text, target_line_idx, char_idx=link_col
+            )
             x_positions = [base_x, base_x - 20, base_x + 20, base_x - 40, base_x + 40]
             self.logger.info(
                 f"      [CURRENCY] Link at col {link_col} -> base_x={base_x}"
@@ -3245,7 +3292,9 @@ class SmartpointAutomation:
                 int(rect.left + rect.width() * r)
                 for r in [0.15, 0.10, 0.20, 0.25, 0.05, 0.30, 0.35]
             ]
-            self.logger.debug("      [CURRENCY] Char col not found — using ratio fallback")
+            self.logger.debug(
+                "      [CURRENCY] Char col not found — using ratio fallback"
+            )
 
         y_offsets = [0, -self._line_height // 2, self._line_height // 2]
 
@@ -3290,7 +3339,9 @@ class SmartpointAutomation:
                     )
                     # Phase C: record Y offset delta for self-correction
                     if y_off != 0:
-                        self._cal = _calibration_mod.record_click_delta(self._cal, y_off)
+                        self._cal = _calibration_mod.record_click_delta(
+                            self._cal, y_off
+                        )
                         self._line_height = self._cal["line_height"]
                         _calibration_mod.save_calibration(self._cal)
 
@@ -3431,9 +3482,7 @@ class SmartpointAutomation:
             safe_x, safe_y = self._get_terminal_focus_point()
             self._safe_focus_click(safe_x, safe_y)
             time.sleep(constants.COPY_DELAY)
-            pyautogui.press(
-                "pagedown", presses=4, interval=constants.KEYBOARD_INTERVAL
-            )
+            pyautogui.press("pagedown", presses=4, interval=constants.KEYBOARD_INTERVAL)
             time.sleep(constants.PAGEDOWN_SCROLL_DELAY)
             scrolled_text = self._copy_terminal_text()
             if self._has_dropdown_activated(scrolled_text):
@@ -3455,15 +3504,26 @@ class SmartpointAutomation:
             return False
 
         offsets = [
-            (0, 0), (0, -10), (0, 10), (-5, 0), (5, 0),
-            (0, -20), (0, 20), (-5, -10), (5, -10), (-5, 10), (5, 10),
-            (0, -30), (0, 30),
+            (0, 0),
+            (0, -10),
+            (0, 10),
+            (-5, 0),
+            (5, 0),
+            (0, -20),
+            (0, 20),
+            (-5, -10),
+            (5, -10),
+            (-5, 10),
+            (5, 10),
+            (0, -30),
+            (0, 30),
         ]
 
         for base_x, base_y, text_before, label in candidates:
             for x_off, y_off in offsets:
                 pyautogui.moveTo(
-                    base_x + x_off, base_y + y_off,
+                    base_x + x_off,
+                    base_y + y_off,
                     duration=constants.MOUSE_MOVE_DURATION,
                 )
                 pyautogui.click()
@@ -3490,7 +3550,9 @@ class SmartpointAutomation:
         """Reset calibration to DPI-auto values and reload into this instance."""
         self._cal = _calibration_mod.reset_calibration()
         self._line_height = self._cal["line_height"]
-        self._content_top_padding = self._cal.get("content_top_padding", CONTENT_TOP_PADDING)
+        self._content_top_padding = self._cal.get(
+            "content_top_padding", CONTENT_TOP_PADDING
+        )
         self.logger.info(
             f"[CAL] Recalibrated: line_height={self._line_height}, source={self._cal.get('source')}"
         )
@@ -3543,8 +3605,6 @@ class SmartpointAutomation:
         """
         if not text:
             return None
-
-
 
         # First check if the currency redirect message exists at all
         match = _RE_CURRENCY_CODE_FARES.search(text.upper())

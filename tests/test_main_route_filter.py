@@ -194,8 +194,12 @@ def test_resolve_tax_airport_query_matches_unique_partial_name():
 
 
 def test_resolve_tax_airport_query_rejects_ambiguous_country_name():
-    with pytest.raises(ValidationError, match="matches multiple configured tax airports"):
-        _resolve_tax_airport_query("uae", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG)
+    with pytest.raises(
+        ValidationError, match="matches multiple configured tax airports"
+    ):
+        _resolve_tax_airport_query(
+            "uae", TEST_TAX_CONFIG["tax_airports"], TEST_TAX_CONFIG
+        )
 
 
 def test_resolve_tax_airport_query_matches_global_airport_code():
@@ -203,7 +207,9 @@ def test_resolve_tax_airport_query_matches_global_airport_code():
         {"city_names": {}, "tax_airports": {}, "airport_country_codes": {}}
     )
 
-    code, info, matched_alias = _resolve_tax_airport_query("SYD", searchable, TEST_TAX_CONFIG)
+    code, info, matched_alias = _resolve_tax_airport_query(
+        "SYD", searchable, TEST_TAX_CONFIG
+    )
 
     assert code == "SYD"
     assert info["country"] == "AU"

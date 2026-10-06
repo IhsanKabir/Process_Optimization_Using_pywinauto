@@ -170,7 +170,9 @@ def parse_fare_display(raw_text: str) -> dict:
             )
 
             # Check if this line was O-prefixed (unsellable indicator)
-            is_o_prefixed = line.lstrip().startswith("O") and line.lstrip()[1:2].isdigit()
+            is_o_prefixed = (
+                line.lstrip().startswith("O") and line.lstrip()[1:2].isdigit()
+            )
 
             fares.append(
                 {
@@ -279,7 +281,12 @@ def select_report_fare_targets(
     # Pre-build lookup dict: (is_rt, fare_basis, fare, is_unsaleable) -> [fares]
     fare_lookup = {}
     for fare in fares:
-        key = (fare.get("is_rt"), fare.get("fare_basis"), fare.get("fare"), bool(fare.get("is_unsaleable")))
+        key = (
+            fare.get("is_rt"),
+            fare.get("fare_basis"),
+            fare.get("fare"),
+            bool(fare.get("is_unsaleable")),
+        )
         fare_lookup.setdefault(key, []).append(fare)
 
     for grouped_rbd, grouped_data in grouped_fares.items():
@@ -345,5 +352,3 @@ def generate_file_key(command_info: dict) -> str:
     Example: FDDACMLE/BG -> BG_DAC-MLE
     """
     return f"{command_info['airline']}_{command_info['route']}"
-
-

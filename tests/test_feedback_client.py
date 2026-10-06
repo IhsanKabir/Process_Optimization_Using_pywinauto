@@ -26,6 +26,7 @@ def _make_local_temp_dir(name: str) -> Path:
 
 # ── Payload builder ────────────────────────────────────────────────────────────
 
+
 def test_build_feedback_payload_includes_device_context(monkeypatch):
     monkeypatch.setattr("feedback_client.socket.gethostname", lambda: "DESKTOP-01")
     monkeypatch.setattr("feedback_client.platform.platform", lambda: "Windows-11")
@@ -70,7 +71,10 @@ def test_build_payload_raises_on_missing_message():
 
 # ── PII scrubber ───────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("key", ["password", "PASSWORD", "token", "api_key", "secret", "auth", "cred", "pwd"])
+
+@pytest.mark.parametrize(
+    "key", ["password", "PASSWORD", "token", "api_key", "secret", "auth", "cred", "pwd"]
+)
 def test_scrub_context_redacts_pii_keys(key):
     result = _scrub_context({key: "supersecret"})
     assert result[key] == "[REDACTED]"
@@ -119,6 +123,7 @@ def test_scrub_context_redacts_pii_key_in_list():
 
 # ── Default URL resolution ─────────────────────────────────────────────────────
 
+
 def test_default_api_base_url_used_when_env_and_json_are_empty(monkeypatch):
     tmp_path = _make_local_temp_dir("tmp_test_feedback_default_url")
     monkeypatch.delenv("TRAVELPORT_AGENT_API_BASE_URL", raising=False)
@@ -131,7 +136,9 @@ def test_default_api_base_url_used_when_env_and_json_are_empty(monkeypatch):
 
 def test_env_var_overrides_default(monkeypatch):
     tmp_path = _make_local_temp_dir("tmp_test_feedback_env_override")
-    monkeypatch.setenv("TRAVELPORT_AGENT_API_BASE_URL", "https://custom.example.com/api")
+    monkeypatch.setenv(
+        "TRAVELPORT_AGENT_API_BASE_URL", "https://custom.example.com/api"
+    )
     try:
         config = load_agent_config(config_path=tmp_path / "nonexistent.json")
         assert config.api_base_url == "https://custom.example.com/api"
@@ -142,7 +149,9 @@ def test_env_var_overrides_default(monkeypatch):
 def test_json_overrides_default():
     tmp_path = _make_local_temp_dir("tmp_test_feedback_json_override")
     cfg_file = tmp_path / "agent_config.json"
-    cfg_file.write_text(json.dumps({"api_base_url": "https://json.example.com"}), encoding="utf-8")
+    cfg_file.write_text(
+        json.dumps({"api_base_url": "https://json.example.com"}), encoding="utf-8"
+    )
     try:
         config = load_agent_config(config_path=cfg_file)
         assert config.api_base_url == "https://json.example.com"
@@ -151,6 +160,7 @@ def test_json_overrides_default():
 
 
 # ── Happy path ─────────────────────────────────────────────────────────────────
+
 
 def test_submit_feedback_posts_json(monkeypatch):
     captured = {}
@@ -197,7 +207,10 @@ def test_submit_feedback_posts_json(monkeypatch):
 
 # ── Failure classification ─────────────────────────────────────────────────────
 
-def _make_http_error(code: int, body: bytes = b"error detail") -> urllib.error.HTTPError:
+
+def _make_http_error(
+    code: int, body: bytes = b"error detail"
+) -> urllib.error.HTTPError:
     return urllib.error.HTTPError(
         url="https://example.com/feedback",
         code=code,

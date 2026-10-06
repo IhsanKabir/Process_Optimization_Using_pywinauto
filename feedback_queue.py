@@ -76,5 +76,7 @@ def drain_feedback_queue(submit_fn) -> tuple[int, int]:
 
     _save_queue(remaining)
     if sent:
-        logger.info("feedback_queue: drained %d item(s); %d remaining", sent, len(remaining))
+        logger.info(
+            "feedback_queue: drained %d item(s); %d remaining", sent, len(remaining)
+        )
     return sent, len(remaining)

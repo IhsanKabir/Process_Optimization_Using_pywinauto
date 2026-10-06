@@ -37,12 +37,20 @@ DATE_FMT = "%Y-%m-%d"
 # "122.94", "122.94 (04-APR-26)", or "122,940.50".
 _RE_RATE_NUM = re.compile(r"-?\d+(?:\.\d+)?")
 # Extracts a date bracket like "(04-APR-26)" or "(04 APR 2026)".
-_RE_BRACKET_DATE = re.compile(
-    r"\(\s*(\d{1,2})[-\s]+([A-Za-z]{3})[-\s]+(\d{2,4})\s*\)"
-)
+_RE_BRACKET_DATE = re.compile(r"\(\s*(\d{1,2})[-\s]+([A-Za-z]{3})[-\s]+(\d{2,4})\s*\)")
 _MONTH_MAP = {
-    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
-    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
 }
 
 
@@ -105,7 +113,9 @@ def _archive_dir() -> str:
 
 
 def _rate_file(snapshot_date: date) -> str:
-    return os.path.join(_archive_dir(), f"rates_{snapshot_date.strftime(DATE_FMT)}.json")
+    return os.path.join(
+        _archive_dir(), f"rates_{snapshot_date.strftime(DATE_FMT)}.json"
+    )
 
 
 def _tracker_file() -> str:
@@ -131,7 +141,9 @@ def load_snapshot(snapshot_date: date) -> Optional[RateSnapshot]:
         parsed = datetime.strptime(raw_date, DATE_FMT).date()
     except ValueError:
         parsed = snapshot_date
-    return RateSnapshot(snapshot_date=parsed, rates=rates, source=data.get("source", "live"))
+    return RateSnapshot(
+        snapshot_date=parsed, rates=rates, source=data.get("source", "live")
+    )
 
 
 def save_snapshot(snapshot: RateSnapshot) -> str:
@@ -253,7 +265,8 @@ def import_previous_rates(path: str, snapshot_date: date) -> RateSnapshot:
         save_usd_tracker(UsdTracker(rate=usd_rate, last_changed_date=usd_last_changed))
         logger.info(
             "  [IMPORT] Seeded USD tracker: rate=%s, last_changed=%s",
-            usd_rate, usd_last_changed.strftime(DATE_FMT),
+            usd_rate,
+            usd_last_changed.strftime(DATE_FMT),
         )
     return snapshot
 
@@ -325,7 +338,8 @@ def _read_xlsx_rates(path: str) -> tuple[dict, Optional[date]]:
 
     def _is_header(cells) -> bool:
         return any(
-            isinstance(v, str) and v.strip().lower() in ("currency", "rate", "exchange rate to bdt")
+            isinstance(v, str)
+            and v.strip().lower() in ("currency", "rate", "exchange rate to bdt")
             for v in cells
             if v is not None
         )

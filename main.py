@@ -13,6 +13,7 @@ Usage:
 # coordinates are used consistently by both pyautogui and UIAutomation.
 try:
     import ctypes as _ctypes
+
     _ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
     pass
@@ -900,7 +901,9 @@ def _extract_tax_airport_queries(
     return normalized_queries or None
 
 
-def _tax_airport_display_name(airport_code: str, airport_info: dict, config: dict) -> str:
+def _tax_airport_display_name(
+    airport_code: str, airport_info: dict, config: dict
+) -> str:
     """Return the most user-friendly label for a configured tax airport."""
     city_name = str(config.get("city_names", {}).get(airport_code, "") or "").strip()
     if city_name:
@@ -1049,7 +1052,9 @@ def _resolve_tax_airport_query(
 
     query_key = query_text.casefold()
     search_scope = (
-        "airports" if _has_global_tax_airport_search(tax_airports) else "configured tax airports"
+        "airports"
+        if _has_global_tax_airport_search(tax_airports)
+        else "configured tax airports"
     )
 
     for airport_code, airport_info in tax_airports.items():
@@ -1113,7 +1118,9 @@ def _resolve_tax_airport_query(
         "airport",
         query,
         "not found in configured tax airports. Valid options: "
-        + _format_tax_airport_candidates(sorted(tax_airports.keys()), tax_airports, config),
+        + _format_tax_airport_candidates(
+            sorted(tax_airports.keys()), tax_airports, config
+        ),
     )
 
 
@@ -1177,7 +1184,9 @@ def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
                 continue
 
             selected_info = dict(airport_info)
-            display_name = _tax_airport_display_name(airport_code, selected_info, config)
+            display_name = _tax_airport_display_name(
+                airport_code, selected_info, config
+            )
             selected_info["_display_name"] = display_name
             selected_info["_matched_alias"] = matched_alias
             selected_tax_airports[airport_code] = selected_info
@@ -1203,7 +1212,9 @@ def _select_tax_airports_for_run(config: dict, args) -> tuple[dict, dict]:
     if not tax_airports:
         return tax_airports, metadata
 
-    commands_file = os.path.join(SCRIPT_DIR, config.get("commands_file", "commands.txt"))
+    commands_file = os.path.join(
+        SCRIPT_DIR, config.get("commands_file", "commands.txt")
+    )
     tax_airports, skipped = _filter_tax_airports_by_configured_routes(
         tax_airports, commands_file
     )
@@ -1276,7 +1287,6 @@ def _find_pure_airline_option_in_fs_page(
     return None, None, len(options)
 
 
-
 def _should_recheck_same_fs_page(
     current_fs_page: str, refreshed_fs_page: str, airline: str
 ) -> bool:
@@ -1341,6 +1351,7 @@ def _run_currency_report_mode(args, config, stop_event):
                 sys.exit(1)
         else:
             from datetime import timedelta
+
             prev_date = _date.today() - timedelta(days=1)
         try:
             snap = import_previous_rates(args.load_previous_rates, prev_date)
@@ -1425,6 +1436,7 @@ def _run_currency_report_mode(args, config, stop_event):
     )
     try:
         from usage_tracker import increment as _inc
+
         _inc("currency_runs")
     except Exception:
         pass
@@ -1721,10 +1733,13 @@ def main(prebuilt_args=None, stop_event=None):
 
     logger.info("=" * 60)
     mode_label = (
-        "PENALTY" if args.penalty
-        else "TAX" if args.tax
-        else "BAGGAGE" if getattr(args, "only_baggage", False)
-        else "FARE"
+        "PENALTY"
+        if args.penalty
+        else (
+            "TAX"
+            if args.tax
+            else "BAGGAGE" if getattr(args, "only_baggage", False) else "FARE"
+        )
     )
     logger.info(f"  TRAVELPORT {mode_label} AUTOMATION TOOL")
     logger.info(f"  {datetime.now().strftime('%d-%b-%Y %H:%M')}")
@@ -1784,9 +1799,7 @@ def main(prebuilt_args=None, stop_event=None):
                 )
                 for item in tax_selection["resolutions"]
             )
-            logger.info(
-                f"  [FILTER] Tax airports resolved: {resolution_summary}"
-            )
+            logger.info(f"  [FILTER] Tax airports resolved: {resolution_summary}")
         elif tax_selection["skipped_by_route_filter"] > 0:
             logger.info(
                 f"  Filtered to {len(tax_airports)} airports matching configured routes "
@@ -1891,18 +1904,22 @@ def main(prebuilt_args=None, stop_event=None):
             #      (route, airline) pairs → generate the missing pairs so the user's airline
             #      list is fully honored. Previously these were silently dropped.
             try:
-                generated, explicit_routes, explicit_airlines = _build_explicit_route_commands(
-                    args.route,
-                    args.airline,
-                    config,
-                    one_direction=args.one_direction,
+                generated, explicit_routes, explicit_airlines = (
+                    _build_explicit_route_commands(
+                        args.route,
+                        args.airline,
+                        config,
+                        one_direction=args.one_direction,
+                    )
                 )
             except (ValidationError, ConfigurationError) as e:
                 logger.error(f"  {e}")
                 sys.exit(1)
 
             existing_cmds = {c["command"].upper() for c in commands}
-            missing = [g for g in generated if g["command"].upper() not in existing_cmds]
+            missing = [
+                g for g in generated if g["command"].upper() not in existing_cmds
+            ]
 
             if not commands and generated:
                 commands = generated
@@ -1999,12 +2016,15 @@ def main(prebuilt_args=None, stop_event=None):
                 logger.info(f"  [PARTIAL] Partial penalty report saved: {result}")
                 return result
             except Exception as exc:
-                logger.warning(f"  [PARTIAL] Could not generate partial penalty report: {exc}")
+                logger.warning(
+                    f"  [PARTIAL] Could not generate partial penalty report: {exc}"
+                )
 
         # Fare / tax partial report
         if partial_data:
             try:
                 import traceback as _tb
+
                 logger.info(f"  [PARTIAL] Processing {len(partial_data)} route(s)...")
                 os.makedirs(REPORTS_DIR, exist_ok=True)
                 if getattr(args, "tax", False):
@@ -2012,13 +2032,19 @@ def main(prebuilt_args=None, stop_event=None):
                         REPORTS_DIR, f"tax_report_{timestamp_full}_partial.xlsx"
                     )
                     from tax_report import generate_tax_report
-                    result = generate_tax_report(partial_data, partial_path, None, config)
+
+                    result = generate_tax_report(
+                        partial_data, partial_path, None, config
+                    )
                 else:
                     partial_path = os.path.join(
                         REPORTS_DIR, f"fare_report_{timestamp_full}_partial.xlsx"
                     )
                     result = generate_report(
-                        partial_data, partial_path, None, config,
+                        partial_data,
+                        partial_path,
+                        None,
+                        config,
                         only_currency=getattr(args, "only_currency", False),
                     )
                 logger.info(f"  [PARTIAL] Partial report saved: {result}")
@@ -2069,7 +2095,9 @@ def main(prebuilt_args=None, stop_event=None):
         automation = SmartpointAutomation(stop_event=_stop)
         try:
             if not automation.connect():
-                logger.error("  Please ensure Smartpoint is open and the title matches.")
+                logger.error(
+                    "  Please ensure Smartpoint is open and the title matches."
+                )
                 sys.exit(1)
 
             username, password, pcc = CredentialManager.get_credentials()
@@ -2097,7 +2125,10 @@ def main(prebuilt_args=None, stop_event=None):
 
             if use_tqdm:
                 command_iter = tqdm(
-                    commands, desc="Extracting penalties", unit="cmd", file=_tqdm_stream()
+                    commands,
+                    desc="Extracting penalties",
+                    unit="cmd",
+                    file=_tqdm_stream(),
                 )
             else:
                 command_iter = commands
@@ -2159,7 +2190,9 @@ def main(prebuilt_args=None, stop_event=None):
             try:
                 automation.show_completion_signal()
             except Exception as _sig_err:
-                logger.debug(f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}")
+                logger.debug(
+                    f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}"
+                )
             logger.info("")
         except StopRequested:
             return _stop_run(
@@ -2183,6 +2216,7 @@ def main(prebuilt_args=None, stop_event=None):
         result_path = generate_penalty_report(penalty_records, output_path)
         try:
             from usage_tracker import increment as _inc
+
             _inc("penalty_runs")
         except Exception:
             pass
@@ -2243,7 +2277,9 @@ def main(prebuilt_args=None, stop_event=None):
                 tax_total = len(tax_airports)
                 for index, (airport_code, airport_info) in enumerate(airport_items, 1):
                     if _stop and _stop.is_set():
-                        logger.info("  [STOP] Stop requested - finishing after this point.")
+                        logger.info(
+                            "  [STOP] Stop requested - finishing after this point."
+                        )
                         break
                     country_code = airport_info["country"]
                     display_name = _tax_airport_display_name(
@@ -2299,14 +2335,18 @@ def main(prebuilt_args=None, stop_event=None):
 
                         if not detail_text or len(detail_text.strip()) < 20:
                             failed_commands.append(f"{country_code}/{t['code']}")
-                            logger.warning(f"    Failed to extract details for {t['code']}")
+                            logger.warning(
+                                f"    Failed to extract details for {t['code']}"
+                            )
                             continue
 
                         logger.debug(
                             f"      [DEBUG] Raw detail text first 200 chars: {detail_text[:200]}"
                         )
 
-                        detail_data = parse_ftax_detail(detail_text, t["code"], t["name"])
+                        detail_data = parse_ftax_detail(
+                            detail_text, t["code"], t["name"]
+                        )
                         airport_tax_details.append(detail_data)
                         logger.info(
                             f"      {t['code']} -> {len(detail_data['sections'])} sections extracted."
@@ -2329,16 +2369,24 @@ def main(prebuilt_args=None, stop_event=None):
                 try:
                     automation.show_completion_signal()
                 except Exception as _sig_err:
-                    logger.debug(f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}")
+                    logger.debug(
+                        f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}"
+                    )
             except StopRequested:
-                return _stop_run("  [STOP] Stop requested - tax extraction stopped.", partial_data=tax_data if tax_data else None)
+                return _stop_run(
+                    "  [STOP] Stop requested - tax extraction stopped.",
+                    partial_data=tax_data if tax_data else None,
+                )
         else:
             logger.error("  Manual loading of taxes not implemented. Use --auto.")
             sys.exit(1)
 
         all_route_data = tax_data  # Alias for reporting
         if _stop and _stop.is_set():
-            return _stop_run("  [STOP] Stop requested - skipping tax report generation.", partial_data=all_route_data)
+            return _stop_run(
+                "  [STOP] Stop requested - skipping tax report generation.",
+                partial_data=all_route_data,
+            )
         logger.info("")
 
     # BAGGAGE-ONLY MODE EXTRACTION
@@ -2383,7 +2431,9 @@ def main(prebuilt_args=None, stop_event=None):
 
                 for window_start in (FS_DATE_OFFSET_START, FS_DATE_FALLBACK_OFFSET):
                     _got_bag = False
-                    for fs_date_offset in range(window_start, window_start + FS_DATE_WINDOW_DAYS, FS_DATE_STEP):
+                    for fs_date_offset in range(
+                        window_start, window_start + FS_DATE_WINDOW_DAYS, FS_DATE_STEP
+                    ):
                         if _stop and _stop.is_set():
                             break
                         date_str = (
@@ -2391,12 +2441,14 @@ def main(prebuilt_args=None, stop_event=None):
                             .strftime("%d%b")
                             .upper()
                         )
-                        fs_result = automation.run_fs_command(src, dst, date_str, airline)
+                        fs_result = automation.run_fs_command(
+                            src, dst, date_str, airline
+                        )
                         if not fs_result or _fs_output_is_no_results(fs_result):
                             continue
 
-                        target_option_index, _, _ = _find_pure_airline_option_in_fs_page(
-                            fs_result, airline
+                        target_option_index, _, _ = (
+                            _find_pure_airline_option_in_fs_page(fs_result, airline)
                         )
                         if target_option_index is None:
                             continue
@@ -2417,7 +2469,9 @@ def main(prebuilt_args=None, stop_event=None):
                                         )
                                         _got_bag = True
                             elif _book_screen:
-                                logger.info(f"    [BAG] NO B.F. TO DISPLAY for {file_key}.")
+                                logger.info(
+                                    f"    [BAG] NO B.F. TO DISPLAY for {file_key}."
+                                )
                             automation.send_ignore_command()
                         except Exception as _be:
                             logger.warning(f"    [BAG] Error for {file_key}: {_be}")
@@ -2621,7 +2675,9 @@ def main(prebuilt_args=None, stop_event=None):
                             )
 
                             backup_path = os.path.join(RAW_DATA_DIR, f"{file_key}.txt")
-                            os.makedirs(os.path.dirname(backup_path) or ".", exist_ok=True)
+                            os.makedirs(
+                                os.path.dirname(backup_path) or ".", exist_ok=True
+                            )
                             try:
                                 with open(backup_path, "w", encoding="utf-8") as f:
                                     f.write(terminal_text)
@@ -2640,7 +2696,9 @@ def main(prebuilt_args=None, stop_event=None):
                             logger.error(
                                 f"    Final data length: {len(terminal_text) if terminal_text else 0} chars"
                             )
-                            logger.error(f"    This command will be skipped in the report")
+                            logger.error(
+                                f"    This command will be skipped in the report"
+                            )
 
                             # Mark as failed in checkpoint
                             if checkpoint_mgr:
@@ -2718,7 +2776,11 @@ def main(prebuilt_args=None, stop_event=None):
                                     )
 
                                 # Log raw results for diagnostics
-                                with open(os.path.join(LOG_DIR, "fs_debug.log"), "a", encoding="utf-8") as f:
+                                with open(
+                                    os.path.join(LOG_DIR, "fs_debug.log"),
+                                    "a",
+                                    encoding="utf-8",
+                                ) as f:
                                     f.write(
                                         f"\n--- {date_str} {src}-{dst} /{airline} ---\n"
                                     )
@@ -2754,7 +2816,9 @@ def main(prebuilt_args=None, stop_event=None):
 
                                     if (
                                         not rechecked_current_fs_page
-                                        and not _fs_output_is_no_results(current_fs_page)
+                                        and not _fs_output_is_no_results(
+                                            current_fs_page
+                                        )
                                     ):
                                         settled_fs_page = (
                                             automation._wait_for_stable_screen(
@@ -2797,15 +2861,19 @@ def main(prebuilt_args=None, stop_event=None):
                                         f"      [DEBUG] No pure {airline} option on FS page {fs_page_number}; checking next FS page on the same date..."
                                     )
 
-                                    if automation.click_more_prompt_link(current_fs_page):
+                                    if automation.click_more_prompt_link(
+                                        current_fs_page
+                                    ):
                                         next_fs_page = automation._wait_for_response(
                                             current_fs_page,
                                             timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
                                             min_wait=0.0,
                                             stability_checks=1,
                                         )
-                                        next_fs_page = automation._wait_for_stable_screen(
-                                            max_polls=3, interval=0.2
+                                        next_fs_page = (
+                                            automation._wait_for_stable_screen(
+                                                max_polls=3, interval=0.2
+                                            )
                                         )
                                     else:
                                         logger.warning(
@@ -2816,7 +2884,8 @@ def main(prebuilt_args=None, stop_event=None):
                                     if (
                                         not next_fs_page
                                         or automation._has_invalid(next_fs_page)
-                                        or next_fs_page.strip() == current_fs_page.strip()
+                                        or next_fs_page.strip()
+                                        == current_fs_page.strip()
                                     ):
                                         logger.warning(
                                             f"      [!] Could not advance FS pagination on {date_str}; trying next date."
@@ -2837,14 +2906,20 @@ def main(prebuilt_args=None, stop_event=None):
                                         _book_screen = automation.click_book_link(
                                             target_option_index, fs_result
                                         )
-                                        if _book_screen and not is_no_bf_error(_book_screen):
-                                            _fqc_text = automation.run_fqc_command(airline)
+                                        if _book_screen and not is_no_bf_error(
+                                            _book_screen
+                                        ):
+                                            _fqc_text = automation.run_fqc_command(
+                                                airline
+                                            )
                                             if is_no_bf_error(_fqc_text):
                                                 logger.info(
                                                     "      [BAG] NO B.F. TO DISPLAY — skipping baggage."
                                                 )
                                             elif _fqc_text:
-                                                _bag = parse_baggage_allowance(_fqc_text)
+                                                _bag = parse_baggage_allowance(
+                                                    _fqc_text
+                                                )
                                                 if _bag:
                                                     raw_baggage_data[file_key] = _bag
                                                     logger.info(
@@ -2857,7 +2932,9 @@ def main(prebuilt_args=None, stop_event=None):
                                             )
                                         automation.send_ignore_command()
                                     except Exception as _bag_exc:
-                                        logger.warning(f"      [BAG] Baggage error: {_bag_exc}")
+                                        logger.warning(
+                                            f"      [BAG] Baggage error: {_bag_exc}"
+                                        )
                                         try:
                                             automation.send_ignore_command()
                                         except Exception:
@@ -2868,8 +2945,10 @@ def main(prebuilt_args=None, stop_event=None):
                                         src, dst, date_str, airline
                                     )
                                     if _fs_rerun:
-                                        _new_idx, _, _ = _find_pure_airline_option_in_fs_page(
-                                            _fs_rerun, airline
+                                        _new_idx, _, _ = (
+                                            _find_pure_airline_option_in_fs_page(
+                                                _fs_rerun, airline
+                                            )
                                         )
                                         if _new_idx is not None:
                                             target_option_index = _new_idx
@@ -2882,7 +2961,9 @@ def main(prebuilt_args=None, stop_event=None):
 
                                 # Validate: accept both classic fare/tax lines and airline-
                                 # specific detail screens that still parse into usable tax data.
-                                if fs_expanded and looks_like_fs_tax_breakdown(fs_expanded):
+                                if fs_expanded and looks_like_fs_tax_breakdown(
+                                    fs_expanded
+                                ):
                                     logger.info(
                                         f"      [OK] Tax breakdown extracted via D-click"
                                     )
@@ -2899,7 +2980,9 @@ def main(prebuilt_args=None, stop_event=None):
                                     RAW_DATA_DIR, f"{file_key}_FS.txt"
                                 )
                                 try:
-                                    with open(fs_backup_path, "w", encoding="utf-8") as f:
+                                    with open(
+                                        fs_backup_path, "w", encoding="utf-8"
+                                    ) as f:
                                         f.write(fs_expanded)
                                 except Exception:
                                     pass
@@ -2915,7 +2998,9 @@ def main(prebuilt_args=None, stop_event=None):
                         if len(checkpoint_mgr.completed_commands) % 10 == 0:
                             checkpoint_mgr.save_checkpoint()
                 except StopRequested:
-                    logger.info("  [STOP] Stop requested mid-iteration - finishing after this point.")
+                    logger.info(
+                        "  [STOP] Stop requested mid-iteration - finishing after this point."
+                    )
                     break
 
             # Final checkpoint save
@@ -2998,7 +3083,9 @@ def main(prebuilt_args=None, stop_event=None):
             try:
                 automation.show_completion_signal()
             except Exception as _sig_err:
-                logger.debug(f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}")
+                logger.debug(
+                    f"  [WARN] show_completion_signal failed (non-critical): {_sig_err}"
+                )
 
             # Show execution summary
             total_commands = len(commands)
@@ -3056,10 +3143,13 @@ def main(prebuilt_args=None, stop_event=None):
         if _baggage_file:
             try:
                 import json as _json
+
                 with open(_baggage_file, "r", encoding="utf-8") as _bf:
                     _loaded = _json.load(_bf)
                 raw_baggage_data.update(_loaded)
-                logger.info(f"  [BAG] Loaded baggage data for {len(_loaded)} route(s) from {_baggage_file}")
+                logger.info(
+                    f"  [BAG] Loaded baggage data for {len(_loaded)} route(s) from {_baggage_file}"
+                )
             except Exception as _bfe:
                 logger.warning(f"  [BAG] Could not load --baggage-file: {_bfe}")
 
@@ -3074,7 +3164,10 @@ def main(prebuilt_args=None, stop_event=None):
             raw_baggage_data=raw_baggage_data,
         )
         if _stop and _stop.is_set():
-            return _stop_run("  [STOP] Stop requested - saving partial report.", partial_data=all_route_data)
+            return _stop_run(
+                "  [STOP] Stop requested - saving partial report.",
+                partial_data=all_route_data,
+            )
         if not all_route_data:
             logger.error("  No fare data could be parsed.")
             sys.exit(1)
@@ -3083,7 +3176,10 @@ def main(prebuilt_args=None, stop_event=None):
     # [3.5] Change detection (for both modes)
     changes = None
     if _stop and _stop.is_set():
-        return _stop_run("  [STOP] Stop requested - skipping change detection.", partial_data=all_route_data)
+        return _stop_run(
+            "  [STOP] Stop requested - skipping change detection.",
+            partial_data=all_route_data,
+        )
     if not args.no_changes:
         logger.info("[3.5] Detecting changes...")
         archive_subdir = "tax" if args.tax else "fare"
@@ -3172,7 +3268,10 @@ def main(prebuilt_args=None, stop_event=None):
 
     # [4/4] Generate Report
     if _stop and _stop.is_set():
-        return _stop_run("  [STOP] Stop requested - skipping report generation.", partial_data=all_route_data)
+        return _stop_run(
+            "  [STOP] Stop requested - skipping report generation.",
+            partial_data=all_route_data,
+        )
     logger.info("[4/4] Generating Excel report...")
 
     if args.output:
@@ -3230,6 +3329,7 @@ def main(prebuilt_args=None, stop_event=None):
     _db_run_id = record_to_database(all_route_data, config, mode=_run_mode)
     try:
         from usage_tracker import increment as _inc
+
         _route_count = len(all_route_data) if all_route_data else 1
         if args.tax:
             _inc("ftax_airports", _route_count)

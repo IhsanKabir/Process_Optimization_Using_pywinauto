@@ -7,3 +7,4 @@ tqdm==4.66.1
 psycopg2-binary==2.9.9
 google-cloud-bigquery==3.14.1
 airportsdata==20250224
+keyring==25.7.0

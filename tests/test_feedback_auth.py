@@ -33,6 +33,7 @@ def _no_real_keyring(monkeypatch):
     fake.errors = types.SimpleNamespace(PasswordDeleteError=Exception)
 
     import sys
+
     sys.modules["keyring"] = fake
     yield
     sys.modules.pop("keyring", None)
@@ -83,6 +84,7 @@ def test_keyring_token_preferred_over_device_token(monkeypatch):
     captured = _capture_headers(monkeypatch)
 
     import types, sys
+
     fake_keyring = types.ModuleType("keyring")
     fake_keyring.get_password = lambda *a: "keyring-session-tok"
     fake_keyring.errors = types.SimpleNamespace(PasswordDeleteError=Exception)
@@ -114,6 +116,7 @@ def test_explicit_token_overrides_env_and_keyring(monkeypatch):
     monkeypatch.setenv("TRAVELPORT_USER_TOKEN", "env-session-tok")
 
     import types, sys
+
     fake_keyring = types.ModuleType("keyring")
     fake_keyring.get_password = lambda *a: "keyring-session-tok"
     fake_keyring.errors = types.SimpleNamespace(PasswordDeleteError=Exception)

@@ -34,6 +34,7 @@ _MAX_DELTA_HISTORY = 50
 
 # ── DPI helpers ───────────────────────────────────────────────────────────────
 
+
 def get_system_dpi() -> int:
     """Return the system DPI (96 = 100 % scaling, 120 = 125 %, 144 = 150 %)."""
     try:
@@ -63,6 +64,7 @@ def compute_line_height(dpi: int | None = None) -> int:
 
 
 # ── Load / save ───────────────────────────────────────────────────────────────
+
 
 def load_calibration() -> dict:
     """
@@ -138,6 +140,7 @@ def reset_calibration() -> dict:
 
 
 # ── Phase C: delta tracking ───────────────────────────────────────────────────
+
 
 def record_click_delta(calibration: dict, y_offset_used: int) -> dict:
     """
@@ -220,6 +223,7 @@ def clear_d_click_offset(calibration: dict) -> dict:
 
 # ── BOOK-click calibration (parallel to D-click) ─────────────────────────────
 
+
 def record_book_click_offset(
     calibration: dict,
     x_off: int,
@@ -263,6 +267,7 @@ def clear_book_click_offset(calibration: dict) -> dict:
 
 
 # ── Internal ──────────────────────────────────────────────────────────────────
+
 
 def _write(data: dict) -> None:
     try:

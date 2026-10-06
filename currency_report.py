@@ -85,7 +85,9 @@ def generate_currency_report(
     normalized = {str(k).upper(): float(v) for k, v in current_rates.items() if v}
 
     if persist:
-        save_snapshot(RateSnapshot(snapshot_date=run_date, rates=normalized, source="live"))
+        save_snapshot(
+            RateSnapshot(snapshot_date=run_date, rates=normalized, source="live")
+        )
 
     prior = latest_prior_snapshot(run_date)
     prev_rates = prior.rates if prior else {}
@@ -258,17 +260,22 @@ def _write_sheet(
 
     # Column widths — two data columns per block + narrow spacers.
     widths = {
-        "A": 10, "B": 24,
+        "A": 10,
+        "B": 24,
         "C": 2,
-        "D": 10, "E": 24,
+        "D": 10,
+        "E": 24,
         "F": 2,
-        "G": 10, "H": 14,
+        "G": 10,
+        "H": 14,
     }
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
 
 
-def _write_usd_current_cell(cell, rate: float, tracker: UsdTracker, run_date: date) -> None:
+def _write_usd_current_cell(
+    cell, rate: float, tracker: UsdTracker, run_date: date
+) -> None:
     """Render USD current-day value with `(DD-MMM-YY)` suffix.
 
     Uses rich-text (mixed colors) when openpyxl's lxml writer is available, so the
@@ -287,7 +294,9 @@ def _write_usd_current_cell(cell, rate: float, tracker: UsdTracker, run_date: da
             cell.value = CellRichText(
                 TextBlock(InlineFont(rFont="Calibri", sz=11, b=True), f"{rate_str}  "),
                 TextBlock(
-                    InlineFont(rFont="Calibri", sz=11, b=True, color=USD_DATE_FONT_COLOR),
+                    InlineFont(
+                        rFont="Calibri", sz=11, b=True, color=USD_DATE_FONT_COLOR
+                    ),
                     f"({date_str})",
                 ),
             )

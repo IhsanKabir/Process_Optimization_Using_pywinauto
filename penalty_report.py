@@ -13,7 +13,9 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-SUBHEADER_FILL = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+SUBHEADER_FILL = PatternFill(
+    start_color="D9E1F2", end_color="D9E1F2", fill_type="solid"
+)
 HEADER_FONT = Font(color="FFFFFF", bold=True)
 SUBHEADER_FONT = Font(color="1F4E78", bold=True)
 ROUTE_FILL = PatternFill(start_color="C6E0B4", end_color="C6E0B4", fill_type="solid")
@@ -93,8 +95,7 @@ def _format_rule_cell(rule: dict) -> str:
 
     note_text = (rule.get("note_text") or "").upper()
     first_change_free = (
-        "FIRST CHANGE PERMITTED FOC" in note_text
-        or "FIRST CHANGE FREE" in note_text
+        "FIRST CHANGE PERMITTED FOC" in note_text or "FIRST CHANGE FREE" in note_text
     )
 
     if amount is not None and currency:
@@ -150,7 +151,9 @@ def _bucket_records_into_comparison_rows(records: list[dict]) -> list[dict]:
 
     # Step 2: group records that share identical bucket values under one
     # airline so multiple fare bases collapse into a single RBDs row.
-    grouped: "OrderedDict[tuple[str, str, tuple[tuple[str, str], ...]], dict]" = OrderedDict()
+    grouped: "OrderedDict[tuple[str, str, tuple[tuple[str, str], ...]], dict]" = (
+        OrderedDict()
+    )
     for entry in per_record:
         bucket_signature = tuple(sorted(entry["buckets"].items()))
         key = (entry["route"], entry["airline"], bucket_signature)
@@ -336,13 +339,13 @@ def _write_comparison_sheet(ws, records: list[dict]) -> None:
 
     # Footer note (matches the screenshot's '* First change free').
     footer_row = next_row + 1
-    footer_cell = ws.cell(
-        row=footer_row, column=1, value="* First change free"
-    )
+    footer_cell = ws.cell(row=footer_row, column=1, value="* First change free")
     ws.merge_cells(
         start_row=footer_row, start_column=1, end_row=footer_row, end_column=10
     )
-    footer_cell.fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    footer_cell.fill = PatternFill(
+        start_color="FFFF00", end_color="FFFF00", fill_type="solid"
+    )
     footer_cell.alignment = Alignment(horizontal="center", vertical="center")
     footer_cell.font = Font(italic=True, bold=True)
 

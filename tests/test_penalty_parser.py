@@ -272,9 +272,7 @@ def test_bucket_records_groups_same_buckets_under_one_rbds_row():
         "currency": "USD",
         "rules": [
             _make_rule("CHANGES", amount=10, currency="USD"),
-            _make_rule(
-                "CANCELLATIONS", subtype="refund", amount=15, currency="USD"
-            ),
+            _make_rule("CANCELLATIONS", subtype="refund", amount=15, currency="USD"),
         ],
     }
     rec_b = {**rec_k, "rbd": "B"}
@@ -347,9 +345,7 @@ def test_comparison_sheet_renders_headers_and_one_row():
                 currency="USD",
                 description="No show",
             ),
-            _make_rule(
-                "CANCELLATIONS", subtype="refund", amount=20, currency="USD"
-            ),
+            _make_rule("CANCELLATIONS", subtype="refund", amount=20, currency="USD"),
             _make_rule(
                 "CANCELLATIONS",
                 subtype="no_show",
@@ -386,4 +382,3 @@ def test_comparison_sheet_renders_headers_and_one_row():
             gc.collect()
         if output_path.exists():
             output_path.unlink()
-

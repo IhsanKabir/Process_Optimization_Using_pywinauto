@@ -389,9 +389,7 @@ def test_individual_tables_sheet_uses_base_currency_for_non_dac_origin():
         }
     }
     sections = {
-        ("CAN", "outbound"): [
-            ("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])
-        ]
+        ("CAN", "outbound"): [("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])]
     }
 
     _write_individual_tables_sheet(
@@ -407,21 +405,19 @@ def test_individual_tables_sheet_uses_base_currency_for_non_dac_origin():
 
     # Find the header row by scanning for "RBD".
     header_row = next(
-        r
-        for r in range(1, ws.max_row + 1)
-        if ws.cell(row=r, column=1).value == "RBD"
+        r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=1).value == "RBD"
     )
     headers = [
         ws.cell(row=header_row, column=c).value
         for c in range(1, ws.max_column + 1)
         if isinstance(ws.cell(row=header_row, column=c).value, str)
     ]
-    assert "OW/Gross(CNY)" in headers, (
-        f"Non-DAC origin must use base currency for gross, got headers: {headers}"
-    )
-    assert "RT/Gross(CNY)" in headers, (
-        f"Non-DAC origin must use base currency for gross, got headers: {headers}"
-    )
+    assert (
+        "OW/Gross(CNY)" in headers
+    ), f"Non-DAC origin must use base currency for gross, got headers: {headers}"
+    assert (
+        "RT/Gross(CNY)" in headers
+    ), f"Non-DAC origin must use base currency for gross, got headers: {headers}"
 
 
 # ── v1.5.18: per-sheet currency rules for YQ/YR/Q ─────────────────────────────
@@ -472,9 +468,7 @@ def test_tax_breakdown_sheet_displays_q_in_bdt_via_roe_and_exchange_rate():
     ws = wb.active
     all_route_data = _cz_can_dac_route_data()
     sections = {
-        ("CAN", "outbound"): [
-            ("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])
-        ]
+        ("CAN", "outbound"): [("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])]
     }
 
     _write_tax_breakdown_sheet(
@@ -514,9 +508,7 @@ def test_tax_breakdown_sheet_header_stays_in_equ_cur_bdt():
     ws = wb.active
     all_route_data = _cz_can_dac_route_data()
     sections = {
-        ("CAN", "outbound"): [
-            ("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])
-        ]
+        ("CAN", "outbound"): [("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])]
     }
 
     _write_tax_breakdown_sheet(
@@ -537,9 +529,9 @@ def test_tax_breakdown_sheet_header_stays_in_equ_cur_bdt():
     ]
 
     assert headers, "Expected at least one Amount(...) header"
-    assert all(h == "Amount (BDT)" for h in headers), (
-        f"Tax Breakdowns header must say 'Amount (BDT)', got {headers!r}"
-    )
+    assert all(
+        h == "Amount (BDT)" for h in headers
+    ), f"Tax Breakdowns header must say 'Amount (BDT)', got {headers!r}"
 
 
 def test_yq_charges_sheet_q_in_base_via_roe_not_via_exchange_rate():
@@ -551,9 +543,7 @@ def test_yq_charges_sheet_q_in_base_via_roe_not_via_exchange_rate():
     ws = wb.active
     all_route_data = _cz_can_dac_route_data()
     sections = {
-        ("CAN", "outbound"): [
-            ("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])
-        ]
+        ("CAN", "outbound"): [("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])]
     }
 
     _write_yq_charges_sheet(
@@ -594,9 +584,7 @@ def test_yq_charges_sheet_header_uses_base_currency():
     ws = wb.active
     all_route_data = _cz_can_dac_route_data()
     sections = {
-        ("CAN", "outbound"): [
-            ("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])
-        ]
+        ("CAN", "outbound"): [("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])]
     }
 
     _write_yq_charges_sheet(
@@ -616,6 +604,6 @@ def test_yq_charges_sheet_header_uses_base_currency():
         and ws.cell(row=r, column=c).value.startswith("Amount")
     ]
     assert headers, "Expected at least one Amount(...) header"
-    assert all(h == "Amount (CNY)" for h in headers), (
-        f"YQ-YR-Q header must say 'Amount (CNY)' for CNY-base fare, got {headers!r}"
-    )
+    assert all(
+        h == "Amount (CNY)" for h in headers
+    ), f"YQ-YR-Q header must say 'Amount (CNY)' for CNY-base fare, got {headers!r}"
