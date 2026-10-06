@@ -34,6 +34,8 @@ Build the exe (PowerShell script handles venv + PyInstaller):
 
 ```powershell
 .\build_app.ps1
+.\launch.ps1            # open dist\TravelportAuto\TravelportAuto.exe
+.\launch.ps1 -Build     # rebuild, then open
 ```
 
 Lint / type / security (CI runs these, see `.github/workflows/test.yml`):
