@@ -370,6 +370,41 @@ def _env_truthy(name: str) -> bool:
     return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _auto_login_if_enabled(automation) -> bool:
+    """Sign on to Smartpoint only when SMARTPOINT_AUTO_LOGIN is enabled.
+
+    Smartpoint normally signs in through its own login window. Signing on just
+    because credentials exist in the environment or .env typed stale passwords
+    over an already signed-in session (leaving them in the terminal history)
+    and aborted the run, so automatic sign-on is opt-in.
+
+    Returns False only when an opted-in sign-on did not complete.
+    """
+    if not _env_truthy("SMARTPOINT_AUTO_LOGIN") or _env_truthy(
+        "SMARTPOINT_SKIP_AUTO_LOGIN"
+    ):
+        logger.debug("  Automatic login off; using the current Smartpoint session.")
+        return True
+
+    username, password, pcc = CredentialManager.get_credentials()
+    if not (username and password):
+        logger.warning(
+            "  SMARTPOINT_AUTO_LOGIN is set but SMARTPOINT_USERNAME/PASSWORD are "
+            "missing; using the current Smartpoint session."
+        )
+        return True
+
+    try:
+        if automation.login(username, password, pcc):
+            return True
+        logger.error(
+            "  Automatic login did not complete. Please sign in manually and try again."
+        )
+    except Exception as exc:
+        logger.error(f"  Login failed: {exc}")
+    return False
+
+
 def load_config(config_path: str) -> dict:
     """Load config - remote GitHub first (auto-updates), local/bundled fallback."""
     # Try remote first - this keeps airline names, airport lists, etc. current
@@ -823,15 +858,8 @@ def _run_currency_report_mode(args, config, stop_event):
         logger.error("  Please ensure Smartpoint is open.")
         sys.exit(1)
 
-    username, password, pcc = CredentialManager.get_credentials()
-    if username and password and not _env_truthy("SMARTPOINT_SKIP_AUTO_LOGIN"):
-        try:
-            if not automation.login(username, password, pcc):
-                logger.error("  Login failed; sign in manually and retry.")
-                sys.exit(1)
-        except Exception as exc:
-            logger.error(f"  Login error: {exc}")
-            sys.exit(1)
+    if not _auto_login_if_enabled(automation):
+        sys.exit(1)
 
     automation.refresh_terminal()
 
@@ -1545,25 +1573,8 @@ def main(prebuilt_args=None, stop_event=None):
                 )
                 sys.exit(1)
 
-            username, password, pcc = CredentialManager.get_credentials()
-            if username and password:
-                logger.info("  Credentials loaded from environment")
-                if _env_truthy("SMARTPOINT_SKIP_AUTO_LOGIN"):
-                    logger.info(
-                        "  Automatic login skipped because SMARTPOINT_SKIP_AUTO_LOGIN is enabled."
-                    )
-                else:
-                    try:
-                        if not automation.login(username, password, pcc):
-                            logger.error(
-                                "  Automatic login did not complete. Please sign in manually and try again."
-                            )
-                            sys.exit(1)
-                    except Exception as e:
-                        logger.error(f"  Login failed: {e}")
-                        sys.exit(1)
-            else:
-                logger.info("  No credentials found - continuing without login")
+            if not _auto_login_if_enabled(automation):
+                sys.exit(1)
 
             automation.refresh_terminal()
             os.makedirs(RAW_PENALTY_DIR, exist_ok=True)
@@ -1991,30 +2002,8 @@ def main(prebuilt_args=None, stop_event=None):
                 )
                 sys.exit(1)
 
-            # Try to get credentials from environment
-            username, password, pcc = CredentialManager.get_credentials()
-            if username and password:
-                logger.info("  Credentials loaded from environment")
-                if _env_truthy("SMARTPOINT_SKIP_AUTO_LOGIN"):
-                    logger.info(
-                        "  Automatic login skipped because SMARTPOINT_SKIP_AUTO_LOGIN is enabled."
-                    )
-                else:
-                    try:
-                        if not automation.login(username, password, pcc):
-                            logger.error(
-                                "  Automatic login did not complete. Please sign in manually and try again."
-                            )
-                            sys.exit(1)
-                    except Exception as e:
-                        logger.error(f"  Login failed: {e}")
-                        sys.exit(1)
-            else:
-                logger.info("  No credentials found - continuing without login")
-                logger.info("  To enable automatic login, set environment variables:")
-                logger.info(
-                    "    SMARTPOINT_USERNAME, SMARTPOINT_PASSWORD, SMARTPOINT_PCC"
-                )
+            if not _auto_login_if_enabled(automation):
+                sys.exit(1)
 
             logger.debug("  Initializing terminal state...")
             automation.refresh_terminal()
