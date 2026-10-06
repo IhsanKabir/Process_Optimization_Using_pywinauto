@@ -26,6 +26,7 @@ except Exception:
 
 import constants
 import calibration as _calibration_mod
+import screen_locator as _screen
 from constants import (
     # Terminal rendering
     LINE_HEIGHT,
@@ -2162,6 +2163,10 @@ class SmartpointAutomation:
                 f"(saved_x={sx}, source={saved_offset_source})."
             )
 
+        screen_offset = self._screen_glyph_offset("book", base_x, base_y, "BOOK")
+        if screen_offset is not None:
+            offsets = [screen_offset] + [o for o in offsets if o != screen_offset]
+
         # ── Background click monitor ──────────────────────────────────────────
         class _POINT(ctypes.Structure):
             _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
@@ -2221,7 +2226,7 @@ class SmartpointAutomation:
             text_before = fs_text
 
             # Manual window — only when no saved offset exists
-            if effective_saved_offset is None:
+            if effective_saved_offset is None and screen_offset is None:
                 self.logger.warning(
                     "      [BOOK] No saved position for this PC. "
                     "Click the BOOK link now (5 s) — auto-click starts after."
@@ -2298,7 +2303,8 @@ class SmartpointAutomation:
                         self.logger.info(
                             f"      [BOOK] Booking screen at offset=({x_off},{y_off})"
                         )
-                        _record_success(x_off, y_off)
+                        if (x_off, y_off) != screen_offset:
+                            _record_success(x_off, y_off)
                     return result
 
                 # Still on FS pricing page — try next offset without hard reset
@@ -2405,6 +2411,99 @@ class SmartpointAutomation:
         )  # Wait for the inline tax breakdown to expand
         return self._copy_terminal_text()
 
+    # Measured line pitches outside this range mean the capture was not the
+    # terminal (minimised, covered, blank) — fall back to calibration.
+    _MIN_MEASURED_PITCH = 8.0
+    _MAX_MEASURED_PITCH = 60.0
+
+    def _grab_terminal_image(self, rect):
+        """Screenshot of the terminal pane in physical pixels, or None."""
+        try:
+            from PIL import ImageGrab
+
+            return ImageGrab.grab(
+                bbox=(rect.left, rect.top, rect.right, rect.bottom), all_screens=True
+            )
+        except Exception as exc:
+            self.logger.debug(f"      [SCREEN] Terminal capture failed: {exc}")
+            return None
+
+    def _capture_terminal_layout(self):
+        """Screenshot and measure the terminal pane.
+
+        Returns (image, layout, rect) or None when the capture is unavailable or
+        does not look like terminal text.
+        """
+        try:
+            rect = self._get_terminal_rect()
+        except Exception as exc:
+            self.logger.debug(f"      [SCREEN] Terminal rect unavailable: {exc}")
+            return None
+        img = self._grab_terminal_image(rect)
+        if img is None:
+            return None
+        layout = _screen.analyze_terminal(img)
+        pitch = layout.line_pitch
+        if pitch is None or not (
+            self._MIN_MEASURED_PITCH <= pitch <= self._MAX_MEASURED_PITCH
+        ):
+            self.logger.debug(f"      [SCREEN] No usable line pitch (got {pitch}).")
+            return None
+        return img, layout, rect
+
+    def _measured_line_pitch(self) -> float | None:
+        captured = self._capture_terminal_layout()
+        return captured[1].line_pitch if captured else None
+
+    def _measured_line_y(self, text: str, line_idx: int) -> int | None:
+        """Screen Y of a copied-text line, measured from the rendered terminal."""
+        captured = self._capture_terminal_layout()
+        if captured is None:
+            return None
+        _, layout, rect = captured
+        y = _screen.line_center_y(layout, text, line_idx)
+        if y is None:
+            return None
+        self.logger.debug(
+            f"      [SCREEN] line {line_idx} -> y={rect.top + y:.0f} "
+            f"(measured pitch {layout.line_pitch:.1f}px, calibrated {self._line_height}px)"
+        )
+        return int(round(rect.top + y))
+
+    def _locate_fs_option_glyph(self, kind: str, near_y: int) -> tuple[int, int] | None:
+        """Screen position of the D or BOOK link on the FS option row nearest
+        ``near_y``. ``kind`` is "d" or "book"."""
+        captured = self._capture_terminal_layout()
+        if captured is None:
+            return None
+        img, layout, rect = captured
+        rows = _screen.find_option_rows(img, layout)
+        if not rows:
+            self.logger.debug("      [SCREEN] No FS option rows found on screen.")
+            return None
+        best = min(rows, key=lambda row: abs(rect.top + row.y - near_y))
+        if abs(rect.top + best.y - near_y) > layout.line_pitch * 1.5:
+            self.logger.debug(
+                f"      [SCREEN] Nearest option row y={rect.top + best.y} is too far "
+                f"from expected y={near_y}."
+            )
+            return None
+        point = best.d if kind == "d" else best.book
+        if point is None:
+            return None
+        return rect.left + point[0], rect.top + point[1]
+
+    def _screen_glyph_offset(
+        self, kind: str, base_x: int, base_y: int, tag: str
+    ) -> tuple[int, int] | None:
+        """Offset from (base_x, base_y) to the on-screen glyph, for use as the
+        first fan-out attempt."""
+        point = self._locate_fs_option_glyph(kind, base_y)
+        if point is None:
+            return None
+        self.logger.info(f"      [{tag}] Found on screen at {point}; trying it first.")
+        return point[0] - base_x, point[1] - base_y
+
     def _text_line_to_pixel(
         self,
         text: str,
@@ -2431,11 +2530,12 @@ class SmartpointAutomation:
         # Use the SmartRichTextBox rect, NOT the window rect
         rect = self._get_terminal_rect()
 
-        # Content starts ~5px below the terminal pane top edge
-        content_top = rect.top + self._content_top_padding
-
-        # Y: center of the target line (uses calibrated line height)
-        pixel_y = int(content_top + (target_line_idx + 0.5) * self._line_height)
+        # Y: measured from the rendered terminal when possible; otherwise the
+        # calibrated line height below a fixed top padding.
+        pixel_y = self._measured_line_y(text, target_line_idx)
+        if pixel_y is None:
+            content_top = rect.top + self._content_top_padding
+            pixel_y = int(content_top + (target_line_idx + 0.5) * self._line_height)
 
         # X: from character column if available, otherwise from ratio
         if char_idx is not None:
@@ -2925,6 +3025,10 @@ class SmartpointAutomation:
                 f"(saved_x={saved_x}, source={saved_offset_source})."
             )
 
+        screen_offset = self._screen_glyph_offset("d", base_x, base_y, "D-CLICK")
+        if screen_offset is not None:
+            offsets = [screen_offset] + [o for o in offsets if o != screen_offset]
+
         # --- Background click monitor (runs for the whole duration) ----------
         # Records every left-button release so manual clicks can be detected
         # at any point during the fan-out, not just after exhaustion.
@@ -2990,7 +3094,7 @@ class SmartpointAutomation:
             # Gives the user 5 seconds to click D before the mouse is moved.
             # Once an offset is learned and saved, this window is skipped entirely
             # (Phase D's saved prefix fires first instead).
-            if effective_saved_offset is None:
+            if effective_saved_offset is None and screen_offset is None:
                 self.logger.warning(
                     "      [D-CLICK] No saved position for this PC. "
                     "Click the D button now (5 s) — auto-click starts after."
@@ -3088,7 +3192,8 @@ class SmartpointAutomation:
                             self.logger.info(
                                 f"      [D-CLICK] Tax breakdown at offset=({x_off},{y_off})"
                             )
-                            _record_success(x_off, y_off, "auto")
+                            if (x_off, y_off) != screen_offset:
+                                _record_success(x_off, y_off, "auto")
                         return result
                     else:
                         upper = result.upper()
@@ -3270,8 +3375,10 @@ class SmartpointAutomation:
             return None
 
         rect = self._get_terminal_rect()
-        content_top = rect.top + self._content_top_padding
-        click_y = int(content_top + (target_line_idx + 0.5) * self._line_height)
+        click_y = self._measured_line_y(fd_text, target_line_idx)
+        if click_y is None:
+            content_top = rect.top + self._content_top_padding
+            click_y = int(content_top + (target_line_idx + 0.5) * self._line_height)
 
         self.logger.info(
             f"      [CURRENCY] Target: line {target_line_idx}, y={click_y}, "
@@ -3429,7 +3536,8 @@ class SmartpointAutomation:
 
         # ── Fallback: coordinate-based click ─────────────────────────────
         rect = self._get_terminal_rect()
-        total_lines_capacity = max(1, (rect.height() - 10) // self._line_height)
+        line_pitch = self._measured_line_pitch() or self._line_height
+        total_lines_capacity = max(1, int((rect.height() - 10) // line_pitch))
 
         def _find_prompt(text: str):
             c = (text or "").rstrip("\r\n")
@@ -3456,9 +3564,7 @@ class SmartpointAutomation:
                 bx, _ = self._text_line_to_pixel(c, idx, char_idx=col)
             else:
                 bx, _ = self._text_line_to_pixel(c, idx, x_ratio=MORE_LINK_X_RATIO)
-            by = int(
-                rect.bottom - BOTTOM_MARGIN - (from_bottom + 0.5) * self._line_height
-            )
+            by = int(rect.bottom - BOTTOM_MARGIN - (from_bottom + 0.5) * line_pitch)
             return (bx, by) if rect.top <= by <= rect.bottom else None
 
         candidates: list[tuple] = []
