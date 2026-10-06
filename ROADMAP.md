@@ -283,6 +283,25 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Screen-located clicks (2026-10-06):**
+  - **Why:** clicks predicted Y from a fixed 20 px line height + calibration. A
+    user screenshot on a 1920x1080 laptop showed the terminal renders at 14 px
+    per line, so by option 3-4 every prediction (and the ±18 px fan-out) was
+    lines off. Reset D-click could not help: it only reset the guess. UIA text
+    bounds are unavailable (see v1.5.6) and the D link has no typed format.
+  - **What:** `screen_locator.py` analyses a screenshot of the SmartRichTextBox
+    (Pillow ImageGrab): background, text bands, measured line pitch, and FS
+    option rows (green «BOOK» on the left + single-glyph blue D, R on the right).
+    `_text_line_to_pixel`, the currency link and the More-prompt fallback use
+    the measured pitch; D and BOOK click the on-screen glyph first, skip the
+    5 s manual window, and do not overwrite calibration when that hit works.
+    Calibration/fan-out remain the fallback when capture or detection fails.
+  - Tests: `tests/test_screen_locator.py` and `tests/test_screen_located_clicks.py`
+    use the real screenshot (`tests/fixtures/fs_options_terminal.png`), including
+    a 1.5x-scaled copy for larger displays. `tests/conftest.py` disables real
+    screen capture for every test.
+  - **Pending:** live verification on the affected machines.
+
 - **Weakness-analysis cleanup (2026-10-06):**
   - **CI was red on every push** (black step). Repo black-formatted once; `.flake8` and
     `pyproject.toml` exclude build/dist/tmp dirs; CI actions bumped, fail-fast off,
