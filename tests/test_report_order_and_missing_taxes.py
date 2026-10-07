@@ -115,8 +115,20 @@ RETURN_TAXES = dict(
 
 
 def _row(ws, rbd):
+    """A table row as Excel displays it ("43,200"); fares are stored as numbers."""
     r = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == rbd)
-    return [ws.cell(r, c).value for c in range(1, 8)]
+    values = [ws.cell(r, c).value for c in range(1, 8)]
+    return [f"{v:,}" if isinstance(v, int) else v for v in values]
+
+
+def test_fares_are_numbers_with_thousands_format():
+    data = {"BS_DAC-BKK": _route(TAXES), "BS_BKK-DAC": _route(TAXES)}
+
+    ws = _individual(data, "BS_DAC-BKK")
+
+    r = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "Y")
+    gross = ws.cell(r, 4)
+    assert isinstance(gross.value, int) and gross.number_format == "#,##0"
 
 
 def test_complete_legs_formulas():

@@ -1528,6 +1528,9 @@ def main(prebuilt_args=None, stop_event=None):
     # Initialize checkpoint manager if enabled
     checkpoint_mgr = None
     enable_validation = not args.no_validation
+    # Routes added from earlier runs' saved screens (Re-run / Resume): shown
+    # in the report but already recorded by the run that captured them.
+    merged_route_keys: list[str] = []
 
     if args.checkpoint or args.resume:
         os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -2650,7 +2653,7 @@ def main(prebuilt_args=None, stop_event=None):
         if args.auto and (getattr(args, "pairs", None) or args.resume):
             # Re-run / Resume reports only cover this run's routes; bring in
             # today's saved screens for the routes they depend on.
-            _add_saved_companion_routes(
+            merged_route_keys = _add_saved_companion_routes(
                 raw_texts,
                 raw_fs_texts,
                 completed_commands=(
@@ -2835,7 +2838,12 @@ def main(prebuilt_args=None, stop_event=None):
 
     # [DB] Optional persistence - keep current file/report flow unchanged
     _run_mode = "auto" if not args.tax else "tax-mode"
-    _db_run_id = record_to_database(all_route_data, config, mode=_run_mode)
+    run_route_data = (
+        {k: v for k, v in all_route_data.items() if k not in merged_route_keys}
+        if all_route_data
+        else all_route_data
+    )
+    _db_run_id = record_to_database(run_route_data, config, mode=_run_mode)
     try:
         from usage_tracker import increment as _inc
 
@@ -2854,7 +2862,7 @@ def main(prebuilt_args=None, stop_event=None):
             if args.tax:
                 _bq_pusher.push_tax_snapshot(all_route_data, _db_run_id, _run_time)
             else:
-                _bq_pusher.push_fare_snapshot(all_route_data, _db_run_id, _run_time)
+                _bq_pusher.push_fare_snapshot(run_route_data, _db_run_id, _run_time)
                 if changes:
                     _bq_pusher.push_change_events(changes, _run_time)
         except Exception as _bq_err:
