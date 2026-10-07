@@ -156,6 +156,50 @@ def line_center_y(layout: TerminalLayout, text: str, line_idx: int) -> Optional[
     return first_center + (line_idx - first_text_idx) * pitch
 
 
+def visible_line_count(layout: TerminalLayout, viewport_height: int) -> int:
+    """How many text lines the terminal shows at once."""
+    if not layout.line_pitch:
+        return 0
+    return int(viewport_height // layout.line_pitch)
+
+
+def text_line_count(text: str) -> int:
+    """Rendered lines of copied terminal text (trailing blank lines dropped)."""
+    return len(text.rstrip().split("\n")) if text.strip() else 0
+
+
+def select_option_row(
+    layout: TerminalLayout,
+    rows: list[OptionRow],
+    text: str,
+    book_lines: list[int],
+    ordinal: int,
+    viewport: str,
+) -> Optional[OptionRow]:
+    """Pick pricing option ``ordinal``'s action row from the visible ``rows``.
+
+    ``book_lines`` are the copied-text line indices of every option's
+    «BOOK»/+TQ row, in order. ``viewport`` says where the terminal is scrolled:
+
+    * ``"top"``: the first text line is the first rendered line, so the row is
+      found at its predicted Y on the measured grid.
+    * ``"bottom"``: the last option row is the last visible one, so the row is
+      counted back from the end. Evenly spaced options make any Y-based guess
+      ambiguous once the terminal is scrolled, which is why the caller scrolls
+      to a known end instead of matching on Y.
+    """
+    if not rows or not 0 <= ordinal < len(book_lines):
+        return None
+    if viewport == "bottom":
+        index = len(rows) - (len(book_lines) - ordinal)
+        return rows[index] if 0 <= index < len(rows) else None
+    target_y = line_center_y(layout, text, book_lines[ordinal])
+    if target_y is None or layout.line_pitch is None:
+        return None
+    best = min(rows, key=lambda row: abs(row.y - target_y))
+    return best if abs(best.y - target_y) <= layout.line_pitch / 2 else None
+
+
 # ── internals ───────────────────────────────────────────────────────────────
 
 
