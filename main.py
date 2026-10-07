@@ -454,6 +454,61 @@ def load_config(config_path: str) -> dict:
     return config
 
 
+# Saved raw screens older than this are not merged into a Re-run/Resume report.
+SAVED_RAW_MAX_AGE_HOURS = 12
+
+
+def _add_saved_companion_routes(
+    raw_texts: dict[str, str],
+    raw_fs_texts: dict[str, str],
+    completed_commands=(),
+    raw_dir: str | None = None,
+    max_age_hours: float = SAVED_RAW_MAX_AGE_HOURS,
+) -> list[str]:
+    """Load saved FD/FS screens for routes a Re-run or Resume report needs but
+    this run did not execute: each run route's return direction (for RT gross)
+    and, on Resume, the routes completed before the stop.
+
+    Only screens saved within ``max_age_hours`` are used, and routes this run
+    captured are never overwritten. Returns the route keys added.
+    """
+    raw_dir = raw_dir or RAW_DATA_DIR
+    wanted: set[str] = set()
+    for key in raw_texts:
+        parts = key.split("_", 1)
+        if len(parts) == 2 and "-" in parts[1]:
+            origin, dest = parts[1].split("-", 1)
+            wanted.add(f"{parts[0]}_{dest}-{origin}")
+    for command in completed_commands:
+        m = re.match(r"FD([A-Z]{3})([A-Z]{3})/([A-Z0-9]{2})", str(command).upper())
+        if m:
+            wanted.add(f"{m.group(3)}_{m.group(1)}-{m.group(2)}")
+
+    cutoff = _time.time() - max_age_hours * 3600
+
+    def _fresh(path: str) -> str | None:
+        if not os.path.exists(path) or os.path.getmtime(path) < cutoff:
+            return None
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+
+    added = []
+    for key in sorted(wanted - set(raw_texts)):
+        fd_text = _fresh(os.path.join(raw_dir, f"{key}.txt"))
+        if fd_text is None:
+            continue
+        raw_texts[key] = fd_text
+        fs_text = _fresh(os.path.join(raw_dir, f"{key}_FS.txt"))
+        if fs_text is not None and key not in raw_fs_texts:
+            raw_fs_texts[key] = fs_text
+        added.append(key)
+    if added:
+        logger.info(
+            f"  [MERGE] Added saved data from earlier runs today: {', '.join(added)}"
+        )
+    return added
+
+
 def load_raw_data(raw_dir: str) -> tuple[dict[str, str], dict[str, str]]:
     """Load raw GDS output from text files in data/raw/."""
     raw_texts = {}
@@ -2591,6 +2646,19 @@ def main(prebuilt_args=None, stop_event=None):
                 )
             except Exception as _bfe:
                 logger.warning(f"  [BAG] Could not load --baggage-file: {_bfe}")
+
+        if args.auto and (getattr(args, "pairs", None) or args.resume):
+            # Re-run / Resume reports only cover this run's routes; bring in
+            # today's saved screens for the routes they depend on.
+            _add_saved_companion_routes(
+                raw_texts,
+                raw_fs_texts,
+                completed_commands=(
+                    sorted(checkpoint_mgr.completed_commands)
+                    if (args.resume and checkpoint_mgr)
+                    else ()
+                ),
+            )
 
         _parse_stop = None if (_stop and _stop.is_set()) else _stop
         all_route_data = process_route_data(
