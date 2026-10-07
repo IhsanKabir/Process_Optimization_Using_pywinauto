@@ -291,6 +291,11 @@ These are done and live on `main` so the next reader knows not to re-open them:
     (DAC origin: in BDT). Carrier charges follow where the ticket starts, so the
     return one-way's own YQ/YR is replaced by 2× this leg's. Verified on FZ
     DXB-DAC-DXB: 4,545 + 10,087 + 2×5,684 = TAXES 26,000 (T + T_ret was 3,089 short).
+  - Q added to gross once per ticket (this leg's Q x ROE x R) so gross matches
+    Smartpoint's TOT: OW gross = OW + (T + Q)/R; RT gross adds the same Q once.
+    On 114 captured FS options, 101 land within 1% of TOT (most exactly). The 13
+    misses differ with or without Q: the FS-priced fare (often a connection) is not
+    the FD fare shown for that RBD letter. Non-USD fares with Q but no ROE are flagged.
   - Q parser: sums every Q in the fare construction ("Q16.55", "Q DXBDXB33.10",
     "Q27.13Q20.00"). The old pattern only took the first city-pair Q, so Q was 0 or
     partial on 14 of 115 captures (e.g. WY DAC-MCT 110, QR DAC-DOH 20). All 115 now

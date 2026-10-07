@@ -133,10 +133,11 @@ def test_complete_legs_formulas():
         "With YQ/RT(USD)",
         "RT/Gross(BDT)",
     ]
-    # R=120. With YQ/OW = 300 + (1200+0)/120. OW gross (BDT, from DAC) =
-    # 300*120 + T 6000 (T already includes Q). With YQ/RT = 550 + 2*1200/120.
-    # RT gross = 550*120 + 6000 + 5000.
-    assert _row(ws, "Y") == ["Y", "300", "310", "42,000", "550", "570", "77,000"]
+    # R=120, Q = 10 NUC x ROE 1 x 120 = 1,200 BDT.
+    # With YQ/OW = 300 + 1200/120. OW gross (BDT, from DAC) = 300*120 + 6000 + Q.
+    # With YQ/RT = 550 + 2*1200/120.
+    # RT gross = 550*120 + gov (4800 + 3800) + 2*(1200+0) + Q once = 78,200.
+    assert _row(ws, "Y") == ["Y", "300", "310", "43,200", "550", "570", "78,200"]
     assert "INCOMPLETE" not in ws.cell(_header_row(ws) - 2, 1).value
 
 
@@ -334,3 +335,62 @@ def test_rt_gross_uses_starting_legs_carrier_charges_twice():
 
     # RT gross (AED) = 1220 + 26000 / 33.6441 = 1992.8
     assert _row(ws, "K")[-1] == "1,993"
+
+
+def _one_way_route(fs, fare, currency):
+    return {
+        "currency": currency,
+        "fs_taxes": fs,
+        "rbd_data": {"X": {"ow_fare": fare, "rt_fare": None}},
+    }
+
+
+def test_ow_gross_matches_smartpoint_total_for_real_tickets():
+    """Gross = fare + Q + taxes should land on Smartpoint's TOT, apart from
+    the fare rounding (FD shows the rounded fare without Q)."""
+    # flydubai DXB-DAC L: FD 540 AED (145.10 NUC), Q 14.51 NUC, TOT BDT30079.
+    fz = {
+        "base_currency": "AED",
+        "base_fare": 590.0,
+        "equ_currency": "BDT",
+        "equ_fare": 19850.0,
+        "exchange_rate": 33.6441,
+        "roe": 3.673315,
+        "q_charge": 14.51,
+        "yq_charge": 3089.0,
+        "yr_charge": 2595.0,
+        "total_taxes": 10229.0,
+        "tax_breakdown": {"AE": 2524.0},
+    }
+    # Emirates DAC-ZVJ L: FD 365 USD, Q 2.60 NUC, TOT BDT55550 (DAC origin: BDT).
+    ek = {
+        "base_currency": "USD",
+        "base_fare": 368.0,
+        "equ_currency": "BDT",
+        "equ_fare": 45463.0,
+        "exchange_rate": 123.5408,
+        "roe": 1.0,
+        "q_charge": 2.60,
+        "total_taxes": 10087.0,
+        "tax_breakdown": {"BD": 500.0},
+    }
+    fz_ws = _individual({"FZ_DXB-DAC": _one_way_route(fz, 540, "AED")}, "FZ_DXB-DAC")
+    ek_ws = _individual({"EK_DAC-ZVJ": _one_way_route(ek, 365, "USD")}, "EK_DAC-ZVJ")
+
+    fz_gross = float(_row(fz_ws, "X")[3].replace(",", ""))
+    ek_gross = float(_row(ek_ws, "X")[3].replace(",", ""))
+
+    # TOT 30079 / 33.6441 = 894 AED; FD rounds 533 up to 540 (+7 - 4 rounding).
+    assert abs(fz_gross - 30079 / 33.6441) <= 5
+    # TOT 55,550 BDT; Smartpoint rounds 367.60 up to 368 (49 BDT).
+    assert abs(ek_gross - 55550) <= 50
+
+
+def test_q_without_roe_on_non_usd_fare_is_incomplete():
+    aed = dict(TAXES, base_currency="AED", roe=1.0, q_charge=14.51)
+    route = dict(_route(aed), currency="AED")
+    data = {"FZ_DXB-DAC": route, "FZ_DAC-DXB": _route(TAXES)}
+
+    ws = _individual(data, "FZ_DXB-DAC")
+
+    assert "ROE" in ws.cell(_header_row(ws) - 2, 1).value

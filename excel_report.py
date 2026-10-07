@@ -1273,7 +1273,25 @@ def _leg_tax_gaps(route_info):
     fd_cur = route_info.get("currency") if isinstance(route_info, dict) else None
     if fd_cur and base_cur and fd_cur != base_cur:
         gaps.append(f"FD fares in {fd_cur} but FS priced in {base_cur}")
+    if (
+        float(fs.get("q_charge") or 0) > 0
+        and base_cur not in (None, "USD", "NUC")
+        and float(fs.get("roe") or 1.0) == 1.0
+    ):
+        gaps.append("ROE missing for Q")
     return gaps
+
+
+def _q_in_bdt(fs_taxes):
+    """Q surcharge in BDT: Q (NUC) x ROE -> fare currency, x rate -> BDT.
+
+    Q sits inside the fare (fare components + Q = NUC total), not in TAXES,
+    and the FD fare excludes it, so gross adds it to match Smartpoint's TOT.
+    """
+    q = float(fs_taxes.get("q_charge") or 0)
+    roe = float(fs_taxes.get("roe") or 1.0)
+    rate = float(fs_taxes.get("exchange_rate") or 0)
+    return q * roe * rate
 
 
 def _return_route_key(route_key):
@@ -2073,16 +2091,17 @@ def _write_individual_tables_sheet(
 
             # Formulas (R = this leg's BDT rate; YQ, YR, tax T in BDT). Only
             # computed when every input is present (see table_specs), so the
-            # parser's 1.0 rate fallback is never used. Q is not added (user
-            # rule, 2026-10-07).
+            # parser's 1.0 rate fallback is never used. Q (inside the fare, not
+            # in T) is added once per ticket so gross matches Smartpoint's TOT.
             #   With YQ/OW = OW + (YQ + YR) / R
-            #   OW gross   = OW + T / R                    (DAC origin: OW*R + T)
+            #   OW gross   = OW + (T + Q) / R          (DAC origin: OW*R + T + Q)
             #   With YQ/RT = RT + 2 * (YQ + YR) / R
-            #   RT gross   = RT + (G + G_ret - K3 + 2*(YQ + YR)) / R  (DAC: in BDT)
-            #   (G = government taxes = T - YQ - YR)
+            #   RT gross   = RT + (G + G_ret - K3 + 2*(YQ + YR) + Q) / R  (DAC: BDT)
+            #   (G = government taxes = T - YQ - YR; Q = this leg's, once)
             exchange_rate = float(fs_taxes.get("exchange_rate") or 0)
             yq_ow = float(yq_charge) + float(yr_charge)
-            tax_ow = float(fs_taxes.get("total_taxes") or 0)
+            q_bdt = _q_in_bdt(fs_taxes)
+            tax_ow = float(fs_taxes.get("total_taxes") or 0) + q_bdt
 
             inbound_taxes: dict = {}
             outbound_origin = ""
@@ -2108,6 +2127,7 @@ def _write_individual_tables_sheet(
                 compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
                 - return_charges
                 + yq_ow
+                + q_bdt
             )
             # YQ+YR converted from BDT into the fare's base currency.
             yq_ow_in_base = (yq_ow / exchange_rate) if exchange_rate else 0
