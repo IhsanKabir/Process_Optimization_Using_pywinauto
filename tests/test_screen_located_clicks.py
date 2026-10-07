@@ -92,6 +92,36 @@ def test_d_click_hits_screen_located_d_on_first_attempt(monkeypatch):
     assert saved == []  # a screen-located hit must not rewrite calibration
 
 
+def _long_fs_text(option_count):
+    """FS output taller than the 65-line fixture terminal."""
+    lines = [">", ""] + [f"FILLER {i}" for i in range(50)]
+    for n in range(1, option_count + 1):
+        lines += [
+            f"PRICING OPTION {n}                  TOTAL AMOUNT          34797 BDT",
+            "ADT                               TAX INCLUDED",
+            "1   BS    205  I  12NOV DAC MAA   1045  1255    TH   738    IBMAAO",
+            "\xabBOOK\xbb    +TQ                                         D  R",
+            "",
+        ]
+    return "\n".join(lines + [">"])
+
+
+def test_d_click_scrolls_to_bottom_for_option_below_the_fold(monkeypatch):
+    automation, clicks, _ = _automation(monkeypatch, TAX_SCREEN.replace("FS-3", "FS-6"))
+    pressed = []
+    monkeypatch.setattr(spa.pyautogui, "press", lambda key, **k: pressed.append(key))
+    monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (1500, 900))
+    monkeypatch.setattr(automation, "_safe_focus_click", lambda x, y: None)
+
+    # 6 options; after PageDown the fixture shows the last four, so option 6
+    # is the fixture's last row (D at 443, 355).
+    automation.click_d_button(5, _long_fs_text(6))
+
+    assert "pagedown" in pressed
+    x, y = clicks[0]
+    assert abs(x - (RECT_LEFT + 443)) <= 4 and abs(y - (RECT_TOP + 355)) <= 4
+
+
 def test_book_click_hits_screen_located_book(monkeypatch):
     automation, clicks, _ = _automation(monkeypatch, "BOOKING CONTEXT SCREEN")
 

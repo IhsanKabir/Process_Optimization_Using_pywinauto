@@ -10,7 +10,14 @@ import os
 import pytest
 from PIL import Image
 
-from screen_locator import analyze_terminal, find_option_rows, line_center_y
+from screen_locator import (
+    analyze_terminal,
+    find_option_rows,
+    line_center_y,
+    select_option_row,
+    text_line_count,
+    visible_line_count,
+)
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "fs_options_terminal.png")
 
@@ -93,6 +100,42 @@ def test_line_center_matches_rendered_row(screen):
 
     assert book_row_y == pytest.approx(EXPECTED_D[0][1], abs=3)
     assert prompt_y == pytest.approx(5, abs=4)
+
+
+BOOK_LINES = [9, 14, 19, 25]  # «BOOK» rows of options 1-4 in the fixture's text
+
+
+def test_select_option_row_top_uses_predicted_line(screen):
+    layout = analyze_terminal(screen)
+    rows = find_option_rows(screen, layout)
+    text = FS_TEXT + "\n" * 20
+
+    row = select_option_row(layout, rows, text, BOOK_LINES, 2, "top")
+
+    assert _close(row.d, EXPECTED_D[2])
+
+
+def test_select_option_row_bottom_counts_back_from_last(screen):
+    layout = analyze_terminal(screen)
+    rows = find_option_rows(screen, layout)
+    # Output with 6 options where only the last 4 are visible after PageDown.
+    book_lines = [9, 14, 19, 24, 29, 35]
+
+    assert _close(
+        select_option_row(layout, rows, "", book_lines, 5, "bottom").d, EXPECTED_D[3]
+    )
+    assert _close(
+        select_option_row(layout, rows, "", book_lines, 2, "bottom").d, EXPECTED_D[0]
+    )
+    assert select_option_row(layout, rows, "", book_lines, 1, "bottom") is None
+
+
+def test_visible_and_text_line_counts(screen):
+    layout = analyze_terminal(screen)
+
+    assert visible_line_count(layout, screen.height) == 920 // 14
+    assert text_line_count(FS_TEXT + "\n\n\n") == 10
+    assert text_line_count("   \n") == 0
 
 
 def test_empty_terminal_has_no_rows_or_pitch():

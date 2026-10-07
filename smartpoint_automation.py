@@ -2163,7 +2163,9 @@ class SmartpointAutomation:
                 f"(saved_x={sx}, source={saved_offset_source})."
             )
 
-        screen_offset = self._screen_glyph_offset("book", base_x, base_y, "BOOK")
+        screen_offset = self._screen_glyph_offset(
+            "book", base_x, base_y, "BOOK", fs_text, book_lines, target_line
+        )
         if screen_offset is not None:
             offsets = [screen_offset] + [o for o in offsets if o != screen_offset]
 
@@ -2470,35 +2472,84 @@ class SmartpointAutomation:
         )
         return int(round(rect.top + y))
 
-    def _locate_fs_option_glyph(self, kind: str, near_y: int) -> tuple[int, int] | None:
-        """Screen position of the D or BOOK link on the FS option row nearest
-        ``near_y``. ``kind`` is "d" or "book"."""
+    # PageUp/PageDown presses that reach either end of any FS result.
+    _SCROLL_TO_END_PRESSES = 12
+
+    def _scroll_terminal(self, direction: str) -> None:
+        """Scroll the terminal to its "top" or "bottom" with paging keys."""
+        safe_x, safe_y = self._get_terminal_focus_point()
+        self._safe_focus_click(safe_x, safe_y)
+        time.sleep(constants.COPY_DELAY)
+        key = "pageup" if direction == "top" else "pagedown"
+        pyautogui.press(
+            key,
+            presses=self._SCROLL_TO_END_PRESSES,
+            interval=constants.KEYBOARD_INTERVAL,
+        )
+        time.sleep(constants.PAGEDOWN_SCROLL_DELAY)
+
+    def _locate_fs_option_glyph(
+        self, kind: str, text: str, book_lines: list[int], ordinal: int
+    ) -> tuple[int, int] | None:
+        """Screen position of pricing option ``ordinal``'s D or BOOK link.
+
+        ``kind`` is "d" or "book"; ``book_lines`` are the text line indices of
+        every option's «BOOK» row. When the output is taller than the terminal,
+        scrolls to whichever end shows the option first, because mapping rows
+        by Y is ambiguous at an unknown scroll position.
+        """
         captured = self._capture_terminal_layout()
         if captured is None:
             return None
         img, layout, rect = captured
+
+        visible = _screen.visible_line_count(layout, img.height)
+        if _screen.text_line_count(text) <= visible:
+            viewport = "top"  # everything fits: the terminal cannot be scrolled
+        else:
+            viewport = "top" if book_lines[ordinal] < visible - 1 else "bottom"
+            self.logger.info(
+                f"      [SCREEN] Output taller than the terminal; scrolling to "
+                f"{viewport} for option row {ordinal + 1}."
+            )
+            self._scroll_terminal(viewport)
+            captured = self._capture_terminal_layout()
+            if captured is None:
+                return None
+            img, layout, rect = captured
+
         rows = _screen.find_option_rows(img, layout)
-        if not rows:
-            self.logger.debug("      [SCREEN] No FS option rows found on screen.")
-            return None
-        best = min(rows, key=lambda row: abs(rect.top + row.y - near_y))
-        if abs(rect.top + best.y - near_y) > layout.line_pitch * 1.5:
+        row = _screen.select_option_row(
+            layout, rows, text, book_lines, ordinal, viewport
+        )
+        if row is None:
             self.logger.debug(
-                f"      [SCREEN] Nearest option row y={rect.top + best.y} is too far "
-                f"from expected y={near_y}."
+                f"      [SCREEN] Option row {ordinal + 1} not identified on screen "
+                f"({len(rows)} option rows visible, viewport={viewport})."
             )
             return None
-        point = best.d if kind == "d" else best.book
+        point = row.d if kind == "d" else row.book
         if point is None:
             return None
         return rect.left + point[0], rect.top + point[1]
 
     def _screen_glyph_offset(
-        self, kind: str, base_x: int, base_y: int, tag: str
+        self,
+        kind: str,
+        base_x: int,
+        base_y: int,
+        tag: str,
+        text: str,
+        book_lines: list[int],
+        target_line: int,
     ) -> tuple[int, int] | None:
-        """Offset from (base_x, base_y) to the on-screen glyph, for use as the
-        first fan-out attempt."""
-        point = self._locate_fs_option_glyph(kind, base_y)
+        """Offset from (base_x, base_y) to the on-screen glyph of the option
+        whose «BOOK» row is ``target_line``, for use as the first attempt."""
+        if target_line not in book_lines:
+            return None
+        point = self._locate_fs_option_glyph(
+            kind, text, book_lines, book_lines.index(target_line)
+        )
         if point is None:
             return None
         self.logger.info(f"      [{tag}] Found on screen at {point}; trying it first.")
@@ -3025,7 +3076,9 @@ class SmartpointAutomation:
                 f"(saved_x={saved_x}, source={saved_offset_source})."
             )
 
-        screen_offset = self._screen_glyph_offset("d", base_x, base_y, "D-CLICK")
+        screen_offset = self._screen_glyph_offset(
+            "d", base_x, base_y, "D-CLICK", fs_text, d_button_lines, target_line
+        )
         if screen_offset is not None:
             offsets = [screen_offset] + [o for o in offsets if o != screen_offset]
 
