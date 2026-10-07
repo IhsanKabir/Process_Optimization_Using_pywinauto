@@ -1034,11 +1034,14 @@ def generate_report(
     config: Optional[dict] = None,
     only_currency: bool = False,
     taxes_expected: bool = True,
+    return_legs_expected: bool = True,
 ) -> str:
     """Generate Excel fare report grouped by international destination.
 
     ``taxes_expected`` is False for runs that never fetch FS tax details
     (--only-fd, quick paste); missing taxes are then not flagged for re-run.
+    ``return_legs_expected`` is False for --one-direction runs, where the
+    opposite direction is not listed for re-run.
     """
     wb = Workbook()
     wb.remove(wb.active)
@@ -1105,7 +1108,9 @@ def generate_report(
 
         # ── Re-run list: routes with fares but no tax breakdown ──
         missing_taxes = (
-            _collect_missing_tax_routes(all_route_data, domestic_airports)
+            _collect_missing_tax_routes(
+                all_route_data, domestic_airports, return_legs_expected
+            )
             if taxes_expected
             else []
         )
@@ -1246,38 +1251,105 @@ def _route_has_fares(route_info):
     )
 
 
-def _return_leg_fs_taxes(all_route_data, route_key):
-    """fs_taxes of the opposite direction ("BS_DAC-BKK" -> "BS_BKK-DAC")."""
+def _leg_tax_gaps(route_info):
+    """What is missing to compute With YQ and Gross for one leg ([] = complete).
+
+    The parser falls back to an exchange rate of 1.0 and an ROE of 1.0 when
+    the EQU line or ROE is absent, and the FS option can be priced in a
+    different currency from the FD fares; each of those would silently give a
+    wrong figure, so they count as missing data.
+    """
+    fs = _route_fs_taxes(route_info)
+    if not _has_tax_data_for_individual_table(fs):
+        return ["no tax breakdown"]
+    gaps = []
+    base_cur = fs.get("base_currency")
+    rate = float(fs.get("exchange_rate") or 0)
+    rate_from_fare_line = fs.get("base_fare") and fs.get("equ_fare")
+    if rate <= 0 or (base_cur not in (None, "BDT") and not rate_from_fare_line):
+        gaps.append("exchange rate not found (no FARE/EQU line)")
+    if not float(fs.get("total_taxes") or 0):
+        gaps.append("no total tax")
+    fd_cur = route_info.get("currency") if isinstance(route_info, dict) else None
+    if fd_cur and base_cur and fd_cur != base_cur:
+        gaps.append(f"FD fares in {fd_cur} but FS priced in {base_cur}")
+    if (
+        float(fs.get("q_charge") or 0) > 0
+        and base_cur not in (None, "USD", "NUC")
+        and float(fs.get("roe") or 1.0) == 1.0
+    ):
+        gaps.append("ROE missing for Q")
+    return gaps
+
+
+def _q_in_bdt(fs_taxes):
+    """Q surcharge (NUC) in BDT: NUC x ROE -> fare currency, x rate -> BDT."""
+    q = float(fs_taxes.get("q_charge") or 0)
+    roe = float(fs_taxes.get("roe") or 1.0)
+    rate = float(fs_taxes.get("exchange_rate") or 0)
+    return q * roe * rate
+
+
+def _return_route_key(route_key):
     parts = route_key.split("_", 1)
     if len(parts) != 2 or "-" not in parts[1]:
-        return {}
+        return None
     origin, dest = parts[1].split("-", 1)
-    return _route_fs_taxes(all_route_data.get(f"{parts[0]}_{dest}-{origin}", {}))
+    return f"{parts[0]}_{dest}-{origin}"
 
 
-def _collect_missing_tax_routes(all_route_data, domestic_airports):
-    """Routes that have fares but no captured tax breakdown, in report order.
+def _return_leg_gaps(all_route_data, route_key):
+    """Gaps of the opposite direction, prefixed with its route."""
+    return_key = _return_route_key(route_key)
+    if not return_key:
+        return ["return leg unknown"]
+    route = return_key.split("_", 1)[1]
+    if return_key not in all_route_data:
+        return [f"return leg {route} not extracted"]
+    return [
+        f"return leg {route}: {g}" for g in _leg_tax_gaps(all_route_data[return_key])
+    ]
 
-    Without the breakdown the YQ/YR/Q charges and gross fares cannot be
-    computed, so these routes need an extraction re-run.
+
+def _collect_missing_tax_routes(
+    all_route_data, domestic_airports, return_legs_expected=True
+):
+    """Routes whose tax data is missing or unusable, in report order.
+
+    Each item names the route to re-run and what is missing. A route whose
+    opposite direction was never extracted also lists that return route
+    (RT With YQ and RT Gross need both legs), unless the run was limited to
+    one direction on purpose.
     """
     sections = _group_by_international(all_route_data, domestic_airports)
     dom_order = {code: i for i, code in enumerate(domestic_airports)}
     missing = []
+    listed = set()
+
+    def _add(airline, route_key, reason):
+        if route_key not in listed:
+            listed.add(route_key)
+            missing.append(
+                {
+                    "airline": airline,
+                    "route": route_key.split("_", 1)[1],
+                    "route_key": route_key,
+                    "missing": reason,
+                }
+            )
+
     for section_key in sorted(sections, key=_section_sort_key):
         for airline, _domestic, route_key, route_info in sorted(
             sections[section_key], key=_entry_sort_key(dom_order)
         ):
-            if _route_has_fares(route_info) and not _has_tax_data_for_individual_table(
-                _route_fs_taxes(route_info)
-            ):
-                missing.append(
-                    {
-                        "airline": airline,
-                        "route": route_key.split("_", 1)[1],
-                        "route_key": route_key,
-                    }
-                )
+            if not _route_has_fares(route_info):
+                continue
+            gaps = _leg_tax_gaps(route_info)
+            if gaps:
+                _add(airline, route_key, "; ".join(gaps))
+            return_key = _return_route_key(route_key)
+            if return_legs_expected and return_key and return_key not in all_route_data:
+                _add(airline, return_key, "return route not extracted")
     return missing
 
 
@@ -1582,9 +1654,9 @@ def _write_rerun_sheet(ws, missing, airline_names):
         row=2,
         column=1,
         value=(
-            "These routes have fares but no tax breakdown, so YQ/YR/Q and gross "
-            "fares are left out of the report. Re-run each with the Route and "
-            "Airline filters shown."
+            "Tax data for these routes is missing or unusable, so their With YQ "
+            "and Gross columns are left blank instead of showing incomplete "
+            "figures. Re-run each with the Route and Airline filters shown."
         ),
     ).font = Font(name="Calibri", size=10, italic=True)
 
@@ -1604,7 +1676,7 @@ def _write_rerun_sheet(ws, missing, airline_names):
             item["airline"],
             item["route"],
             airline_names.get(item["airline"], item["airline"]),
-            "Tax breakdown (YQ/YR/Q, gross)",
+            item["missing"],
             item["route"],
             item["airline"],
         ]
@@ -1768,17 +1840,21 @@ def _write_individual_tables_sheet(
             name="Calibri", bold=True, size=14
         )
         ws.cell(row=current_row, column=1).fill = ROUTE_FILL
-        # (has this leg's taxes, has both legs' taxes for RT gross)
+        # (one-way columns computable, RT columns computable, what is missing).
+        # A figure is only shown when every input is present; otherwise its
+        # columns stay out and the title says what to re-run.
         table_specs = []
         for _airline, _domestic, _route_key, route_info in entries:
-            has_ow_tax = _has_tax_data_for_individual_table(_route_fs_taxes(route_info))
-            has_rt_gross = has_ow_tax and _has_tax_data_for_individual_table(
-                _return_leg_fs_taxes(all_route_data, _route_key)
+            leg_gaps = _leg_tax_gaps(route_info)
+            return_gaps = (
+                [] if leg_gaps else _return_leg_gaps(all_route_data, _route_key)
             )
-            table_specs.append((has_ow_tax, has_rt_gross))
+            table_specs.append(
+                (not leg_gaps, not leg_gaps and not return_gaps, leg_gaps + return_gaps)
+            )
         table_widths = [
-            FD_TABLE_WIDTH + (3 if has_ow else 0) + (1 if has_rt else 0)
-            for has_ow, has_rt in table_specs
+            FD_TABLE_WIDTH + (2 if has_ow else 0) + (2 if has_rt else 0)
+            for has_ow, has_rt, _gaps in table_specs
         ]
 
         total_cols = sum(table_widths) + (GAP * max(len(entries) - 1, 0))
@@ -1802,6 +1878,7 @@ def _write_individual_tables_sheet(
             (
                 has_tax_data,
                 has_rt_gross,
+                data_gaps,
             ),
         ) in zip(entries, table_widths, table_specs):
             fs_taxes = (
@@ -1873,12 +1950,8 @@ def _write_individual_tables_sheet(
 
             # Table title
             missing_note = ""
-            if not flag_missing_taxes:
-                pass
-            elif not has_tax_data and _route_has_fares(route_info):
-                missing_note = "  ⚠ TAXES MISSING – re-run"
-            elif has_tax_data and not has_rt_gross:
-                missing_note = "  ⚠ RT gross omitted – return-leg taxes missing"
+            if flag_missing_taxes and data_gaps and _route_has_fares(route_info):
+                missing_note = "  ⚠ INCOMPLETE – re-run: " + "; ".join(data_gaps)
             title_cell = ws.cell(
                 row=row, column=col_offset, value=table_title + missing_note
             )
@@ -1988,7 +2061,7 @@ def _write_individual_tables_sheet(
             )
             current_col += 1
 
-            if has_tax_data:
+            if has_rt_gross:
                 _styled_cell(
                     ws,
                     row,
@@ -2012,13 +2085,17 @@ def _write_individual_tables_sheet(
                 )
             row += 1
 
-            exchange_rate = fs_taxes.get("exchange_rate", 1.0)
-            # v1.5.17: WithYQ now excludes the Q charge (Q is a USD-denominated
-            # surcharge captured separately from the fare-construction line and
-            # must not be mixed into BDT-summed totals).  Gross-fare columns
-            # are now in the fare currency, not BDT.
+            # Formulas (R = this leg's BDT rate; YQ, YR, tax T in BDT; Q in BDT
+            # via each leg's own ROE and rate). Only computed when every input
+            # is present (see table_specs), so no 1.0 rate fallback is used.
+            #   With YQ/OW = OW + (YQ + YR) / R
+            #   OW gross   = OW + (T + Q) / R          (DAC origin: OW*R + T + Q)
+            #   With YQ/RT = RT + (YQ + YR + YQ_ret + YR_ret) / R
+            #   RT gross   = RT + (T + T_ret - K3 + Q + Q_ret) / R  (DAC: in BDT)
+            # Q goes into gross only, never into With YQ.
+            exchange_rate = float(fs_taxes.get("exchange_rate") or 0)
             yq_ow = float(yq_charge) + float(yr_charge)
-            tax_ow = total_tax_val
+            tax_ow = float(fs_taxes.get("total_taxes") or 0) + _q_in_bdt(fs_taxes)
 
             inbound_taxes: dict = {}
             outbound_origin = ""
@@ -2030,13 +2107,19 @@ def _write_individual_tables_sheet(
                 inbound_info = all_route_data.get(inbound_key, {})
                 inbound_taxes = inbound_info.get("fs_taxes", {}) or {}
 
-            yq_rt = yq_ow * 2
-            # Compensate for origin-sensitive taxes (notably India K3) that
-            # appear in isolated one-way scrapes but shouldn't apply to the
-            # actual RT journey.
-            tax_rt = compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
-            # YQ+YR converted from BDT (equivalent currency) into the fare's
-            # base currency.  Q is intentionally NOT added — see yq_ow above.
+            yq_rt = (
+                yq_ow
+                + float(inbound_taxes.get("yq_charge") or 0)
+                + float(inbound_taxes.get("yr_charge") or 0)
+            )
+            # compute_rt_tax_total strips origin-sensitive taxes (India K3) that
+            # appear in isolated one-way scrapes but not on the RT journey.
+            tax_rt = (
+                compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
+                + _q_in_bdt(fs_taxes)
+                + _q_in_bdt(inbound_taxes)
+            )
+            # YQ+YR converted from BDT into the fare's base currency.
             yq_ow_in_base = (yq_ow / exchange_rate) if exchange_rate else 0
             yq_rt_in_base = (yq_rt / exchange_rate) if exchange_rate else 0
 
@@ -2096,7 +2179,7 @@ def _write_individual_tables_sheet(
                 _write_fare_cell(ws, row, current_data_col, rt, change_type)
                 current_data_col += 1
 
-                if has_tax_data:
+                if has_rt_gross:
                     rt_yq_val = (rt + yq_rt_in_base) if rt else None
                     _write_fare_cell(ws, row, current_data_col, rt_yq_val, None)
                     current_data_col += 1

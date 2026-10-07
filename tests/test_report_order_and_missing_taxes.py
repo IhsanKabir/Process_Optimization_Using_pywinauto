@@ -14,7 +14,9 @@ from excel_report import (
 
 TAXES = {
     "base_currency": "USD",
+    "base_fare": 300.0,
     "equ_currency": "BDT",
+    "equ_fare": 36000.0,
     "exchange_rate": 120.0,
     "roe": 1.0,
     "yq_charge": 1200.0,
@@ -106,19 +108,51 @@ def _individual(all_route_data, route_key):
     return ws
 
 
-def test_missing_taxes_flag_title_and_keep_only_fare_columns():
-    data = {"BS_DAC-BKK": _route({}), "BS_BKK-DAC": _route(TAXES)}
+# Return leg with different charges: YQ 600, YR 600, Q 5 NUC, tax 5,000 BDT.
+RETURN_TAXES = dict(
+    TAXES, yq_charge=600.0, yr_charge=600.0, q_charge=5.0, total_taxes=5000.0
+)
+
+
+def _row(ws, rbd):
+    r = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == rbd)
+    return [ws.cell(r, c).value for c in range(1, 8)]
+
+
+def test_complete_legs_use_both_legs_charges_and_add_q_to_gross_only():
+    data = {"BS_DAC-BKK": _route(TAXES), "BS_BKK-DAC": _route(RETURN_TAXES)}
+
+    ws = _individual(data, "BS_DAC-BKK")
+
+    assert _titles(ws, _header_row(ws)) == [
+        "RBD",
+        "OW/USD",
+        "With YQ/OW(USD)",
+        "OW/Gross(BDT)",
+        "RT/USD",
+        "With YQ/RT(USD)",
+        "RT/Gross(BDT)",
+    ]
+    # R=120. With YQ/OW = 300 + (1200+0)/120. OW gross (BDT, from DAC) =
+    # 300*120 + tax 6000 + Q 10*1*120. With YQ/RT = 550 + (1200 + 600+600)/120.
+    # RT gross = 550*120 + 6000 + 5000 + Q 1200 + Q 600.
+    assert _row(ws, "Y") == ["Y", "300", "310", "43,200", "550", "570", "78,800"]
+    assert "INCOMPLETE" not in ws.cell(_header_row(ws) - 2, 1).value
+
+
+def test_missing_leg_taxes_blank_all_derived_columns_and_flag():
+    data = {"BS_DAC-BKK": _route({}), "BS_BKK-DAC": _route(RETURN_TAXES)}
 
     ws = _individual(data, "BS_DAC-BKK")
 
     hr = _header_row(ws)
     assert _titles(ws, hr) == ["RBD", "OW/USD", "RT/USD"]
     title = ws.cell(hr - 2, 1)
-    assert "TAXES MISSING" in title.value
+    assert "INCOMPLETE" in title.value and "no tax breakdown" in title.value
     assert title.fill.start_color.rgb.endswith("FFC7CE")
 
 
-def test_missing_return_leg_taxes_drops_only_rt_gross():
+def test_missing_return_leg_blanks_both_rt_columns():
     data = {"BS_DAC-BKK": _route(TAXES), "BS_BKK-DAC": _route({})}
 
     ws = _individual(data, "BS_DAC-BKK")
@@ -130,35 +164,70 @@ def test_missing_return_leg_taxes_drops_only_rt_gross():
         "With YQ/OW(USD)",
         "OW/Gross(BDT)",
         "RT/USD",
-        "With YQ/RT(USD)",
     ]
-    assert "return" in ws.cell(hr - 2, 1).value.lower()
+    assert "return leg BKK-DAC" in ws.cell(hr - 2, 1).value
 
 
-def test_complete_taxes_keep_all_columns_without_flag():
-    data = {"BS_DAC-BKK": _route(TAXES), "BS_BKK-DAC": _route(TAXES)}
+def test_unextracted_return_route_blanks_rt_columns():
+    data = {"BS_DAC-BKK": _route(TAXES)}
 
     ws = _individual(data, "BS_DAC-BKK")
 
-    hr = _header_row(ws)
-    assert _titles(ws, hr)[-1] == "RT/Gross(BDT)"
-    assert "MISSING" not in ws.cell(hr - 2, 1).value
+    assert _titles(ws, _header_row(ws))[-1] == "RT/USD"
+    assert "not extracted" in ws.cell(_header_row(ws) - 2, 1).value
 
 
-def test_collect_missing_tax_routes_skips_routes_without_fares():
+def test_fd_and_fs_currency_mismatch_is_not_converted():
+    # FD fares in THB but the FS option was priced in USD: the USD rate
+    # must not be applied to THB fares.
+    thb_route = dict(_route(TAXES), currency="THB")
+    data = {"TG_BKK-DAC": thb_route, "TG_DAC-BKK": _route(TAXES)}
+
+    ws = _individual(data, "TG_BKK-DAC")
+
+    assert _titles(ws, _header_row(ws)) == ["RBD", "OW/THB", "RT/THB"]
+    assert "THB" in ws.cell(_header_row(ws) - 2, 1).value
+
+
+def test_rate_fallback_without_equ_line_is_incomplete():
+    no_equ = dict(TAXES, equ_fare=0.0, equ_currency=None, exchange_rate=1.0)
+    data = {"BS_DAC-BKK": _route(no_equ), "BS_BKK-DAC": _route(TAXES)}
+
+    ws = _individual(data, "BS_DAC-BKK")
+
+    assert _titles(ws, _header_row(ws)) == ["RBD", "OW/USD", "RT/USD"]
+    assert "exchange rate" in ws.cell(_header_row(ws) - 2, 1).value
+
+
+def test_q_without_roe_on_non_usd_fare_is_incomplete():
+    aed = dict(TAXES, base_currency="AED", roe=1.0, q_charge=14.51)
+    route = dict(_route(aed), currency="AED")
+    data = {"FZ_DXB-DAC": route, "FZ_DAC-DXB": _route(TAXES)}
+
+    ws = _individual(data, "FZ_DXB-DAC")
+
+    assert "ROE" in ws.cell(_header_row(ws) - 2, 1).value
+
+
+def test_collect_missing_lists_reason_and_unextracted_return_route():
     data = {
         "BG_BKK-DAC": _route({}),
         "BS_DAC-BKK": _route({}),
         "UL_DAC-CMB": _route({}, fares={}),
         "BS_BKK-DAC": _route(TAXES),
+        "EK_DAC-DXB": _route(TAXES),
     }
 
     missing = _collect_missing_tax_routes(data, ["DAC"])
 
-    assert [(m["airline"], m["route"]) for m in missing] == [
-        ("BS", "DAC-BKK"),
-        ("BG", "BKK-DAC"),
+    assert [(m["airline"], m["route"], m["missing"]) for m in missing] == [
+        ("BS", "DAC-BKK", "no tax breakdown"),
+        ("BG", "BKK-DAC", "no tax breakdown"),
+        ("BG", "DAC-BKK", "return route not extracted"),
+        ("EK", "DXB-DAC", "return route not extracted"),
     ]
+    one_way = _collect_missing_tax_routes(data, ["DAC"], return_legs_expected=False)
+    assert [m["route"] for m in one_way] == ["DAC-BKK", "BKK-DAC"]
 
 
 def test_report_has_rerun_sheet_only_when_taxes_missing(tmp_path):
@@ -201,7 +270,7 @@ def test_fd_only_runs_do_not_flag_missing_taxes(tmp_path):
         for v in row
         if isinstance(v, str)
     ]
-    assert not any("MISSING" in t for t in texts)
+    assert not any("INCOMPLETE" in t for t in texts)
 
 
 # ── original currency on Tax Breakdowns ─────────────────────────────────────
