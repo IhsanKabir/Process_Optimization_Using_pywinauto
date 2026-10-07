@@ -149,6 +149,23 @@ def test_visible_and_text_line_counts(screen):
     assert text_line_count("   \n") == 0
 
 
+def _with_selection_highlight(img, color=(51, 153, 255)):
+    """Repaint the background of the text block like a Ctrl+A selection."""
+    out = img.copy()
+    px = out.load()
+    for y in range(0, 460):
+        for x in range(10, 500):
+            if px[x, y] == (78, 78, 78):
+                px[x, y] = color
+    return out
+
+
+def test_pitch_survives_selection_highlight(screen):
+    layout = analyze_terminal(_with_selection_highlight(screen))
+
+    assert layout.line_pitch == pytest.approx(14, abs=0.5)
+
+
 def test_empty_terminal_has_no_rows_or_pitch():
     blank = Image.new("RGB", (400, 300), (78, 78, 78))
 

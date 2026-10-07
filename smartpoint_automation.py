@@ -6,6 +6,7 @@ Connects to the application, sends commands via keyboard, captures output via cl
 and handles MD (More Data) pagination automatically.
 """
 
+import os
 import re
 import time
 import logging
@@ -2421,6 +2422,34 @@ class SmartpointAutomation:
     # terminal (minimised, covered, blank) — fall back to calibration.
     _MIN_MEASURED_PITCH = 8.0
     _MAX_MEASURED_PITCH = 60.0
+    _SCREEN_RETRY_DELAY = 0.3
+    # Debug screenshots saved per run when screen location fails.
+    _MAX_SCREEN_DEBUG_IMAGES = 20
+
+    def _save_screen_debug(self, img, reason: str) -> None:
+        """Save a failed-detection screenshot beside the run log for diagnosis."""
+        saved = getattr(self, "_screen_debug_count", 0)
+        if img is None or saved >= self._MAX_SCREEN_DEBUG_IMAGES:
+            return
+        log_dir = next(
+            (
+                os.path.dirname(h.baseFilename)
+                for h in logging.getLogger("travelport").handlers
+                if isinstance(h, logging.FileHandler)
+            ),
+            None,
+        )
+        if not log_dir:
+            return
+        path = os.path.join(
+            log_dir, f"screen_{time.strftime('%Y%m%d_%H%M%S')}_{reason}.png"
+        )
+        try:
+            img.save(path)
+            self._screen_debug_count = saved + 1
+            self.logger.info(f"      [SCREEN] Saved screenshot for diagnosis: {path}")
+        except Exception as exc:
+            self.logger.debug(f"      [SCREEN] Could not save screenshot: {exc}")
 
     def _grab_terminal_image(self, rect):
         """Screenshot of the terminal pane in physical pixels, or None."""
@@ -2445,17 +2474,23 @@ class SmartpointAutomation:
         except Exception as exc:
             self.logger.debug(f"      [SCREEN] Terminal rect unavailable: {exc}")
             return None
-        img = self._grab_terminal_image(rect)
-        if img is None:
-            return None
-        layout = _screen.analyze_terminal(img)
-        pitch = layout.line_pitch
-        if pitch is None or not (
-            self._MIN_MEASURED_PITCH <= pitch <= self._MAX_MEASURED_PITCH
-        ):
-            self.logger.debug(f"      [SCREEN] No usable line pitch (got {pitch}).")
-            return None
-        return img, layout, rect
+        for attempt in range(2):
+            img = self._grab_terminal_image(rect)
+            if img is None:
+                return None
+            layout = _screen.analyze_terminal(img)
+            pitch = layout.line_pitch
+            if pitch is not None and (
+                self._MIN_MEASURED_PITCH <= pitch <= self._MAX_MEASURED_PITCH
+            ):
+                return img, layout, rect
+            if attempt == 0:
+                # The screen may still be repainting (e.g. the copy's
+                # selection highlight); look once more after a short pause.
+                time.sleep(self._SCREEN_RETRY_DELAY)
+        self.logger.debug(f"      [SCREEN] No usable line pitch (got {pitch}).")
+        self._save_screen_debug(img, "no_pitch")
+        return None
 
     def _measured_line_pitch(self) -> float | None:
         captured = self._capture_terminal_layout()
@@ -2528,10 +2563,21 @@ class SmartpointAutomation:
             rows, len(book_lines), ordinal, viewport, all_visible=all_visible
         )
         if row is None:
-            self.logger.debug(
+            time.sleep(self._SCREEN_RETRY_DELAY)
+            captured = self._capture_terminal_layout()
+            if captured is not None:
+                img, layout, rect = captured
+                rows = _screen.find_option_rows(img, layout)
+                row = _screen.select_option_row(
+                    rows, len(book_lines), ordinal, viewport, all_visible=all_visible
+                )
+        if row is None:
+            self.logger.info(
                 f"      [SCREEN] Option row {ordinal + 1} not identified on screen "
-                f"({len(rows)} option rows visible, viewport={viewport})."
+                f"({len(rows)} of {len(book_lines)} option rows found, "
+                f"viewport={viewport}); using the predicted position."
             )
+            self._save_screen_debug(img, f"option{ordinal + 1}_rows{len(rows)}")
             return None
         point = row.d if kind == "d" else row.book
         if point is None:
