@@ -211,6 +211,78 @@ _SMARTPOINT_WINDOW_HINTS = (
 )
 
 
+# Calibration accessors per clickable link, looked up by name at call time so
+# tests and future callers can patch calibration functions.
+_CLICK_CALIBRATION = {
+    "d": ("get_d_click_offset", "get_d_click_char_x_offset", "clear_d_click_offset"),
+    "book": (
+        "get_book_click_offset",
+        "get_book_click_char_x_offset",
+        "clear_book_click_offset",
+    ),
+}
+
+
+def _prioritise_offsets(first, offsets):
+    """``first`` followed by the remaining ``offsets``, without duplicates."""
+    seen: set[tuple[int, int]] = set()
+    ordered: list[tuple[int, int]] = []
+    for off in list(first) + list(offsets):
+        if off not in seen:
+            seen.add(off)
+            ordered.append(off)
+    return ordered
+
+
+def _saved_offset_variants(saved_x: int, saved_y: int) -> list[tuple[int, int]]:
+    """A learned offset plus the same column at the usual row nudges."""
+    return [
+        (saved_x, saved_y),
+        (saved_x, 0),
+        (saved_x, -9),
+        (saved_x, 9),
+        (saved_x, -18),
+        (saved_x, 18),
+    ]
+
+
+class _ClickMonitor:
+    """Background recorder of left-button releases as (timestamp, x, y).
+
+    Lets click fan-outs notice a manual click by the user at any point. The
+    thread only reads Win32 input state (no clipboard), so it is thread-safe.
+    """
+
+    class _POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    def __init__(self) -> None:
+        self.clicks: list[tuple[float, int, int]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> "_ClickMonitor":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=0.5)
+
+    def _run(self) -> None:
+        get_key = ctypes.windll.user32.GetAsyncKeyState
+        get_pos = ctypes.windll.user32.GetCursorPos
+        prev_down = bool(get_key(0x01) & 0x8000)
+        while not self._stop.is_set():
+            time.sleep(0.02)
+            down = bool(get_key(0x01) & 0x8000)
+            if prev_down and not down:
+                point = self._POINT()
+                get_pos(ctypes.byref(point))
+                self.clicks.append((time.time(), point.x, point.y))
+            prev_down = down
+
+
 class StopRequested(SystemExit):
     """Raised when the GUI requests that automation should stop immediately."""
 
@@ -2106,91 +2178,23 @@ class SmartpointAutomation:
                 )
         offsets.extend([(0, -18), (0, 18)])
 
-        # ── Phase D: prepend saved calibration offset so known-good column
-        #    is tried first ──────────────────────────────────────────────────
-        saved_offset = _calibration_mod.get_book_click_offset(self._cal)
-        saved_char_x_offset = _calibration_mod.get_book_click_char_x_offset(self._cal)
-
-        try:
-            _rect_width = self._get_terminal_rect().width()
-        except Exception as exc:
-            self.logger.debug(f"      [BOOK] terminal rect unavailable: {exc}")
-            _rect_width = 0
-        if (
-            _rect_width > 0
-            and saved_offset is not None
-            and not self._saved_offset_is_sane(
-                saved_offset[0], saved_offset[1], _rect_width, self._line_height
-            )
-        ):
-            self.logger.warning(
-                f"      [BOOK] Saved offset {saved_offset} out of bounds; clearing."
-            )
-            self._cal = _calibration_mod.clear_book_click_offset(self._cal)
-            _calibration_mod.save_calibration(self._cal)
-            saved_offset = None
-            saved_char_x_offset = None
-
-        effective_saved_offset: tuple[int, int] | None = None
-        saved_offset_source: str = ""
-        if saved_char_x_offset is not None and char_x is not None:
-            cx_off, cy_off = saved_char_x_offset
-            effective_saved_offset = ((char_x - base_x) + cx_off, cy_off)
-            saved_offset_source = "char_x"
-        elif saved_offset is not None:
-            effective_saved_offset = saved_offset
-            saved_offset_source = "base_x"
-
+        # ── Phase D: saved calibration offset first, then the on-screen BOOK ──
+        _saved, _saved_char_x, effective_saved_offset = self._load_saved_click_offset(
+            "book", "BOOK", char_x, base_x
+        )
         if effective_saved_offset is not None:
-            sx, sy = effective_saved_offset
-            saved_prefix = [
-                (sx, sy),
-                (sx, 0),
-                (sx, -9),
-                (sx, 9),
-                (sx, -18),
-                (sx, 18),
-            ]
-            seen: set[tuple[int, int]] = set()
-            reordered: list[tuple[int, int]] = []
-            for off in saved_prefix + offsets:
-                if off not in seen:
-                    seen.add(off)
-                    reordered.append(off)
-            offsets = reordered
-            self.logger.debug(
-                f"      [BOOK] Trying saved-X variants first "
-                f"(saved_x={sx}, source={saved_offset_source})."
+            offsets = _prioritise_offsets(
+                _saved_offset_variants(*effective_saved_offset), offsets
             )
 
         screen_offset = self._screen_glyph_offset(
             "book", base_x, base_y, "BOOK", fs_text, book_lines, target_line
         )
         if screen_offset is not None:
-            offsets = [screen_offset] + [o for o in offsets if o != screen_offset]
+            offsets = _prioritise_offsets([screen_offset], offsets)
 
-        # ── Background click monitor ──────────────────────────────────────────
-        class _POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-        _mon_clicks: list[tuple[float, int, int]] = []
-        _mon_stop = threading.Event()
-
-        def _monitor_clicks() -> None:
-            _get_key = ctypes.windll.user32.GetAsyncKeyState
-            _get_pos = ctypes.windll.user32.GetCursorPos
-            prev_dn = bool(_get_key(0x01) & 0x8000)
-            while not _mon_stop.is_set():
-                time.sleep(0.02)
-                dn = bool(_get_key(0x01) & 0x8000)
-                if prev_dn and not dn:
-                    _pt = _POINT()
-                    _get_pos(ctypes.byref(_pt))
-                    _mon_clicks.append((time.time(), _pt.x, _pt.y))
-                prev_dn = dn
-
-        _mon_thread = threading.Thread(target=_monitor_clicks, daemon=True)
-        _mon_thread.start()
+        _monitor = _ClickMonitor().start()
+        _mon_clicks = _monitor.clicks
 
         def _record_success(learned_x: int, learned_y: int) -> None:
             store_y = learned_y
@@ -2325,7 +2329,7 @@ class SmartpointAutomation:
             )
             return ""
         finally:
-            _mon_stop.set()
+            _monitor.stop()
 
     def run_fqc_command(self, airline_code: str) -> str:
         """
@@ -2827,6 +2831,58 @@ class SmartpointAutomation:
             return False
         return True
 
+    def _load_saved_click_offset(
+        self, kind: str, tag: str, char_x: int | None, base_x: int
+    ) -> tuple:
+        """Saved click offsets for ``kind`` ("d" or "book"), dropping absurd ones.
+
+        Returns (saved_offset, saved_char_x_offset, effective_offset). The
+        effective offset is relative to base_x and prefers the char_x-anchored
+        variant, which survives terminal-width changes. An offset outside sane
+        bounds (e.g. learned from a stray click on a tab) is cleared so it is
+        re-learned instead of replayed off-pane.
+        """
+        get_name, get_char_x_name, clear_name = _CLICK_CALIBRATION[kind]
+        saved_offset = getattr(_calibration_mod, get_name)(self._cal)
+        saved_char_x_offset = getattr(_calibration_mod, get_char_x_name)(self._cal)
+
+        try:
+            rect_width = self._get_terminal_rect().width()
+        except Exception as exc:
+            self.logger.debug(f"      [{tag}] terminal rect unavailable: {exc}")
+            rect_width = 0
+        if (
+            rect_width > 0
+            and saved_offset is not None
+            and not self._saved_offset_is_sane(
+                saved_offset[0], saved_offset[1], rect_width, self._line_height
+            )
+        ):
+            self.logger.warning(
+                f"      [{tag}] Saved offset {saved_offset} is outside sane bounds "
+                f"for rect width={rect_width}; clearing and re-learning."
+            )
+            self._cal = getattr(_calibration_mod, clear_name)(self._cal)
+            _calibration_mod.save_calibration(self._cal)
+            saved_offset = None
+            saved_char_x_offset = None
+
+        effective: tuple[int, int] | None = None
+        source = ""
+        if saved_char_x_offset is not None and char_x is not None:
+            cx_off, cy_off = saved_char_x_offset
+            effective = ((char_x - base_x) + cx_off, cy_off)
+            source = "char_x"
+        elif saved_offset is not None:
+            effective = saved_offset
+            source = "base_x"
+        if effective is not None:
+            self.logger.debug(
+                f"      [{tag}] Trying saved-X variants first "
+                f"(saved_x={effective[0]}, source={source})."
+            )
+        return saved_offset, saved_char_x_offset, effective
+
     @staticmethod
     def _saved_offset_is_sane(
         offset_x: int,
@@ -3015,100 +3071,23 @@ class SmartpointAutomation:
         #     per line.  Convert to a base_x-relative offset before feeding
         #     the offsets list machinery, which clicks at base_x + x_off.
         #   * d_click_offset: legacy base_x-relative offset, used as fallback.
-        saved_offset = _calibration_mod.get_d_click_offset(self._cal)
-        saved_char_x_offset = _calibration_mod.get_d_click_char_x_offset(self._cal)
-
-        # v1.5.17 — defang corrupted calibration files.  If the saved
-        # offset is obviously absurd (e.g. learned from a stray click on
-        # a tab outside the terminal pane), drop it and start fresh
-        # rather than replaying a click at off-pane coordinates.
-        try:
-            _rect_for_sanity = self._get_terminal_rect()
-            _rect_width = _rect_for_sanity.width()
-        except Exception as exc:
-            self.logger.debug(f"      [D-CLICK] terminal rect unavailable: {exc}")
-            _rect_width = 0
-        if (
-            _rect_width > 0
-            and saved_offset is not None
-            and not self._saved_offset_is_sane(
-                saved_offset[0], saved_offset[1], _rect_width, self._line_height
-            )
-        ):
-            self.logger.warning(
-                f"      [D-CLICK] Saved offset {saved_offset} is outside sane bounds "
-                f"for rect width={_rect_width}; clearing and re-learning."
-            )
-            self._cal = _calibration_mod.clear_d_click_offset(self._cal)
-            _calibration_mod.save_calibration(self._cal)
-            saved_offset = None
-            saved_char_x_offset = None
-
-        effective_saved_offset: tuple[int, int] | None = None
-        saved_offset_source: str = ""
-        if saved_char_x_offset is not None and char_x is not None:
-            cx_off, cy_off = saved_char_x_offset
-            effective_saved_offset = ((char_x - base_x) + cx_off, cy_off)
-            saved_offset_source = "char_x"
-        elif saved_offset is not None:
-            effective_saved_offset = saved_offset
-            saved_offset_source = "base_x"
-
+        saved_offset, saved_char_x_offset, effective_saved_offset = (
+            self._load_saved_click_offset("d", "D-CLICK", char_x, base_x)
+        )
         if effective_saved_offset is not None:
-            saved_x, saved_y = effective_saved_offset
-            saved_x_prefix = [
-                (saved_x, saved_y),
-                (saved_x, 0),
-                (saved_x, -9),
-                (saved_x, 9),
-                (saved_x, -18),
-                (saved_x, 18),
-            ]
-            seen: set[tuple[int, int]] = set()
-            reordered: list[tuple[int, int]] = []
-            for off in saved_x_prefix + offsets:
-                if off not in seen:
-                    seen.add(off)
-                    reordered.append(off)
-            offsets = reordered
-            self.logger.debug(
-                f"      [D-CLICK] Trying saved-X variants first "
-                f"(saved_x={saved_x}, source={saved_offset_source})."
+            offsets = _prioritise_offsets(
+                _saved_offset_variants(*effective_saved_offset), offsets
             )
 
         screen_offset = self._screen_glyph_offset(
             "d", base_x, base_y, "D-CLICK", fs_text, d_button_lines, target_line
         )
         if screen_offset is not None:
-            offsets = [screen_offset] + [o for o in offsets if o != screen_offset]
+            offsets = _prioritise_offsets([screen_offset], offsets)
 
-        # --- Background click monitor (runs for the whole duration) ----------
-        # Records every left-button release so manual clicks can be detected
-        # at any point during the fan-out, not just after exhaustion.
-        # Thread only reads Win32 state — no clipboard access, thread-safe.
-
-        class _POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-        _mon_clicks: list[tuple[float, int, int]] = []  # (timestamp, x, y)
-        _mon_stop = threading.Event()
-
-        def _monitor_clicks() -> None:
-            _get_key = ctypes.windll.user32.GetAsyncKeyState
-            _get_pos = ctypes.windll.user32.GetCursorPos
-            prev_dn = bool(_get_key(0x01) & 0x8000)
-            while not _mon_stop.is_set():
-                time.sleep(0.02)
-                dn = bool(_get_key(0x01) & 0x8000)
-                if prev_dn and not dn:
-                    _pt = _POINT()
-                    _get_pos(ctypes.byref(_pt))
-                    _mon_clicks.append((time.time(), _pt.x, _pt.y))
-                prev_dn = dn
-
-        _mon_thread = threading.Thread(target=_monitor_clicks, daemon=True)
-        _mon_thread.start()
-        # ----------------------------------------------------------------------
+        # Records manual clicks during the whole fan-out (see _ClickMonitor).
+        _monitor = _ClickMonitor().start()
+        _mon_clicks = _monitor.clicks
 
         def _record_success(learned_x: int, learned_y: int, source: str) -> None:
             # When a Y offset is known for a specific text row, derive the
@@ -3386,8 +3365,7 @@ class SmartpointAutomation:
             return self._copy_terminal_text()
 
         finally:
-            _mon_stop.set()
-            _mon_thread.join(timeout=0.5)
+            _monitor.stop()
 
     def click_currency_link(self, fd_text: str) -> str:
         """
