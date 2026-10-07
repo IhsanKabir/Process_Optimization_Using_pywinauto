@@ -75,3 +75,27 @@ CHECK ACTION CODE
 
     assert not looks_like_fs_tax_breakdown(listing)
     assert looks_like_fs_tax_breakdown(FZ_OW)
+
+
+def test_priced_class_and_fare_basis_from_expanded_option():
+    text = """ PRICING OPTION 1                  TOTAL AMOUNT             55550 BDT
+ADT                               TAX INCLUDED
+1   SQ    25  E  06NOV JFK FRA   2015  0950 #  FR   77W     E11USO3A
+             \xabBOOK\xbb             +TQ                     D  R
+ PRICING OPTION 2                  TOTAL AMOUNT             70669 BDT
+ADT                               TAX INCLUDED
+1   SQ @ 1527  H  06NOV JFK LAX   1100  1416    FR   32S     H13USOAA
+2   SQ    37  H  06NOV LAX SIN   2205  0755 *  FR   359     H13USOAA
+             \xabBOOK\xbb             +TQ                     D  R
+TOTAL JOURNEY TIME
+FS-1 ADT
+""" + FZ_OW
+
+    parsed = parse_fs_tax_breakdown(text)
+
+    assert parsed["priced_class"] == "H"
+    assert parsed["priced_fare_basis"] == "H13USOAA"
+
+
+def test_priced_class_absent_without_expanded_option():
+    assert parse_fs_tax_breakdown(FZ_OW).get("priced_class") is None

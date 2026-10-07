@@ -21,6 +21,13 @@ _RE_Q_CHARGE_NUC = re.compile(
     r"(?<![A-Z])Q\s*(?:[A-Z]{3}\s*[A-Z]{3}\s*)?(\d+\.\d{2})(?!\d)"
 )
 _RE_FARE_CONSTRUCTION_END = re.compile(r"\bEND\b")
+# Itinerary segment in an FS option, e.g.
+#   "1   SQ @ 1527  H  06NOV JFK LAX   1100  1416    FR   32S     H13USOAA"
+# -> booking class (H) and fare basis (last token).
+_RE_SEGMENT_LINE = re.compile(
+    r"^\s*\d\s+[#@]?\s*[A-Z0-9]{2}\s*[@#]?\s*\d+\s+([A-Z])\s+\d{2}[A-Z]{3}\b.*?(\S+)\s*$",
+    re.MULTILINE,
+)
 # ROE = Rate of Exchange — local-currency-per-NUC.  Defaults to 1.0 when
 # absent (which is correct for USD-denominated fares).
 _RE_ROE = re.compile(r"\bROE\s*(\d+\.\d+)")
@@ -145,6 +152,17 @@ def parse_fs_tax_breakdown(text: str) -> dict:
                 result["tax_breakdown"][code] += val
             else:
                 result["tax_breakdown"][code] = val
+
+    # Booking class / fare basis of the option whose details are shown (the
+    # PRICING OPTION block right before TOTAL JOURNEY TIME): lets the report
+    # check its gross against Smartpoint's TOT for that class.
+    details_at = text.find("TOTAL JOURNEY TIME")
+    if details_at > 0:
+        block = text[:details_at][text[:details_at].rfind("PRICING OPTION") :]
+        segment = _RE_SEGMENT_LINE.search(block)
+        if segment:
+            result["priced_class"] = segment.group(1)
+            result["priced_fare_basis"] = segment.group(2)
 
     # Calculate exchange rate dynamically after all fields are parsed.
     if result["base_fare"] > 0 and result["equ_fare"] > 0:
