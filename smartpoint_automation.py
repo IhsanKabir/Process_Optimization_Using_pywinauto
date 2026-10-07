@@ -16,7 +16,7 @@ from pywinauto import Desktop
 from pywinauto import keyboard as _pw_kb
 from pywinauto import mouse as _pw_mouse
 from pywinauto.application import Application as _PWApp
-from clipboard_util import clipboard_paste, clipboard_clear, clipboard_copy
+from clipboard_util import clipboard_paste, clipboard_copy
 
 try:
     import pyautogui as _real_pyautogui
@@ -30,28 +30,21 @@ import calibration as _calibration_mod
 import screen_locator as _screen
 from constants import (
     # Terminal rendering
-    LINE_HEIGHT,
     CONTENT_TOP_PADDING,
     BOTTOM_MARGIN,
     # Click positions
     D_BUTTON_X_RATIO,
     BOOK_BUTTON_X_RATIO,
-    CURRENCY_LINK_X_RATIO,
     MORE_LINK_X_RATIO,
     SAFE_CLICK_X_OFFSET,
     SAFE_CLICK_Y_OFFSET,
     # Click offsets
-    CLICK_OFFSET_D_BUTTON,
-    CLICK_OFFSET_Y_SINGLE,
-    CLICK_OFFSET_Y_MULTI,
-    # Pagination
     MAX_PAGES_FARE,
     MAX_PAGES_TAX,
     MAX_PAGES_UNSALEABLE,
     # Keywords
     END_SIGNAL,
     INVALID_SIGNAL,
-    MORE_FARES_KEYWORDS,
     UNSALEABLE_FARES_KEYWORD,
     # Window identification
     DEFAULT_WINDOW_TITLE,
@@ -59,8 +52,6 @@ from constants import (
     SELF_WINDOW_KEYWORDS,
     TERMINAL_AUTOMATION_ID,
     # Data validation
-    FS_EXPANSION_KEYWORDS,
-    # Focus tracking
     FOCUS_CACHE_SECONDS,
 )
 
@@ -1275,7 +1266,7 @@ class SmartpointAutomation:
                     f"      [CURRENCY] Screen did not change after clicking {currency_match} redirect"
                 )
                 self.logger.warning(
-                    f"      [CURRENCY] Continuing with current screen content, may have incorrect data"
+                    "      [CURRENCY] Continuing with current screen content, may have incorrect data"
                 )
 
         current_page = 1
@@ -2797,7 +2788,7 @@ class SmartpointAutomation:
                 )
                 return result
 
-        self.logger.warning(f"      [CLICK] All offsets tried, screen unchanged.")
+        self.logger.warning("      [CLICK] All offsets tried, screen unchanged.")
         return self._copy_terminal_text()
 
     # ── Landmark helpers (Phase B) ────────────────────────────────────────────
@@ -3497,7 +3488,6 @@ class SmartpointAutomation:
 
         y_offsets = [0, -self._line_height // 2, self._line_height // 2]
 
-        text_before = fd_text
         for y_off in y_offsets:
             for click_x in x_positions:
                 actual_y = click_y + y_off
@@ -3836,14 +3826,14 @@ class SmartpointAutomation:
         # Also check for "More Fares" or "More" which indicates fares are present
         if _RE_MORE_FARES.search(text):
             self.logger.debug(
-                f"      [CURRENCY] Found 'More Fares' link - NOT clicking (fares present)"
+                "      [CURRENCY] Found 'More Fares' link - NOT clicking (fares present)"
             )
             return None
 
         # If we get here, the currency redirect message exists WITHOUT fare data
         # This means it's a clickable redirect link
         self.logger.debug(
-            f"      [CURRENCY] No fare data found - this is a CLICKABLE redirect link"
+            "      [CURRENCY] No fare data found - this is a CLICKABLE redirect link"
         )
         return currency_code
 

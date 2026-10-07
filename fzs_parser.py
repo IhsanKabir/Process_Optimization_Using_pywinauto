@@ -15,7 +15,6 @@ Expected output format (varies, but typically contains):
 
 import re
 import logging
-from typing import Optional
 
 logger = logging.getLogger("travelport.fzs_parser")
 

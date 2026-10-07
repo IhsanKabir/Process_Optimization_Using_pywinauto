@@ -63,7 +63,7 @@ def main() -> None:
     else:
         print("Cursor is OUTSIDE the fan-out range. This is the bug.")
         print()
-        print(f"The fix is to shift TravelportAuto's computed position by")
+        print("The fix is to shift TravelportAuto's computed position by")
         print(
             f"({actual_x - expected_x:+d}, {actual_y - expected_y:+d}) pixels on this machine."
         )

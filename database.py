@@ -173,11 +173,22 @@ class DatabaseManager:
                                 base_fare + total_taxes if not is_sold_out else 0.0
                             )
                             fare_basis = info.get("ow_fare_basis", "")
-                            fare_rows.append((
-                                run_id, route, airline, rbd, "OW", currency,
-                                base_fare, total_taxes, total_fare, fare_basis,
-                                is_sold_out, is_unsaleable,
-                            ))
+                            fare_rows.append(
+                                (
+                                    run_id,
+                                    route,
+                                    airline,
+                                    rbd,
+                                    "OW",
+                                    currency,
+                                    base_fare,
+                                    total_taxes,
+                                    total_fare,
+                                    fare_basis,
+                                    is_sold_out,
+                                    is_unsaleable,
+                                )
+                            )
 
                         # Round-Trip (RT) Fare
                         if info.get("rt_fare") is not None or info.get("rt_sold_out"):
@@ -187,11 +198,22 @@ class DatabaseManager:
                                 base_fare + total_taxes if not is_sold_out else 0.0
                             )
                             fare_basis = info.get("rt_fare_basis", "")
-                            fare_rows.append((
-                                run_id, route, airline, rbd, "RT", currency,
-                                base_fare, total_taxes, total_fare, fare_basis,
-                                is_sold_out, is_unsaleable,
-                            ))
+                            fare_rows.append(
+                                (
+                                    run_id,
+                                    route,
+                                    airline,
+                                    rbd,
+                                    "RT",
+                                    currency,
+                                    base_fare,
+                                    total_taxes,
+                                    total_fare,
+                                    fare_basis,
+                                    is_sold_out,
+                                    is_unsaleable,
+                                )
+                            )
 
                 if fare_rows:
                     cur.executemany(
@@ -267,18 +289,20 @@ class DatabaseManager:
                             category = section.get("category", "")
                             subcategory = section.get("subcategory", "")
                             for rate in section.get("rates", []):
-                                tax_rows.append((
-                                    run_id,
-                                    airport_code,
-                                    tax_code,
-                                    tax_name,
-                                    category,
-                                    subcategory,
-                                    rate.get("condition", ""),
-                                    rate.get("currency", ""),
-                                    rate.get("amount"),
-                                    rate.get("status", ""),
-                                ))
+                                tax_rows.append(
+                                    (
+                                        run_id,
+                                        airport_code,
+                                        tax_code,
+                                        tax_name,
+                                        category,
+                                        subcategory,
+                                        rate.get("condition", ""),
+                                        rate.get("currency", ""),
+                                        rate.get("amount"),
+                                        rate.get("status", ""),
+                                    )
+                                )
 
                 if tax_rows:
                     cur.executemany(

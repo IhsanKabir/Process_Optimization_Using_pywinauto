@@ -1,6 +1,5 @@
 """Tests for percent-based rate parsing and exemption parsing in tax_parser."""
 
-import pytest
 from tax_parser import parse_ftax_detail
 
 # ── helpers ──────────────────────────────────────────────────────────────────

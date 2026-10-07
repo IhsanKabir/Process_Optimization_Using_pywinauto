@@ -1976,7 +1976,6 @@ def _write_individual_tables_sheet(
             total_tax_val = int(fs_taxes.get("total_taxes", 0))
 
             al_name = airline_names.get(airline, airline)
-            dom_name = city_names.get(domestic, domestic)
             currency = (
                 route_info.get("currency", "USD")
                 if isinstance(route_info, dict)

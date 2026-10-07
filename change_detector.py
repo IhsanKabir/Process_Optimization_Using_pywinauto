@@ -404,8 +404,6 @@ def detect_tax_changes(current_data: dict, previous_data: dict) -> dict:
 
         all_tax_codes = curr_tax_dict.keys() | prev_tax_dict.keys()
 
-        airport_changes = {}
-
         for tax_code in all_tax_codes:
             curr_tax = curr_tax_dict.get(tax_code)
             prev_tax = prev_tax_dict.get(tax_code)
