@@ -283,6 +283,25 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Weakness fixes after v1.5.31 (2026-10-07):**
+  - D-click on a teal theme failed: Escape does not clear the Ctrl+A highlight
+    (now a safe click deselects after every copy), a green "@" connection marker
+    looked like «BOOK» (the green link must start the row), and "D" split into two
+    strokes at a larger font (pieces joined by ~half a character). Fixture:
+    `tests/fixtures/fs_highlighted_teal.png`. Live re-test SQ JFK-DAC: first click.
+  - Gross check: the parser records the priced class/fare basis; each table notes
+    "check: FS priced X at BDT n, report gives BDT m" when its gross for that class
+    is >1% off Smartpoint's TOT (13 of 115 captures).
+  - FD/FS currency mismatch (TG BKK-DAC THB vs USD) converts with the same day's
+    rate for the FD currency from another route instead of flagging.
+  - Re-run/Resume merged routes are not recorded to the DB/BigQuery again.
+  - Fares are numbers with "#,##0" formats (change markers in the format).
+  - pyflakes 42 -> 0 and blocking in CI; black's "data" exclude also skipped
+    database.py (now "data/").
+  - Still open: RT Q is the one-way Q (exact needs an RT FS search per route);
+    main() / click_d_button / report writer remain very large; GUI and main.py
+    coverage ~11-12%.
+
 - **GUI enhancements (2026-10-07):**
   - Options: one choice for Fares + taxes / Fares only / Taxes only (two checkboxes
     could both be ticked); One direction only; Add FTAX sheet; Pick… checklists for
