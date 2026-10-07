@@ -2078,7 +2078,8 @@ def _write_individual_tables_sheet(
             #   With YQ/OW = OW + (YQ + YR) / R
             #   OW gross   = OW + T / R                    (DAC origin: OW*R + T)
             #   With YQ/RT = RT + 2 * (YQ + YR) / R
-            #   RT gross   = RT + (T + T_ret - K3) / R     (DAC origin: in BDT)
+            #   RT gross   = RT + (G + G_ret - K3 + 2*(YQ + YR)) / R  (DAC: in BDT)
+            #   (G = government taxes = T - YQ - YR)
             exchange_rate = float(fs_taxes.get("exchange_rate") or 0)
             yq_ow = float(yq_charge) + float(yr_charge)
             tax_ow = float(fs_taxes.get("total_taxes") or 0)
@@ -2094,9 +2095,20 @@ def _write_individual_tables_sheet(
                 inbound_taxes = inbound_info.get("fs_taxes", {}) or {}
 
             yq_rt = yq_ow * 2
-            # compute_rt_tax_total strips origin-sensitive taxes (India K3) that
-            # appear in isolated one-way scrapes but not on the RT journey.
-            tax_rt = compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
+            # RT taxes = both legs' government taxes + 2 x this leg's YQ/YR:
+            # carrier charges follow where the ticket starts, so the return
+            # one-way's own YQ/YR (priced from the other end) is swapped for
+            # this leg's. Verified on FZ DXB-DAC-DXB: 4,545 + 10,087 +
+            # 2 x 5,684 = TAXES 26,000. compute_rt_tax_total also strips
+            # origin-sensitive taxes (India K3) not due on the RT journey.
+            return_charges = float(inbound_taxes.get("yq_charge") or 0) + float(
+                inbound_taxes.get("yr_charge") or 0
+            )
+            tax_rt = (
+                compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
+                - return_charges
+                + yq_ow
+            )
             # YQ+YR converted from BDT into the fare's base currency.
             yq_ow_in_base = (yq_ow / exchange_rate) if exchange_rate else 0
             yq_rt_in_base = (yq_rt / exchange_rate) if exchange_rate else 0
