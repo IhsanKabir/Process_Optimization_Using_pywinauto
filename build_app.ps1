@@ -59,6 +59,34 @@ if (Test-Path $targetExe) {
     }
 }
 
+# PyInstaller replaces dist\TravelportAuto and the runtime restore below
+# overwrites files in it, so any file held open (a report in Excel, a log in an
+# editor) breaks the build halfway. Fail up front and name the files instead.
+if ($Mode -eq "onedir") {
+    $outputRoot = Join-Path $distDir "TravelportAuto"
+    if (Test-Path $outputRoot) {
+        $lockedFiles = foreach ($file in Get-ChildItem -LiteralPath $outputRoot -Recurse -File -ErrorAction SilentlyContinue) {
+            try {
+                $handle = [System.IO.File]::Open(
+                    $file.FullName,
+                    [System.IO.FileMode]::Open,
+                    [System.IO.FileAccess]::ReadWrite,
+                    [System.IO.FileShare]::None
+                )
+                $handle.Dispose()
+            } catch {
+                $file.FullName.Substring($outputRoot.Length + 1)
+            }
+        }
+        if ($lockedFiles) {
+            $shown = ($lockedFiles | Select-Object -First 10) -join "`n  "
+            Write-Error ("These files in dist\TravelportAuto are open in another program " +
+                "(close them, e.g. the report in Excel, then build again):`n  $shown")
+            exit 1
+        }
+    }
+}
+
 $runtimeBackupRoot = $null
 if ($Mode -eq "onedir") {
     $runtimeRoot = Join-Path $distDir "TravelportAuto"
@@ -97,12 +125,22 @@ try {
 
 if ($Mode -eq "onedir" -and $runtimeBackupRoot -and (Test-Path $runtimeBackupRoot)) {
     $runtimeRoot = Join-Path $distDir "TravelportAuto"
+    $restored = $false
     if (Test-Path $runtimeRoot) {
-        Copy-Item -Path (Join-Path $runtimeBackupRoot "*") -Destination $runtimeRoot -Recurse -Force
+        try {
+            Copy-Item -Path (Join-Path $runtimeBackupRoot "*") -Destination $runtimeRoot -Recurse -Force -ErrorAction Stop
+            $restored = $true
+        } catch {
+            Write-Warning "Could not restore your data into '$runtimeRoot': $($_.Exception.Message)"
+        }
     } else {
-        Write-Warning "Build output folder '$runtimeRoot' was not created; runtime backup left at '$runtimeBackupRoot'."
+        Write-Warning "Build output folder '$runtimeRoot' was not created."
     }
-    Remove-Item -LiteralPath $runtimeBackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if ($restored) {
+        Remove-Item -LiteralPath $runtimeBackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Warning "Your data (reports, logs, settings) is kept at '$runtimeBackupRoot'; copy it back manually."
+    }
 }
 
 if ($buildExitCode -ne 0) { exit $buildExitCode }
