@@ -1110,10 +1110,16 @@ is locked by a running process.
 ### Step 3 — Zip the output with the correct version name
 
 ```powershell
-Compress-Archive -Path "dist\TravelportAuto\*" -DestinationPath "dist\TravelportAuto-vX.Y.Z-windows.zip" -Force
+.\package_release.ps1 -Version vX.Y.Z
 ```
 
-Name must match the version exactly (e.g. `TravelportAuto-v1.5.2-windows.zip`).
+Writes `dist\TravelportAuto-vX.Y.Z-windows.zip` with only the shipped files
+(exe, `_internal`, `agent_config.json`, `commands.txt`, `preferences.json`). It
+refuses to run if gui.py's VERSION differs, the build is older than gui.py, or the
+exe is in use, and aborts if any runtime file slips in.
+
+**Never zip `dist\TravelportAuto\*` directly:** build_app.ps1 restores your local
+`data\` folder (logs, scrapes, reports) and `_tpa_update.log` into that folder.
 
 ### Step 4 — Create the GitHub Release and upload the zip
 
