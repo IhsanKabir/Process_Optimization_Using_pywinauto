@@ -36,6 +36,9 @@ test_*.py
 build/
 dist/
 dist_new/
+# One-off build/dist copies (dist_fix2/, build_fix4/, ...)
+dist_*/
+build_*/
 *.zip
 *.spec
 
