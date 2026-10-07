@@ -159,3 +159,24 @@ def test_falls_back_to_calibration_without_screen(monkeypatch):
     _, y = automation._text_line_to_pixel(FS_TEXT, 9)
 
     assert y == int(RECT_TOP + 5 + 9.5 * 20)
+
+
+def test_row_count_mismatch_saves_screenshot_beside_run_log(monkeypatch, tmp_path):
+    import logging
+
+    automation, clicks, _ = _automation(monkeypatch, TAX_SCREEN)
+    handler = logging.FileHandler(tmp_path / "run_test.log")
+    logging.getLogger("travelport").addHandler(handler)
+    extra_option = FS_TEXT.replace(
+        "\n>",
+        "\nPRICING OPTION 5\nADT\n1   BS 1\n\xabBOOK\xbb    +TQ    D  R\n\n>",
+    )
+    try:
+        automation.click_d_button(2, extra_option)
+    finally:
+        logging.getLogger("travelport").removeHandler(handler)
+        handler.close()
+
+    saved = list(tmp_path.glob("screen_*_option3_rows4.png"))
+    assert len(saved) == 1
+    assert clicks  # fell back to the predicted position

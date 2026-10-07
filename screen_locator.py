@@ -20,9 +20,10 @@ from typing import Optional
 
 from PIL import Image, ImageChops
 
-# A pixel differing from the background by more than this (summed over RGB,
-# averaged by the L conversion) counts as ink.
-_INK_THRESHOLD = 20
+# Brightness step between horizontal neighbours that marks a glyph edge.
+_EDGE_THRESHOLD = 30
+# Fewer edge pixels than this in a row = no text (highlight/cursor sides).
+_MIN_EDGES_PER_TEXT_ROW = 3.5
 # Columns inked in more than this share of rows are borders/scrollbars.
 _BORDER_COLUMN_SHARE = 0.6
 # Link colours: one channel dominates the other two by this margin.
@@ -74,7 +75,10 @@ def analyze_terminal(img: Image.Image) -> TerminalLayout:
     """Measure background, content columns, text bands and line pitch."""
     rgb = img.convert("RGB")
     background = _background_color(rgb)
-    ink = _ink_mask(rgb, background)
+    # Glyph edges, not "differs from background": a selection highlight or
+    # any other uniform block has no edges inside it, so text lines stay
+    # separate even when the copy's Ctrl+A highlight is still on screen.
+    ink = _edge_mask(rgb)
 
     left, right = _content_columns(ink)
     bands = _text_bands(ink.crop((left, 0, right, ink.height))) if right > left else ()
@@ -218,29 +222,46 @@ def _background_color(rgb: Image.Image) -> tuple[int, int, int]:
     return max(colors)[1]
 
 
-def _ink_mask(rgb: Image.Image, background: tuple[int, int, int]) -> Image.Image:
-    diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, background))
-    return diff.convert("L").point(lambda v: 255 if v > _INK_THRESHOLD else 0)
+def _edge_mask(rgb: Image.Image) -> Image.Image:
+    """Pixels whose brightness differs sharply from their right neighbour."""
+    gray = rgb.convert("L")
+    shifted = ImageChops.offset(gray, -1, 0)
+    edges = ImageChops.difference(gray, shifted)
+    # offset() wraps the first column onto the last; blank that column.
+    edges.paste(0, (gray.width - 1, 0, gray.width, gray.height))
+    return edges.point(lambda v: 255 if v > _EDGE_THRESHOLD else 0)
 
 
 def _content_columns(ink: Image.Image) -> tuple[int, int]:
-    """Columns between the borders: drop edge columns inked in most rows."""
+    """Columns between the borders, and blank out border/scrollbar columns.
+
+    Border and scrollbar edges are lit in nearly every row; a text column
+    never is (blank lines break it). Those columns are zeroed in ``ink`` so
+    they cannot merge every row into one band, and the content area is the
+    span between the outermost of them in each half.
+    """
     profile = list(_pixel_values(ink.resize((ink.width, 1), Image.BOX)))
     limit = 255 * _BORDER_COLUMN_SHARE
-    left = 0
-    while left < len(profile) and profile[left] > limit:
-        left += 1
-    right = len(profile)
-    while right > left and profile[right - 1] > limit:
-        right -= 1
+    lit = [x for x, value in enumerate(profile) if value > limit]
+    for x in lit:
+        ink.paste(0, (x, 0, x + 1, ink.height))
+    half = len(profile) / 2
+    left = max((x + 1 for x in lit if x < half), default=0)
+    right = min((x for x in lit if x >= half), default=len(profile))
     return left, right
 
 
 def _text_bands(ink: Image.Image) -> tuple[Band, ...]:
-    profile = list(_pixel_values(ink.resize((1, ink.height), Image.BOX)))
+    """Runs of rows with text. A row needs a few edge pixels: the sides of a
+    highlight or cursor block contribute only two per row."""
+    # Row sums from a float-mode resize, so a single edge pixel is not lost
+    # to rounding on wide terminals.
+    sums = ink.convert("F").resize((1, ink.height), Image.BOX)
+    edges_per_row = [v * ink.width / 255 for v in _pixel_values(sums)]
+    is_text = [count >= _MIN_EDGES_PER_TEXT_ROW for count in edges_per_row]
     bands: list[Band] = []
     start = None
-    for y, value in enumerate(profile + [0]):
+    for y, value in enumerate(is_text + [False]):
         if value and start is None:
             start = y
         elif not value and start is not None:
