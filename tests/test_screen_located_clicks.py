@@ -36,6 +36,13 @@ FS_TEXT = "\n".join(
         "ADT                               TAX INCLUDED",
         "1   BS    341  S  12NOV DAC DXB   1710  2045    TH   738    SBDXBO",
         "\xabBOOK\xbb    +TQ                                         D  R",
+        "",
+        "PRICING OPTION 4                  TOTAL AMOUNT          55474 BDT",
+        "ADT                               TAX INCLUDED",
+        "1   BG    617  Y  12NOV DAC CGP   2100  2200    TH   DH8       YOW",
+        "2   BS    343  K  13NOV CGP DXB   0815  1155    FR   738    KBDXBO",
+        "\xabBOOK\xbb    +TQ                                         D  R  +4",
+        "",
         ">",
     ]
 )

@@ -1172,7 +1172,11 @@ def main(prebuilt_args=None, stop_event=None):
         output_path = os.path.join(REPORTS_DIR, output_name)
 
         result_path = generate_report(
-            all_route_data, output_path, changes=None, config=config
+            all_route_data,
+            output_path,
+            changes=None,
+            config=config,
+            taxes_expected=False,  # quick paste carries FD text only
         )
 
         # Record to Database
@@ -1519,6 +1523,7 @@ def main(prebuilt_args=None, stop_event=None):
                         None,
                         config,
                         only_currency=getattr(args, "only_currency", False),
+                        taxes_expected=not getattr(args, "only_fd", False),
                     )
                 logger.info(f"  [PARTIAL] Partial report saved: {result}")
                 return result
@@ -2692,6 +2697,7 @@ def main(prebuilt_args=None, stop_event=None):
             changes,
             config,
             only_currency=args.only_currency,
+            taxes_expected=not getattr(args, "only_fd", False),
         )
 
         # Merge FTAX if enabled

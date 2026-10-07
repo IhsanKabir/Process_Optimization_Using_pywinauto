@@ -183,6 +183,27 @@ def test_report_has_rerun_sheet_only_when_taxes_missing(tmp_path):
     assert "Re-run Needed" not in load_workbook(clean).sheetnames
 
 
+def test_fd_only_runs_do_not_flag_missing_taxes(tmp_path):
+    out = str(tmp_path / "fd_only.xlsx")
+
+    generate_report(
+        {"BS_DAC-BKK": _route({}), "BS_BKK-DAC": _route({})},
+        out,
+        config={"domestic_airports": ["DAC"]},
+        taxes_expected=False,
+    )
+
+    wb = load_workbook(out)
+    assert "Re-run Needed" not in wb.sheetnames
+    texts = [
+        v
+        for row in wb["Individual Tables"].iter_rows(values_only=True)
+        for v in row
+        if isinstance(v, str)
+    ]
+    assert not any("MISSING" in t for t in texts)
+
+
 # ── original currency on Tax Breakdowns ─────────────────────────────────────
 
 

@@ -102,32 +102,43 @@ def test_line_center_matches_rendered_row(screen):
     assert prompt_y == pytest.approx(5, abs=4)
 
 
-BOOK_LINES = [9, 14, 19, 25]  # «BOOK» rows of options 1-4 in the fixture's text
+def test_select_option_row_top_counts_from_first(screen):
+    rows = find_option_rows(screen, analyze_terminal(screen))
 
-
-def test_select_option_row_top_uses_predicted_line(screen):
-    layout = analyze_terminal(screen)
-    rows = find_option_rows(screen, layout)
-    text = FS_TEXT + "\n" * 20
-
-    row = select_option_row(layout, rows, text, BOOK_LINES, 2, "top")
+    row = select_option_row(rows, 4, 2, "top", all_visible=True)
 
     assert _close(row.d, EXPECTED_D[2])
 
 
-def test_select_option_row_bottom_counts_back_from_last(screen):
-    layout = analyze_terminal(screen)
-    rows = find_option_rows(screen, layout)
-    # Output with 6 options where only the last 4 are visible after PageDown.
-    book_lines = [9, 14, 19, 24, 29, 35]
+def test_select_option_row_ignores_tab_strip_above_text(screen):
+    # A tab strip/icon band drawn above the first text line used to shift a
+    # Y-anchored prediction by a line; counting rows is unaffected.
+    shifted = Image.new("RGB", (screen.width, screen.height + 20), (78, 78, 78))
+    shifted.paste(screen, (0, 20))
+    shifted.paste((230, 230, 230), (5, 3, 200, 15))
+    rows = find_option_rows(shifted, analyze_terminal(shifted))
 
-    assert _close(
-        select_option_row(layout, rows, "", book_lines, 5, "bottom").d, EXPECTED_D[3]
-    )
-    assert _close(
-        select_option_row(layout, rows, "", book_lines, 2, "bottom").d, EXPECTED_D[0]
-    )
-    assert select_option_row(layout, rows, "", book_lines, 1, "bottom") is None
+    row = select_option_row(rows, 4, 3, "top", all_visible=True)
+
+    assert _close(row.d, (EXPECTED_D[3][0], EXPECTED_D[3][1] + 20))
+
+
+def test_select_option_row_refuses_row_count_mismatch(screen):
+    rows = find_option_rows(screen, analyze_terminal(screen))
+
+    # Text says 5 options all fit on screen, but only 4 rows were found.
+    assert select_option_row(rows, 5, 1, "top", all_visible=True) is None
+    # More rows on screen than options in the text: misread.
+    assert select_option_row(rows, 3, 0, "top") is None
+
+
+def test_select_option_row_bottom_counts_back_from_last(screen):
+    rows = find_option_rows(screen, analyze_terminal(screen))
+    # Output with 6 options where only the last 4 are visible after PageDown.
+
+    assert _close(select_option_row(rows, 6, 5, "bottom").d, EXPECTED_D[3])
+    assert _close(select_option_row(rows, 6, 2, "bottom").d, EXPECTED_D[0])
+    assert select_option_row(rows, 6, 1, "bottom") is None
 
 
 def test_visible_and_text_line_counts(screen):
