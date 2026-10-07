@@ -1273,21 +1273,7 @@ def _leg_tax_gaps(route_info):
     fd_cur = route_info.get("currency") if isinstance(route_info, dict) else None
     if fd_cur and base_cur and fd_cur != base_cur:
         gaps.append(f"FD fares in {fd_cur} but FS priced in {base_cur}")
-    if (
-        float(fs.get("q_charge") or 0) > 0
-        and base_cur not in (None, "USD", "NUC")
-        and float(fs.get("roe") or 1.0) == 1.0
-    ):
-        gaps.append("ROE missing for Q")
     return gaps
-
-
-def _q_in_bdt(fs_taxes):
-    """Q surcharge (NUC) in BDT: NUC x ROE -> fare currency, x rate -> BDT."""
-    q = float(fs_taxes.get("q_charge") or 0)
-    roe = float(fs_taxes.get("roe") or 1.0)
-    rate = float(fs_taxes.get("exchange_rate") or 0)
-    return q * roe * rate
 
 
 def _return_route_key(route_key):
@@ -1853,7 +1839,7 @@ def _write_individual_tables_sheet(
                 (not leg_gaps, not leg_gaps and not return_gaps, leg_gaps + return_gaps)
             )
         table_widths = [
-            FD_TABLE_WIDTH + (2 if has_ow else 0) + (2 if has_rt else 0)
+            FD_TABLE_WIDTH + (3 if has_ow else 0) + (1 if has_rt else 0)
             for has_ow, has_rt, _gaps in table_specs
         ]
 
@@ -2061,7 +2047,7 @@ def _write_individual_tables_sheet(
             )
             current_col += 1
 
-            if has_rt_gross:
+            if has_tax_data:
                 _styled_cell(
                     ws,
                     row,
@@ -2085,17 +2071,17 @@ def _write_individual_tables_sheet(
                 )
             row += 1
 
-            # Formulas (R = this leg's BDT rate; YQ, YR, tax T in BDT; Q in BDT
-            # via each leg's own ROE and rate). Only computed when every input
-            # is present (see table_specs), so no 1.0 rate fallback is used.
+            # Formulas (R = this leg's BDT rate; YQ, YR, tax T in BDT). Only
+            # computed when every input is present (see table_specs), so the
+            # parser's 1.0 rate fallback is never used. Q is not added (user
+            # rule, 2026-10-07).
             #   With YQ/OW = OW + (YQ + YR) / R
-            #   OW gross   = OW + (T + Q) / R          (DAC origin: OW*R + T + Q)
-            #   With YQ/RT = RT + (YQ + YR + YQ_ret + YR_ret) / R
-            #   RT gross   = RT + (T + T_ret - K3 + Q + Q_ret) / R  (DAC: in BDT)
-            # Q goes into gross only, never into With YQ.
+            #   OW gross   = OW + T / R                    (DAC origin: OW*R + T)
+            #   With YQ/RT = RT + 2 * (YQ + YR) / R
+            #   RT gross   = RT + (T + T_ret - K3) / R     (DAC origin: in BDT)
             exchange_rate = float(fs_taxes.get("exchange_rate") or 0)
             yq_ow = float(yq_charge) + float(yr_charge)
-            tax_ow = float(fs_taxes.get("total_taxes") or 0) + _q_in_bdt(fs_taxes)
+            tax_ow = float(fs_taxes.get("total_taxes") or 0)
 
             inbound_taxes: dict = {}
             outbound_origin = ""
@@ -2107,18 +2093,10 @@ def _write_individual_tables_sheet(
                 inbound_info = all_route_data.get(inbound_key, {})
                 inbound_taxes = inbound_info.get("fs_taxes", {}) or {}
 
-            yq_rt = (
-                yq_ow
-                + float(inbound_taxes.get("yq_charge") or 0)
-                + float(inbound_taxes.get("yr_charge") or 0)
-            )
+            yq_rt = yq_ow * 2
             # compute_rt_tax_total strips origin-sensitive taxes (India K3) that
             # appear in isolated one-way scrapes but not on the RT journey.
-            tax_rt = (
-                compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
-                + _q_in_bdt(fs_taxes)
-                + _q_in_bdt(inbound_taxes)
-            )
+            tax_rt = compute_rt_tax_total(outbound_origin, fs_taxes, inbound_taxes)
             # YQ+YR converted from BDT into the fare's base currency.
             yq_ow_in_base = (yq_ow / exchange_rate) if exchange_rate else 0
             yq_rt_in_base = (yq_rt / exchange_rate) if exchange_rate else 0
@@ -2179,7 +2157,7 @@ def _write_individual_tables_sheet(
                 _write_fare_cell(ws, row, current_data_col, rt, change_type)
                 current_data_col += 1
 
-                if has_rt_gross:
+                if has_tax_data:
                     rt_yq_val = (rt + yq_rt_in_base) if rt else None
                     _write_fare_cell(ws, row, current_data_col, rt_yq_val, None)
                     current_data_col += 1

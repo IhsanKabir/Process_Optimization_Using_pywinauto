@@ -119,7 +119,7 @@ def _row(ws, rbd):
     return [ws.cell(r, c).value for c in range(1, 8)]
 
 
-def test_complete_legs_use_both_legs_charges_and_add_q_to_gross_only():
+def test_complete_legs_formulas():
     data = {"BS_DAC-BKK": _route(TAXES), "BS_BKK-DAC": _route(RETURN_TAXES)}
 
     ws = _individual(data, "BS_DAC-BKK")
@@ -134,9 +134,9 @@ def test_complete_legs_use_both_legs_charges_and_add_q_to_gross_only():
         "RT/Gross(BDT)",
     ]
     # R=120. With YQ/OW = 300 + (1200+0)/120. OW gross (BDT, from DAC) =
-    # 300*120 + tax 6000 + Q 10*1*120. With YQ/RT = 550 + (1200 + 600+600)/120.
-    # RT gross = 550*120 + 6000 + 5000 + Q 1200 + Q 600.
-    assert _row(ws, "Y") == ["Y", "300", "310", "43,200", "550", "570", "78,800"]
+    # 300*120 + T 6000 (T already includes Q). With YQ/RT = 550 + 2*1200/120.
+    # RT gross = 550*120 + 6000 + 5000.
+    assert _row(ws, "Y") == ["Y", "300", "310", "42,000", "550", "570", "77,000"]
     assert "INCOMPLETE" not in ws.cell(_header_row(ws) - 2, 1).value
 
 
@@ -152,7 +152,7 @@ def test_missing_leg_taxes_blank_all_derived_columns_and_flag():
     assert title.fill.start_color.rgb.endswith("FFC7CE")
 
 
-def test_missing_return_leg_blanks_both_rt_columns():
+def test_missing_return_leg_blanks_only_rt_gross():
     data = {"BS_DAC-BKK": _route(TAXES), "BS_BKK-DAC": _route({})}
 
     ws = _individual(data, "BS_DAC-BKK")
@@ -164,16 +164,17 @@ def test_missing_return_leg_blanks_both_rt_columns():
         "With YQ/OW(USD)",
         "OW/Gross(BDT)",
         "RT/USD",
+        "With YQ/RT(USD)",
     ]
     assert "return leg BKK-DAC" in ws.cell(hr - 2, 1).value
 
 
-def test_unextracted_return_route_blanks_rt_columns():
+def test_unextracted_return_route_blanks_rt_gross():
     data = {"BS_DAC-BKK": _route(TAXES)}
 
     ws = _individual(data, "BS_DAC-BKK")
 
-    assert _titles(ws, _header_row(ws))[-1] == "RT/USD"
+    assert _titles(ws, _header_row(ws))[-1] == "With YQ/RT(USD)"
     assert "not extracted" in ws.cell(_header_row(ws) - 2, 1).value
 
 
@@ -197,16 +198,6 @@ def test_rate_fallback_without_equ_line_is_incomplete():
 
     assert _titles(ws, _header_row(ws)) == ["RBD", "OW/USD", "RT/USD"]
     assert "exchange rate" in ws.cell(_header_row(ws) - 2, 1).value
-
-
-def test_q_without_roe_on_non_usd_fare_is_incomplete():
-    aed = dict(TAXES, base_currency="AED", roe=1.0, q_charge=14.51)
-    route = dict(_route(aed), currency="AED")
-    data = {"FZ_DXB-DAC": route, "FZ_DAC-DXB": _route(TAXES)}
-
-    ws = _individual(data, "FZ_DXB-DAC")
-
-    assert "ROE" in ws.cell(_header_row(ws) - 2, 1).value
 
 
 def test_collect_missing_lists_reason_and_unextracted_return_route():
