@@ -394,3 +394,52 @@ def test_q_without_roe_on_non_usd_fare_is_incomplete():
     ws = _individual(data, "FZ_DXB-DAC")
 
     assert "ROE" in ws.cell(_header_row(ws) - 2, 1).value
+
+
+def test_fd_currency_converted_with_same_run_rate_for_that_currency():
+    """TG BKK-DAC: FD fares in THB, FS priced in USD. Another route priced in
+    THB the same day supplies the THB rate, so the figures are computed
+    instead of flagged."""
+    usd_priced = dict(TAXES, q_charge=0.0)  # USD fare, R = 120 BDT/USD
+    thb_route = dict(_route(usd_priced), currency="THB")
+    thb_rate_source = {
+        "base_currency": "THB",
+        "base_fare": 5690.0,
+        "equ_currency": "BDT",
+        "equ_fare": 20886.0,
+        "exchange_rate": 3.6707,
+        "total_taxes": 4703.0,
+        "tax_breakdown": {"TS": 400.0},
+    }
+    data = {
+        "TG_BKK-DAC": thb_route,
+        "TG_DAC-BKK": _route(TAXES),
+        "BS_BKK-DAC": dict(_route(thb_rate_source), currency="THB"),
+    }
+
+    ws = _individual(data, "TG_BKK-DAC")
+
+    hr = _header_row(ws)
+    assert "With YQ/OW(THB)" in _titles(ws, hr)
+    assert "INCOMPLETE" not in (ws.cell(hr - 2, 1).value or "")
+    # OW gross (THB, origin BKK) = 300 + 6000 / 3.6707 (THB rate, not USD's 120)
+    gross = float(_row(ws, "Y")[3].replace(",", ""))
+    assert abs(gross - (300 + 6000 / 3.6707)) < 1
+
+
+def test_gross_check_flags_when_priced_class_does_not_match_smartpoint_total():
+    # FS priced class Y at TOT 42,000 BDT; FD Y fare 300 x 120 + tax 6,000 + Q
+    # 1,200 = 43,200 -> 2.9% off -> flagged. Exact match -> no note.
+    off = dict(TAXES, priced_class="Y", total_amount=42000.0)
+    exact = dict(TAXES, priced_class="Y", total_amount=43200.0)
+
+    flagged = _individual(
+        {"BS_DAC-BKK": _route(off), "BS_BKK-DAC": _route(TAXES)}, "BS_DAC-BKK"
+    )
+    clean = _individual(
+        {"BS_DAC-BKK": _route(exact), "BS_BKK-DAC": _route(TAXES)}, "BS_DAC-BKK"
+    )
+
+    note = flagged.cell(_header_row(flagged) - 2, 1).value
+    assert "check" in note and "42,000" in note and "43,200" in note
+    assert "check" not in clean.cell(_header_row(clean) - 2, 1).value

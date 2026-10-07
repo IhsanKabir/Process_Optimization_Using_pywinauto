@@ -1251,7 +1251,36 @@ def _route_has_fares(route_info):
     )
 
 
-def _leg_tax_gaps(route_info):
+def _bdt_rates_by_currency(all_route_data):
+    """BDT per unit of each fare currency, from this run's FS lines whose rate
+    came from a real FARE/EQU pair (same-day bank rate)."""
+    rates = {"BDT": 1.0}
+    for info in all_route_data.values():
+        fs = _route_fs_taxes(info)
+        cur = fs.get("base_currency")
+        if (
+            cur
+            and fs.get("base_fare")
+            and fs.get("equ_fare")
+            and fs.get("exchange_rate")
+        ):
+            rates.setdefault(cur, float(fs["exchange_rate"]))
+    return rates
+
+
+def _fare_rate(route_info, rates):
+    """BDT rate for the FD fares' currency. Normally the FS rate; when the FS
+    option was priced in another currency (TG BKK-DAC: THB fares, USD
+    pricing), the same-day rate for the FD currency from another route."""
+    fs = _route_fs_taxes(route_info)
+    fd_cur = route_info.get("currency") if isinstance(route_info, dict) else None
+    base_cur = fs.get("base_currency")
+    if fd_cur and base_cur and fd_cur != base_cur:
+        return float((rates or {}).get(fd_cur) or 0)
+    return float(fs.get("exchange_rate") or 0)
+
+
+def _leg_tax_gaps(route_info, rates=None):
     """What is missing to compute With YQ and Gross for one leg ([] = complete).
 
     The parser falls back to an exchange rate of 1.0 and an ROE of 1.0 when
@@ -1271,8 +1300,10 @@ def _leg_tax_gaps(route_info):
     if not float(fs.get("total_taxes") or 0):
         gaps.append("no total tax")
     fd_cur = route_info.get("currency") if isinstance(route_info, dict) else None
-    if fd_cur and base_cur and fd_cur != base_cur:
-        gaps.append(f"FD fares in {fd_cur} but FS priced in {base_cur}")
+    if fd_cur and base_cur and fd_cur != base_cur and not (rates or {}).get(fd_cur):
+        gaps.append(
+            f"FD fares in {fd_cur} but FS priced in {base_cur} (no {fd_cur} rate)"
+        )
     if (
         float(fs.get("q_charge") or 0) > 0
         and base_cur not in (None, "USD", "NUC")
@@ -1294,6 +1325,31 @@ def _q_in_bdt(fs_taxes):
     return q * roe * rate
 
 
+# Gross for the class FS priced must land within this share of Smartpoint's
+# TOT; beyond it the FD fare shown for that class is not the fare FS priced.
+GROSS_CHECK_TOLERANCE = 0.01
+
+
+def _gross_check_note(route_info, rates):
+    """Compare the report's one-way gross for the class FS priced with
+    Smartpoint's TOT for that option ("" when it matches or can't be checked)."""
+    fs = _route_fs_taxes(route_info)
+    priced_class = fs.get("priced_class")
+    total = float(fs.get("total_amount") or 0)
+    rbd_data = route_info.get("rbd_data") if isinstance(route_info, dict) else None
+    fare = ((rbd_data or {}).get(priced_class) or {}).get("ow_fare")
+    rate = _fare_rate(route_info, rates)
+    if not (priced_class and total and fare and rate):
+        return ""
+    gross = float(fare) * rate + float(fs.get("total_taxes") or 0) + _q_in_bdt(fs)
+    if abs(gross - total) <= total * GROSS_CHECK_TOLERANCE:
+        return ""
+    return (
+        f"  ⚠ check: FS priced {priced_class} at BDT {total:,.0f}, "
+        f"report gives BDT {gross:,.0f}"
+    )
+
+
 def _return_route_key(route_key):
     parts = route_key.split("_", 1)
     if len(parts) != 2 or "-" not in parts[1]:
@@ -1302,7 +1358,7 @@ def _return_route_key(route_key):
     return f"{parts[0]}_{dest}-{origin}"
 
 
-def _return_leg_gaps(all_route_data, route_key):
+def _return_leg_gaps(all_route_data, route_key, rates=None):
     """Gaps of the opposite direction, prefixed with its route."""
     return_key = _return_route_key(route_key)
     if not return_key:
@@ -1311,7 +1367,8 @@ def _return_leg_gaps(all_route_data, route_key):
     if return_key not in all_route_data:
         return [f"return leg {route} not extracted"]
     return [
-        f"return leg {route}: {g}" for g in _leg_tax_gaps(all_route_data[return_key])
+        f"return leg {route}: {g}"
+        for g in _leg_tax_gaps(all_route_data[return_key], rates)
     ]
 
 
@@ -1325,6 +1382,7 @@ def _collect_missing_tax_routes(
     (RT With YQ and RT Gross need both legs), unless the run was limited to
     one direction on purpose.
     """
+    rates = _bdt_rates_by_currency(all_route_data)
     sections = _group_by_international(all_route_data, domestic_airports)
     dom_order = {code: i for i, code in enumerate(domestic_airports)}
     missing = []
@@ -1348,7 +1406,7 @@ def _collect_missing_tax_routes(
         ):
             if not _route_has_fares(route_info):
                 continue
-            gaps = _leg_tax_gaps(route_info)
+            gaps = _leg_tax_gaps(route_info, rates)
             if gaps:
                 _add(airline, route_key, "; ".join(gaps))
             return_key = _return_route_key(route_key)
@@ -1808,6 +1866,7 @@ def _write_individual_tables_sheet(
     Each section (international destination + direction) is a row-group.
     Within each, airlines are placed side-by-side with a 1-column gap.
     """
+    rates = _bdt_rates_by_currency(all_route_data)
     current_row = 1
 
     # Title
@@ -1849,9 +1908,9 @@ def _write_individual_tables_sheet(
         # columns stay out and the title says what to re-run.
         table_specs = []
         for _airline, _domestic, _route_key, route_info in entries:
-            leg_gaps = _leg_tax_gaps(route_info)
+            leg_gaps = _leg_tax_gaps(route_info, rates)
             return_gaps = (
-                [] if leg_gaps else _return_leg_gaps(all_route_data, _route_key)
+                [] if leg_gaps else _return_leg_gaps(all_route_data, _route_key, rates)
             )
             table_specs.append(
                 (not leg_gaps, not leg_gaps and not return_gaps, leg_gaps + return_gaps)
@@ -1956,6 +2015,8 @@ def _write_individual_tables_sheet(
             missing_note = ""
             if flag_missing_taxes and data_gaps and _route_has_fares(route_info):
                 missing_note = "  ⚠ INCOMPLETE – re-run: " + "; ".join(data_gaps)
+            elif has_tax_data:
+                missing_note = _gross_check_note(route_info, rates)
             title_cell = ws.cell(
                 row=row, column=col_offset, value=table_title + missing_note
             )
@@ -2098,7 +2159,7 @@ def _write_individual_tables_sheet(
             #   With YQ/RT = RT + 2 * (YQ + YR) / R
             #   RT gross   = RT + (G + G_ret - K3 + 2*(YQ + YR) + Q) / R  (DAC: BDT)
             #   (G = government taxes = T - YQ - YR; Q = this leg's, once)
-            exchange_rate = float(fs_taxes.get("exchange_rate") or 0)
+            exchange_rate = _fare_rate(route_info, rates)
             yq_ow = float(yq_charge) + float(yr_charge)
             q_bdt = _q_in_bdt(fs_taxes)
             tax_ow = float(fs_taxes.get("total_taxes") or 0) + q_bdt
