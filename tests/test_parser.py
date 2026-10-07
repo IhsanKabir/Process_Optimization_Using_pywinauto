@@ -4,7 +4,6 @@ Unit tests for parser.py
 Tests the fare display parsing logic with various input formats.
 """
 
-import pytest
 from parser import (
     parse_fare_display,
     group_fares_by_rbd,

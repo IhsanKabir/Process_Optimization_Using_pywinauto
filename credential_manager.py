@@ -8,7 +8,7 @@ Supports .env files for local development.
 import os
 import logging
 from typing import Optional, Tuple
-from exceptions import AuthenticationError, ConfigurationError
+from exceptions import AuthenticationError
 
 logger = logging.getLogger("travelport.credentials")
 

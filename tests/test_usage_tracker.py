@@ -115,11 +115,9 @@ def test_get_today_context_reflects_increments():
 
 def test_days_active_counts_distinct_days(monkeypatch):
     """Seed two past days + today and confirm days_active_30d == 3."""
-    from usage_tracker import increment, get_today_context, _stats_path
-    import importlib
+    from usage_tracker import increment, get_today_context
     import usage_tracker as ut
 
-    today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     two_days_ago = (date.today() - timedelta(days=2)).isoformat()
 

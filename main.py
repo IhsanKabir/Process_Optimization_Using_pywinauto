@@ -64,7 +64,6 @@ from exceptions import ConfigurationError, ValidationError
 from validators import (
     validate_config,
     validate_limit,
-    sanitize_command,
     validate_parsed_fares,
     validate_currency_code,
 )
@@ -1197,7 +1196,7 @@ def main(prebuilt_args=None, stop_event=None):
             for i, cmd in enumerate(valid_commands):
                 airline = cmd["airline"]
                 route = cmd["route"]
-                print(f"\n" + "-" * 40)
+                print("\n" + "-" * 40)
                 print(
                     f"  GATHERING DATA FOR {airline} {route} ({i+1}/{len(valid_commands)})"
                 )
@@ -1557,7 +1556,7 @@ def main(prebuilt_args=None, stop_event=None):
         else:
             # New checkpoint session
             checkpoint_mgr = CheckpointManager(CHECKPOINT_DIR)
-            logger.info(f"  [CHECKPOINT] Checkpoint mode enabled")
+            logger.info("  [CHECKPOINT] Checkpoint mode enabled")
             logger.info(f"  [CHECKPOINT] Session: {checkpoint_mgr.session_name}")
 
     def _stop_run(
@@ -1790,7 +1789,7 @@ def main(prebuilt_args=None, stop_event=None):
             )
         else:
             logger.info("  Failed:   None")
-        logger.info(f"  Changes:  Skipped")
+        logger.info("  Changes:  Skipped")
         logger.info(f"  Duration: {minutes}m {seconds}s")
         logger.info(f"  Log:      {log_file}")
         logger.info("=" * 60)
@@ -2069,7 +2068,7 @@ def main(prebuilt_args=None, stop_event=None):
         logger.info(f"  Report: {_bag_path}")
         logger.info("")
         logger.info("=" * 60)
-        logger.info(f"  BAGGAGE REPORT COMPLETE")
+        logger.info("  BAGGAGE REPORT COMPLETE")
         logger.info(f"  Report:   {_bag_path}")
         logger.info(f"  JSON:     {_bag_json}")
         logger.info("=" * 60)
@@ -2228,7 +2227,7 @@ def main(prebuilt_args=None, stop_event=None):
                                 f"    Final data length: {len(terminal_text) if terminal_text else 0} chars"
                             )
                             logger.error(
-                                f"    This command will be skipped in the report"
+                                "    This command will be skipped in the report"
                             )
 
                             # Mark as failed in checkpoint
@@ -2461,7 +2460,7 @@ def main(prebuilt_args=None, stop_event=None):
                                     )
                                 else:
                                     logger.warning(
-                                        f"      [!] D-click did not return expected tax data."
+                                        "      [!] D-click did not return expected tax data."
                                     )
                                     fs_expanded = ""
                                 break  # Exit the date-stepping for loop
@@ -2920,7 +2919,7 @@ if __name__ == "__main__":
         )
         traceback.print_exc()
         sys.exit(130)
-    except Exception as e:
+    except Exception:
         import traceback
 
         logger.error(f"Fatal error occurred:\n{traceback.format_exc()}")

@@ -2234,7 +2234,6 @@ class TravelportGUI:
 
         try:
             if not getattr(sys, "frozen", False):
-                import webbrowser
 
                 self.log_queue.put(("update_open_browser", info.get("release_url", "")))
                 return
@@ -2787,7 +2786,7 @@ class TravelportGUI:
 
     def _google_oauth_worker(self, client_id: str, api_base_url: str) -> None:
         try:
-            from google_oauth import GoogleOAuthError, run_google_oauth_flow
+            from google_oauth import run_google_oauth_flow
 
             self.log_queue.put(("auth_status", "Completing Google sign-in..."))
             result = run_google_oauth_flow(client_id, api_base_url)
