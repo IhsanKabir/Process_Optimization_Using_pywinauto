@@ -203,6 +203,12 @@ def select_option_row(
 # ── internals ───────────────────────────────────────────────────────────────
 
 
+def _pixel_values(img: Image.Image):
+    """Flat pixel values; Pillow 12 renamed getdata (removed in Pillow 14)."""
+    flat = getattr(img, "get_flattened_data", None)
+    return flat() if flat else img.getdata()
+
+
 def _background_color(rgb: Image.Image) -> tuple[int, int, int]:
     """Most common colour, sampled on a reduced copy (nearest keeps exact
     colours) so large terminals stay fast."""
@@ -219,7 +225,7 @@ def _ink_mask(rgb: Image.Image, background: tuple[int, int, int]) -> Image.Image
 
 def _content_columns(ink: Image.Image) -> tuple[int, int]:
     """Columns between the borders: drop edge columns inked in most rows."""
-    profile = list(ink.resize((ink.width, 1), Image.BOX).getdata())
+    profile = list(_pixel_values(ink.resize((ink.width, 1), Image.BOX)))
     limit = 255 * _BORDER_COLUMN_SHARE
     left = 0
     while left < len(profile) and profile[left] > limit:
@@ -231,7 +237,7 @@ def _content_columns(ink: Image.Image) -> tuple[int, int]:
 
 
 def _text_bands(ink: Image.Image) -> tuple[Band, ...]:
-    profile = list(ink.resize((1, ink.height), Image.BOX).getdata())
+    profile = list(_pixel_values(ink.resize((1, ink.height), Image.BOX)))
     bands: list[Band] = []
     start = None
     for y, value in enumerate(profile + [0]):
@@ -293,7 +299,7 @@ def _runs_in_band(
     strip = mask.crop(
         (layout.content_left, band.top, layout.content_right, band.bottom)
     )
-    profile = list(strip.resize((strip.width, 1), Image.BOX).getdata())
+    profile = list(_pixel_values(strip.resize((strip.width, 1), Image.BOX)))
     runs: list[list[int]] = []
     for x, value in enumerate(profile):
         if not value:
