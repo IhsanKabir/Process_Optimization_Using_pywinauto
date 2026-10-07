@@ -1524,6 +1524,7 @@ def main(prebuilt_args=None, stop_event=None):
                         config,
                         only_currency=getattr(args, "only_currency", False),
                         taxes_expected=not getattr(args, "only_fd", False),
+                        return_legs_expected=not getattr(args, "one_direction", False),
                     )
                 logger.info(f"  [PARTIAL] Partial report saved: {result}")
                 return result
@@ -2698,6 +2699,7 @@ def main(prebuilt_args=None, stop_event=None):
             config,
             only_currency=args.only_currency,
             taxes_expected=not getattr(args, "only_fd", False),
+            return_legs_expected=not getattr(args, "one_direction", False),
         )
 
         # Merge FTAX if enabled

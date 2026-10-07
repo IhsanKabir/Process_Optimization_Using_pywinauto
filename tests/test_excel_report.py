@@ -379,7 +379,9 @@ def test_individual_tables_sheet_uses_base_currency_for_non_dac_origin():
             "currency": "CNY",
             "fs_taxes": {
                 "base_currency": "CNY",
+                "base_fare": 970.0,
                 "equ_currency": "BDT",
+                "equ_fare": 17459.0,
                 "exchange_rate": 17.998,
                 "yq_charge": 492.0,
                 "yr_charge": 7200.0,

@@ -283,6 +283,20 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Fare formulas: both legs' YQ/YR, Q in gross, no figure from partial data (2026-10-07):**
+  - With YQ/OW = OW + (YQ+YR)/R; OW gross = OW + (T + Q)/R (DAC origin: OW·R + T + Q).
+  - With YQ/RT = RT + (YQ+YR + YQ_ret+YR_ret)/R (was 2× outbound YQ/YR).
+  - RT gross = RT + (T + T_ret − K3 + Q + Q_ret)/R (DAC origin: in BDT). Q goes into
+    gross only, converted NUC × ROE × R per leg.
+  - User rule: never show a figure built from partial data. `_leg_tax_gaps` blanks a
+    leg's With YQ/Gross and flags the title "INCOMPLETE – re-run: <reason>" when the
+    tax breakdown, the EQU-based rate (parser falls back to 1.0), total tax, the ROE
+    for Q on non-USD fares, or FD/FS currency agreement is missing. RT columns also
+    need the return leg. The Re-run Needed sheet lists each route with its reason,
+    plus return routes never extracted (not for --one-direction runs).
+  - On the 115 captured routes: TG BKK-DAC (FD THB vs FS USD) and BS ZYL-DOH (no
+    DOH-ZYL) are flagged; flydubai DXB-DAC J = 7,827 / 23,206 / 23,694.
+
 - **FS: next date instead of paging (2026-10-07):** the FS tax-detail loop no
   longer clicks More Flights / MD up to 5 pages per date. If page 1 has no pure
   option for the airline it moves straight to the next date.
