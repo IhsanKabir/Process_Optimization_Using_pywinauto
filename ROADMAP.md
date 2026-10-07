@@ -286,7 +286,15 @@ These are done and live on `main` so the next reader knows not to re-open them:
 - **Fare formulas and no figures from partial data (2026-10-07):**
   - Formulas (user rule; Q not added, YQ/YR doubled for RT):
     With YQ/OW = OW + (YQ+YR)/R; OW gross = OW + T/R (DAC origin: OW·R + T);
-    With YQ/RT = RT + 2·(YQ+YR)/R; RT gross = RT + (T + T_ret − K3)/R (DAC: BDT).
+    With YQ/RT = RT + 2·(YQ+YR)/R;
+    RT gross = RT + (G + G_ret − K3 + 2·(YQ+YR))/R, G = government taxes = T − YQ − YR
+    (DAC origin: in BDT). Carrier charges follow where the ticket starts, so the
+    return one-way's own YQ/YR is replaced by 2× this leg's. Verified on FZ
+    DXB-DAC-DXB: 4,545 + 10,087 + 2×5,684 = TAXES 26,000 (T + T_ret was 3,089 short).
+  - Q parser: sums every Q in the fare construction ("Q16.55", "Q DXBDXB33.10",
+    "Q27.13Q20.00"). The old pattern only took the first city-pair Q, so Q was 0 or
+    partial on 14 of 115 captures (e.g. WY DAC-MCT 110, QR DAC-DOH 20). All 115 now
+    satisfy fare components + Q = NUC total.
   - Verified on EK DAC-ZVJ screens: TAXES equals the sum of tax codes (Q is not in
     it); Q sits in the FARE amount (365.00 + Q 2.60 = 367.60 NUC -> USD368), and a
     RT ticket carries one Q (DACDAC), not one per leg. Gross from the FD amount

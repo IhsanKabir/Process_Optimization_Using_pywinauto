@@ -288,3 +288,49 @@ def test_tax_breakdown_shows_original_currency_beside_bdt():
     assert rows["YQ"] == (1200.0, 10.0)
     assert rows["Q"][1] == 10.0  # NUC 10 x ROE 1
     assert rows["Total Taxes"] == (6000.0, 50.0)
+
+
+def test_rt_gross_uses_starting_legs_carrier_charges_twice():
+    """flydubai DXB-DAC-DXB, checked against the real RT ticket:
+    TAXES BDT26000 = gov taxes 4,545 (DXB) + 10,087 (DAC) + 2 x (YQ 3,089 +
+    YR 2,595). The DAC-DXB one-way (sold from Dhaka) has YQ 0, so adding the
+    two one-way TAXES (10,229 + 12,682) would be 3,089 short."""
+    dxb_dac = {
+        "base_currency": "AED",
+        "base_fare": 590.0,
+        "equ_currency": "BDT",
+        "equ_fare": 19850.0,
+        "exchange_rate": 33.6441,
+        "yq_charge": 3089.0,
+        "yr_charge": 2595.0,
+        "total_taxes": 10229.0,
+        "tax_breakdown": {"AE": 2524.0, "F6": 1683.0, "TP": 169.0, "ZR": 169.0},
+    }
+    dac_dxb = {
+        "base_currency": "USD",
+        "base_fare": 653.0,
+        "equ_currency": "BDT",
+        "equ_fare": 80672.0,
+        "exchange_rate": 123.5406,
+        "yq_charge": 0.0,
+        "yr_charge": 2595.0,
+        "total_taxes": 12682.0,
+        "tax_breakdown": {"BD": 500.0, "OW": 2500.0, "UT": 4000.0, "E5": 446.0},
+    }
+    data = {
+        "FZ_DXB-DAC": {
+            "currency": "AED",
+            "fs_taxes": dxb_dac,
+            "rbd_data": {"K": {"ow_fare": 760, "rt_fare": 1220}},
+        },
+        "FZ_DAC-DXB": {
+            "currency": "USD",
+            "fs_taxes": dac_dxb,
+            "rbd_data": {"K": {"ow_fare": 300, "rt_fare": 560}},
+        },
+    }
+
+    ws = _individual(data, "FZ_DXB-DAC")
+
+    # RT gross (AED) = 1220 + 26000 / 33.6441 = 1992.8
+    assert _row(ws, "K")[-1] == "1,993"

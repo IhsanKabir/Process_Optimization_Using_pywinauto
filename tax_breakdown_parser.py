@@ -11,7 +11,16 @@ _RE_YR_CHARGE = re.compile(r"\bYR\s*(\d+\.?\d*)\b")
 # never actually matched this format because of the city codes between Q
 # and the number — q_charge was silently 0 on every fare for as long as
 # this format has existed.
-_RE_Q_CHARGE_NUC = re.compile(r"\bQ\s+[A-Z]{3}\s*[A-Z]{3}\s*(\d+\.\d+)")
+#
+# A ticket can carry several Q amounts, which are summed: a journey Q with a
+# city pair ("Q DXBDXB33.10") and a Q before each fare component ("Q16.55").
+# Amounts always have two decimals, so booking class Q in itinerary lines
+# ("Q  12NOV", "Q 2100") cannot match. Q may directly follow another amount
+# ("Q27.13Q20.00"), so only a preceding letter rules it out.
+_RE_Q_CHARGE_NUC = re.compile(
+    r"(?<![A-Z])Q\s*(?:[A-Z]{3}\s*[A-Z]{3}\s*)?(\d+\.\d{2})(?!\d)"
+)
+_RE_FARE_CONSTRUCTION_END = re.compile(r"\bEND\b")
 # ROE = Rate of Exchange — local-currency-per-NUC.  Defaults to 1.0 when
 # absent (which is correct for USD-denominated fares).
 _RE_ROE = re.compile(r"\bROE\s*(\d+\.\d+)")
@@ -80,9 +89,12 @@ def parse_fs_tax_breakdown(text: str) -> dict:
         result["yr_charge"] = float(yr_match.group(1))
 
     # Q-surcharge from the IATA fare construction line, in NUC (= USD).
-    q_match = _RE_Q_CHARGE_NUC.search(text)
-    if q_match:
-        result["q_charge"] = float(q_match.group(1))
+    # Only the fare construction (up to END) holds Q surcharges.
+    end_match = _RE_FARE_CONSTRUCTION_END.search(text)
+    construction = text[: end_match.start()] if end_match else text
+    q_amounts = [float(q) for q in _RE_Q_CHARGE_NUC.findall(construction)]
+    if q_amounts:
+        result["q_charge"] = round(sum(q_amounts), 2)
 
     # Rate of Exchange (local-per-NUC).  For USD-base fares this is 1.0;
     # for non-USD bases (e.g. CNY) it scales NUC → fare currency.
