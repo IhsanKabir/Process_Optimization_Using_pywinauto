@@ -90,6 +90,8 @@ from route_filters import (  # noqa: F401
     _parse_requested_routes,
     _resolve_explicit_airline_codes,
     _route_variants,
+    parse_route_pairs,
+    select_pair_commands,
 )
 from tax_airports import (  # noqa: F401
     DEFAULT_AIRPORT_COUNTRY_CODES,
@@ -966,6 +968,15 @@ def main(prebuilt_args=None, stop_event=None):
         help="Filter to specific airline(s), comma-separated (e.g. BG or BG,BS)",
     )
     arg_parser.add_argument(
+        "--pairs",
+        type=str,
+        help=(
+            "Run exact airline:route pairs, comma-separated "
+            "(e.g. BS:DAC-BKK,FZ:DXB-DAC). Overrides --route/--airline; "
+            "used by the GUI's Re-run missing button."
+        ),
+    )
+    arg_parser.add_argument(
         "--only-fd",
         action="store_true",
         help="Extract only basic Fares (skip YQ/Currency FS command)",
@@ -1343,8 +1354,21 @@ def main(prebuilt_args=None, stop_event=None):
 
         commands = list(configured_commands)
 
+        pair_query = getattr(args, "pairs", None)
+        if pair_query:
+            try:
+                pairs = parse_route_pairs(pair_query)
+            except ValidationError as e:
+                logger.error(f"  {e}")
+                sys.exit(1)
+            commands = select_pair_commands(commands, pairs)
+            logger.info(
+                f"  [FILTER] Exact airline/route pairs {pair_query}: "
+                f"{len(commands)} commands"
+            )
+
         # Apply filters
-        if commands:
+        if commands and not pair_query:
             if args.route:
                 routes = [
                     r.strip().upper().replace("-", "") for r in args.route.split(",")
@@ -1383,7 +1407,7 @@ def main(prebuilt_args=None, stop_event=None):
 
         explicit_routes: list[str] = []
         explicit_airlines: list[str] = []
-        if args.route and (not commands or args.airline):
+        if args.route and not pair_query and (not commands or args.airline):
             # Two cases:
             #   1. No commands matched at all → generate the full explicit set (original fallback).
             #   2. Both --route and --airline are given but commands.txt only covers some of the
@@ -2370,8 +2394,12 @@ def main(prebuilt_args=None, stop_event=None):
                                 if fs_expanded and looks_like_fs_tax_breakdown(
                                     fs_expanded
                                 ):
+                                    _tot = parse_fs_tax_breakdown(fs_expanded).get(
+                                        "total_amount", 0
+                                    )
                                     logger.info(
-                                        f"      [OK] Tax breakdown extracted via D-click"
+                                        "      [OK] Tax breakdown extracted via D-click"
+                                        + (f" (TOT BDT {_tot:,.0f})" if _tot else "")
                                     )
                                 else:
                                     logger.warning(
@@ -2380,6 +2408,11 @@ def main(prebuilt_args=None, stop_event=None):
                                     fs_expanded = ""
                                 break  # Exit the date-stepping for loop
 
+                            if not fs_expanded or len(fs_expanded.strip()) <= 50:
+                                logger.warning(
+                                    f"    [TAX] No tax breakdown captured for {file_key}"
+                                    " - listed for re-run"
+                                )
                             if fs_expanded and len(fs_expanded.strip()) > 50:
                                 raw_fs_texts[file_key] = fs_expanded
                                 fs_backup_path = os.path.join(
