@@ -57,3 +57,21 @@ def test_taxes_and_carrier_charges():
     assert parsed["yr_charge"] == 5190.0
     assert parsed["total_taxes"] == 26000.0
     assert parsed["exchange_rate"] == pytest.approx(49120 / 1460, abs=1e-3)
+
+
+def test_plain_option_list_is_not_a_tax_breakdown():
+    """An FS option list without an expanded option must not pass: aircraft
+    types like AT7 / DH8 used to parse as taxes 'AT 7' and 'DH 16'."""
+    from tax_breakdown_parser import looks_like_fs_tax_breakdown
+
+    listing = """ PRICING OPTION 1                  TOTAL AMOUNT             37885 BDT
+ADT                               TAX INCLUDED
+1   BS    201  O  06NOV DAC CCU   1000  1030    FR   AT7     OBDCCUO
+2   BG    617  Y  06NOV DAC CGP   2100  2200    FR   DH8         YOW
+             \xabBOOK\xbb             +TQ                     D  R  +2
+>MU
+CHECK ACTION CODE
+>"""
+
+    assert not looks_like_fs_tax_breakdown(listing)
+    assert looks_like_fs_tax_breakdown(FZ_OW)

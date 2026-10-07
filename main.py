@@ -344,12 +344,21 @@ def _install_cli_esc_listener(stop_event, logger_obj) -> None:
         user32 = ctypes.windll.user32
         VK_ESCAPE = 0x1B
 
+        # The automation itself presses Escape (e.g. to clear the copy
+        # highlight); those presses last one poll at most. Only an Escape held
+        # for ESC_HOLD_POLLS consecutive polls (~0.3 s) counts as a cancel.
+        ESC_HOLD_POLLS = 3
+
         def _watch() -> None:
             import time as _t
 
+            held = 0
             while not stop_event.is_set():
                 try:
-                    if user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000:
+                    held = (
+                        held + 1 if user32.GetAsyncKeyState(VK_ESCAPE) & 0x8000 else 0
+                    )
+                    if held >= ESC_HOLD_POLLS:
                         logger_obj.info(
                             "  [ESC] Cancel requested - finishing current step..."
                         )

@@ -185,6 +185,6 @@ def looks_like_fs_tax_breakdown(text: str) -> bool:
         "total_taxes",
         "total_amount",
     )
-    return any(parsed.get(key, 0) > 0 for key in numeric_keys) or bool(
-        parsed.get("tax_breakdown")
-    )
+    # Tax codes alone are not evidence: on a plain option list, aircraft
+    # types such as AT7 / DH8 parse as "taxes" AT 7 and DH 16.
+    return any(parsed.get(key, 0) > 0 for key in numeric_keys)

@@ -115,16 +115,21 @@ def _long_fs_text(option_count):
 
 def test_d_click_scrolls_to_bottom_for_option_below_the_fold(monkeypatch):
     automation, clicks, _ = _automation(monkeypatch, TAX_SCREEN.replace("FS-3", "FS-6"))
-    pressed = []
+    pressed, wheel = [], []
     monkeypatch.setattr(spa.pyautogui, "press", lambda key, **k: pressed.append(key))
+    monkeypatch.setattr(
+        spa._pw_mouse, "scroll", lambda coords, wheel_dist: wheel.append(wheel_dist)
+    )
     monkeypatch.setattr(automation, "_get_terminal_focus_point", lambda: (1500, 900))
     monkeypatch.setattr(automation, "_safe_focus_click", lambda x, y: None)
 
-    # 6 options; after PageDown the fixture shows the last four, so option 6
-    # is the fixture's last row (D at 443, 355).
+    # 6 options; after scrolling down the fixture shows the last four, so
+    # option 6 is the fixture's last row (D at 443, 355).
     automation.click_d_button(5, _long_fs_text(6))
 
-    assert "pagedown" in pressed
+    # Scrolled with the mouse wheel; PageUp/PageDown send MU/MD commands.
+    assert wheel and all(d < 0 for d in wheel)
+    assert "pagedown" not in pressed and "pageup" not in pressed
     x, y = clicks[0]
     assert abs(x - (RECT_LEFT + 443)) <= 4 and abs(y - (RECT_TOP + 355)) <= 4
 
