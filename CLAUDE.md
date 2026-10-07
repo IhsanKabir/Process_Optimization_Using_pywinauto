@@ -95,6 +95,7 @@ Single pipeline: **drive terminal → scrape clipboard → parse → report**. E
 ### FS date schedule
 
 - The FS (Flight Shopping) loop in `main.py` tries each airline across a pre-built list of day offsets from today. The schedule is defined by four constants in `constants.py`: `FS_DATE_OFFSET_START=30`, `FS_DATE_FALLBACK_OFFSET=90`, `FS_DATE_WINDOW_DAYS=7`, `FS_DATE_STEP=1`. Expanded: 7 consecutive days starting ~1 month out, then 7 more starting ~3 months out. Don't reintroduce the old `MAX_FS_DATE_STEPS` cap — it masked airlines whose inventory had dried up in the first month. Tests: `tests/test_fs_date_schedule.py`.
+- Each date is checked on the first FS page only: if no pure-airline option is there, the loop moves straight to the next date. Do not page with MD / "More Flights" within a date (user decision, 2026-10-07: a new date is faster).
 
 ### Tax airport resolution
 

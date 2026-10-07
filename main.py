@@ -2224,8 +2224,6 @@ def main(prebuilt_args=None, stop_event=None):
                                 current_fs_page = fs_result
                                 target_option_index = None
                                 target_option_number = None
-                                fs_page_number = 1
-                                max_fs_pages = 5
                                 rechecked_current_fs_page = False
 
                                 while True:
@@ -2238,12 +2236,12 @@ def main(prebuilt_args=None, stop_event=None):
                                     )
 
                                     logger.info(
-                                        f"      [DEBUG] Parsing {option_count} options for {airline} on FS page {fs_page_number}..."
+                                        f"      [DEBUG] Parsing {option_count} options for {airline} on {date_str}..."
                                     )
 
                                     if target_option_index is not None:
                                         logger.info(
-                                            f"      [OK] Pure {airline} itinerary found in Option {target_option_number} on FS page {fs_page_number}."
+                                            f"      [OK] Pure {airline} itinerary found in Option {target_option_number} on {date_str}."
                                         )
                                         fs_result = current_fs_page
                                         break
@@ -2265,7 +2263,7 @@ def main(prebuilt_args=None, stop_event=None):
                                             current_fs_page, settled_fs_page, airline
                                         ):
                                             logger.info(
-                                                f"      [DEBUG] Rechecking FS page {fs_page_number} for {airline} after additional settle..."
+                                                f"      [DEBUG] Rechecking FS result for {airline} after additional settle..."
                                             )
                                             current_fs_page = settled_fs_page
                                             continue
@@ -2282,53 +2280,12 @@ def main(prebuilt_args=None, stop_event=None):
                                         )
                                         break
 
-                                    if (
-                                        fs_page_number >= max_fs_pages
-                                        or automation._has_end_signal(current_fs_page)
-                                    ):
-                                        logger.warning(
-                                            f"      [!] No pure {airline} options found on {date_str} after {fs_page_number} FS page(s)."
-                                        )
-                                        break
-
-                                    logger.info(
-                                        f"      [DEBUG] No pure {airline} option on FS page {fs_page_number}; checking next FS page on the same date..."
+                                    # No MD / More Flights paging: another date
+                                    # is faster than paging this one.
+                                    logger.warning(
+                                        f"      [!] No pure {airline} option on {date_str}; trying next date."
                                     )
-
-                                    if automation.click_more_prompt_link(
-                                        current_fs_page
-                                    ):
-                                        next_fs_page = automation._wait_for_response(
-                                            current_fs_page,
-                                            timeout=constants.COMMAND_WAIT_MEDIUM + 0.5,
-                                            min_wait=0.0,
-                                            stability_checks=1,
-                                        )
-                                        next_fs_page = (
-                                            automation._wait_for_stable_screen(
-                                                max_polls=3, interval=0.2
-                                            )
-                                        )
-                                    else:
-                                        logger.warning(
-                                            f"      [!] More Flights was not clickable on {date_str}; staying off MD and trying next date."
-                                        )
-                                        break
-
-                                    if (
-                                        not next_fs_page
-                                        or automation._has_invalid(next_fs_page)
-                                        or next_fs_page.strip()
-                                        == current_fs_page.strip()
-                                    ):
-                                        logger.warning(
-                                            f"      [!] Could not advance FS pagination on {date_str}; trying next date."
-                                        )
-                                        break
-
-                                    current_fs_page = next_fs_page
-                                    fs_page_number += 1
-                                    rechecked_current_fs_page = False
+                                    break
 
                                 if target_option_index is None:
                                     _time.sleep(0.5)

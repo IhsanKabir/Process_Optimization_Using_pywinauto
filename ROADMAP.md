@@ -283,6 +283,10 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **FS: next date instead of paging (2026-10-07):** the FS tax-detail loop no
+  longer clicks More Flights / MD up to 5 pages per date. If page 1 has no pure
+  option for the airline it moves straight to the next date.
+
 - **Fare report ordering, missing-tax flags, original currency (2026-10-07):**
   - Sections list DAC-outbound before inbound (DAC-BKK, then BKK-DAC) on every
     sheet (`_section_sort_key`); airlines follow `AIRLINE_PRIORITY = ("BS", "BG")`
