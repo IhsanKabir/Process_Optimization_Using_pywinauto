@@ -1089,8 +1089,13 @@ class SmartpointAutomation:
                 )
                 text = fallback
 
-        # Click once to deselect
+        # Clear the Ctrl+A selection. Escape alone leaves Smartpoint's
+        # highlight on screen, which then hides the text from screen-located
+        # clicks; a click on the safe point (the same one used before the
+        # copy) deselects.
         pyautogui.press("escape")
+        safe_x, safe_y = self._get_terminal_focus_point()
+        self._safe_focus_click(safe_x, safe_y)
 
         # Cache for deduplication
         self._last_terminal_text = text

@@ -192,3 +192,37 @@ def test_light_theme_is_detected():
     assert len(rows) == 2
     assert _close(rows[0].d, (423, 105), tol=1)
     assert _close(rows[1].d, (423, 165), tol=1)
+
+
+# Live failure (2026-10-07): teal theme, larger font, the copy's selection
+# highlight still on screen, and a green "@" (connection marker) mid-row.
+HIGHLIGHTED = os.path.join(
+    os.path.dirname(__file__), "fixtures", "fs_highlighted_teal.png"
+)
+
+
+def test_highlighted_teal_screen_finds_exactly_the_five_option_rows():
+    img = Image.open(HIGHLIGHTED).convert("RGB")
+
+    rows = find_option_rows(img, analyze_terminal(img))
+
+    # «BOOK» rows at y~190, 330, 470, 590, 710; D at x~610, R at x~641.
+    assert [round(r.y / 10) * 10 for r in rows] == [190, 330, 470, 590, 710]
+    for row in rows:
+        assert abs(row.d[0] - 610) <= 6, row
+        assert abs(row.r[0] - 641) <= 6, row
+        assert row.book[0] < 60
+
+
+def test_green_marker_mid_row_is_not_a_book_link(screen):
+    # A row whose first text is white and which has a green "@" further in
+    # must not count as an option row.
+    img = screen.copy()
+    px = img.load()
+    for x in range(60, 66):
+        for y in range(120, 128):
+            px[x, y] = (0, 181, 85)  # green "@" on an itinerary row (y~124)
+
+    rows = find_option_rows(img, analyze_terminal(img))
+
+    assert len(rows) == 4

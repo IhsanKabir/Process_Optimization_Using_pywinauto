@@ -31,6 +31,8 @@ _LINK_MARGIN = 80
 _LINK_MIN_LEVEL = 140
 # Single glyphs (D, R) are narrower than this many pixels per pixel of pitch.
 _GLYPH_MAX_WIDTH_PER_PITCH = 1.0
+# A monospace character is about as wide as the rendered text is tall.
+_CHAR_WIDTH_PER_TEXT_HEIGHT = 0.9
 # BOOK sits in the left share of the row; D/R in the right share.
 _BOOK_ZONE = 0.15
 _DR_ZONE = 0.80
@@ -94,15 +96,20 @@ def analyze_terminal(img: Image.Image) -> TerminalLayout:
 def find_option_rows(img: Image.Image, layout: TerminalLayout) -> list[OptionRow]:
     """Return FS pricing-option action rows top to bottom.
 
-    A row qualifies when it starts with a green link («BOOK») and ends with at
-    least two single-glyph blue links (D, R). Aircraft codes and airports are
-    blue too, but never on a row that starts with a green link.
+    A row qualifies when its first text is a green link («BOOK») and it ends
+    with at least two single-glyph blue links (D, R). Aircraft codes and
+    airports are blue too, and some themes colour the connection marker "@"
+    green, but neither starts a row.
+
+    Glyph pieces closer than about half a character are joined (a "D" can
+    render as two strokes at larger fonts).
     """
     if not layout.bands:
         return []
     rgb = img.convert("RGB")
     blue = _channel_dominant_mask(rgb, dominant=2)
     green = _channel_dominant_mask(rgb, dominant=1)
+    edges = _edge_mask(rgb)
     width = layout.content_right - layout.content_left
     pitch = layout.line_pitch or _median_band_height(layout.bands)
     max_glyph = max(4, int(pitch * _GLYPH_MAX_WIDTH_PER_PITCH))
@@ -121,9 +128,19 @@ def find_option_rows(img: Image.Image, layout: TerminalLayout) -> list[OptionRow
         )
         if book is None:
             continue
+        # Glyph strokes can fragment (thin green «BOOK», two-stroke "D"), so
+        # the character width is estimated from the text height instead.
+        char_width = max(4.0, (band.bottom - band.top) * _CHAR_WIDTH_PER_TEXT_HEIGHT)
+        first_text = _first_edge_x(edges, band, layout)
+        # The green link must be the row's first text (a selection highlight
+        # edge may sit up to a character before it).
+        if first_text is not None and book[0] - first_text > 1.5 * char_width:
+            continue
         right_blue = [
             run
-            for run in _runs_in_band(blue, band, layout)
+            for run in _runs_in_band(
+                blue, band, layout, merge_gap=max(2, int(char_width * 0.6))
+            )
             if run[0] >= layout.content_left + width * _DR_ZONE
         ]
         if len(right_blue) < 2 or any(b - a > max_glyph for a, b in right_blue[:2]):
@@ -313,10 +330,17 @@ def _channel_dominant_mask(rgb: Image.Image, dominant: int) -> Image.Image:
     return mask
 
 
+def _first_edge_x(edges: Image.Image, band: Band, layout: TerminalLayout):
+    """X of the first glyph edge in a band, or None."""
+    runs = _runs_in_band(edges, band, layout)
+    return runs[0][0] if runs else None
+
+
 def _runs_in_band(
-    mask: Image.Image, band: Band, layout: TerminalLayout
+    mask: Image.Image, band: Band, layout: TerminalLayout, merge_gap: int = 2
 ) -> list[tuple[int, int]]:
-    """Horizontal runs of masked pixels within a band, merging 1-2 px gaps."""
+    """Horizontal runs of masked pixels within a band, merging gaps of up to
+    ``merge_gap`` pixels."""
     strip = mask.crop(
         (layout.content_left, band.top, layout.content_right, band.bottom)
     )
@@ -326,7 +350,7 @@ def _runs_in_band(
         if not value:
             continue
         abs_x = layout.content_left + x
-        if runs and abs_x - runs[-1][1] <= 2:
+        if runs and abs_x - runs[-1][1] <= merge_gap:
             runs[-1][1] = abs_x
         else:
             runs.append([abs_x, abs_x])
