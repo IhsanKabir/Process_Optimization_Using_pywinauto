@@ -32,7 +32,7 @@ import tkinter as tk
 import urllib.request
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-# â”€â”€ Thread-safe log bridge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Thread-safe log bridge ────────────────────────────────────────────────────
 
 
 class _QueueHandler(logging.Handler):
@@ -81,7 +81,7 @@ def _escape_hold_state(
     return pressed_since, (now - pressed_since) >= hold_seconds
 
 
-# â”€â”€ Tooltip helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Tooltip helper ────────────────────────────────────────────────────────────
 
 
 class _Tooltip:
@@ -140,7 +140,7 @@ class _Tooltip:
             self._tip = None
 
 
-# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _runtime_dir() -> str:
@@ -156,6 +156,9 @@ _PREFS_FILE = os.path.join(_SCRIPT_DIR, "preferences.json")
 _UPDATE_STATE_FILE = os.path.join(_SCRIPT_DIR, "_tpa_update_state.txt")
 _UPDATE_LOG_FILE = os.path.join(_SCRIPT_DIR, "_tpa_update.log")
 _PENDING_UPDATE_EXE = os.path.join(_SCRIPT_DIR, "TravelportAuto_update.exe")
+
+
+import gui_support as _gs
 
 
 def _load_prefs() -> dict:
@@ -264,11 +267,11 @@ def _build_update_notice(
 
 
 def _parse_cmd(cmd_str: str):
-    """'FDDACMCT/BG'  ->  ('BG', 'DAC â†’ MCT')"""
+    """'FDDACMCT/BG'  ->  ('BG', 'DAC → MCT')"""
     m = re.match(r"FD([A-Z]{3})([A-Z]{3})/([A-Z0-9]+)", cmd_str.upper())
     if m:
         origin, dest, airline = m.group(1), m.group(2), m.group(3)
-        return airline, f"{origin} â†’ {dest}"
+        return airline, f"{origin} → {dest}"
     return cmd_str, ""
 
 
@@ -301,7 +304,7 @@ def _estimate_remaining_seconds(
     return max(1, int(round(remaining)))
 
 
-# â”€â”€ Update checker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Update checker ───────────────────────────────────────────────────────────
 
 GITHUB_RELEASES_API = (
     "https://api.github.com/repos/IhsanKabir/"
@@ -310,7 +313,7 @@ GITHUB_RELEASES_API = (
 
 
 def _parse_version(tag: str) -> tuple:
-    """'v1.3.0' â†’ (1, 3, 0)  - returns (0,) on failure."""
+    """'v1.3.0' → (1, 3, 0)  - returns (0,) on failure."""
     try:
         return tuple(int(x) for x in tag.lstrip("v").split("."))
     except Exception:
@@ -490,7 +493,7 @@ def _check_for_update(current_version: str) -> dict | None:
     return None
 
 
-# â”€â”€ Main GUI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Main GUI ──────────────────────────────────────────────────────────────────
 
 
 class TravelportGUI:
@@ -498,6 +501,15 @@ class TravelportGUI:
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
+
+    # Palette
+    C_BG = "#f2f2f2"
+    C_NAVY = "#0f3758"
+    C_ACCENT = "#1f6fb2"
+    C_OK = "#1d8a63"
+    C_WARN = "#b7791f"
+    C_BAD = "#b73632"
+    C_HINT = "#8a8a8a"
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -543,6 +555,11 @@ class TravelportGUI:
         self._total = 0
         self._current_step = 0
         self._log_visible = False
+        # Run follow-ups: last run (for Resume) and one-off overrides
+        # (exact pairs for Re-run missing, checkpoint path for Resume).
+        self._last_run: dict | None = None
+        self._run_overrides: dict = {}
+        self._row_warnings: set[str] = set()
 
         self._apply_theme()
         self._build_ui()
@@ -552,6 +569,7 @@ class TravelportGUI:
         self.root.bind_all("<Escape>", lambda *_: self._stop())
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll()
+        self.root.after(500, self._refresh_followup_buttons)
         self.root.after(3000, self._drain_feedback_queue_async)
         self.root.after(1500, self._check_auth_startup)
         # Check for updates silently in the background
@@ -575,12 +593,22 @@ class TravelportGUI:
         for var_name, key in [
             ("checkpoint_var", "checkpoint"),
             ("no_changes_var", "no_changes"),
-            ("only_fd_var", "only_fd"),
-            ("only_yq_var", "only_yq"),
+            ("one_direction_var", "one_direction"),
+            ("include_ftax_var", "include_ftax"),
+            ("baggage_inline_var", "baggage_inline"),
         ]:
             val = prefs.get(key)
             if val is not None:
                 getattr(self, var_name).set(val)
+        scope = prefs.get("fare_scope")
+        if scope is None:  # preferences saved before the scope choice existed
+            scope = (
+                "fd"
+                if prefs.get("only_fd")
+                else ("yq" if prefs.get("only_yq") else "both")
+            )
+        self.fare_scope_var.set(scope)
+        self._last_run = prefs.get("last_run")
 
     def _save_preferences(self):
         """Persist current UI settings to disk."""
@@ -593,8 +621,11 @@ class TravelportGUI:
                 "limit": self.limit_var.get(),
                 "checkpoint": self.checkpoint_var.get(),
                 "no_changes": self.no_changes_var.get(),
-                "only_fd": self.only_fd_var.get(),
-                "only_yq": self.only_yq_var.get(),
+                "fare_scope": self.fare_scope_var.get(),
+                "one_direction": self.one_direction_var.get(),
+                "include_ftax": self.include_ftax_var.get(),
+                "baggage_inline": self.baggage_inline_var.get(),
+                "last_run": self._last_run,
             }
         )
 
@@ -603,7 +634,7 @@ class TravelportGUI:
         self._save_preferences()
         self.root.destroy()
 
-    # â”€â”€ Theme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Theme ─────────────────────────────────────────────────────────────────
 
     def _apply_theme(self):
         style = ttk.Style(self.root)
@@ -611,13 +642,19 @@ class TravelportGUI:
             if t in style.theme_names():
                 style.theme_use(t)
                 break
-        self.root.configure(bg="#f2f2f2")
+        self.root.configure(bg=self.C_BG)
 
-        # Treeview row tag colours
         style.configure("Treeview", rowheight=26, font=("Segoe UI", 10))
         style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+        style.configure("TButton", font=("Segoe UI", 9), padding=(6, 3))
+        style.configure(
+            "Accent.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 4)
+        )
+        style.configure("TMenubutton", font=("Segoe UI", 9), padding=(6, 3))
+        for widget in ("TRadiobutton", "TCheckbutton"):
+            style.configure(widget, background=self.C_BG, font=("Segoe UI", 9))
 
-    # â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── UI ────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         # Title bar
@@ -711,23 +748,27 @@ class TravelportGUI:
 
         self._build_bottom()
 
-    # â”€â”€ Left panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Left panel ────────────────────────────────────────────────────────────
 
     def _section(self, parent, text):
+        row = tk.Frame(parent, bg=self.C_BG)
+        row.pack(fill="x", pady=(12, 4))
+        tk.Frame(row, bg=self.C_ACCENT, width=3, height=14).pack(
+            side="left", padx=(0, 6)
+        )
         tk.Label(
-            parent,
+            row,
             text=text.upper(),
-            bg="#f2f2f2",
-            fg="#0f3758",
+            bg=self.C_BG,
+            fg=self.C_NAVY,
             font=("Segoe UI", 8, "bold"),
             anchor="w",
-        ).pack(fill="x", pady=(10, 1))
-        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 5))
+        ).pack(side="left", fill="x")
 
     def _build_left(self, parent):
         self._left_parent = parent
 
-        # â”€â”€ Group 1: What to Extract â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Group 1: What to Extract ────────────────────────────────────
         g_extract = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_extract, "What to Extract")
         self.mode_var = tk.StringVar(value="fare")
@@ -752,7 +793,7 @@ class TravelportGUI:
         ).pack(anchor="w")
         self.mode_var.trace_add("write", self._on_mode_change)
 
-        # â”€â”€ Group 2: Speed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Group 2: Speed ──────────────────────────────────────────────
         g_speed = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_speed, "Speed")
         self.speed_var = tk.StringVar(value="normal")
@@ -765,12 +806,12 @@ class TravelportGUI:
                 g_speed, text=label, variable=self.speed_var, value=val
             ).pack(anchor="w", pady=1)
 
-        # â”€â”€ Group 3: Filters (hidden in Currency) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Group 3: Filters (hidden in Currency) ───────────────────────
         g_filters = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_filters, "Filters")
         self._primary_filter_label_var = tk.StringVar(value="Route:")
         self._primary_filter_help_var = tk.StringVar(
-            value="e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = all)"
+            value="e.g. DAC-MCT,DAC-BKK  (blank = all)"
         )
         self._airline_help_var = tk.StringVar(
             value="e.g. BG or BG,BS,EK  (blank = all)"
@@ -782,7 +823,18 @@ class TravelportGUI:
             font=("Segoe UI", 9),
         ).pack(anchor="w")
         self.route_var = tk.StringVar()
-        ttk.Entry(g_filters, textvariable=self.route_var).pack(fill="x")
+        route_row = tk.Frame(g_filters, bg=self.C_BG)
+        route_row.pack(fill="x")
+        ttk.Entry(route_row, textvariable=self.route_var).pack(
+            side="left", fill="x", expand=True
+        )
+        self._route_pick_btn = ttk.Button(
+            route_row,
+            text="Pick\u2026",
+            width=6,
+            command=lambda: self._open_picker("routes"),
+        )
+        self._route_pick_btn.pack(side="left", padx=(4, 0))
         tk.Label(
             g_filters,
             textvariable=self._primary_filter_help_var,
@@ -796,8 +848,17 @@ class TravelportGUI:
         )
         self._airline_label.pack(anchor="w", pady=(5, 0))
         self.airline_var = tk.StringVar()
-        self._airline_entry = ttk.Entry(g_filters, textvariable=self.airline_var)
-        self._airline_entry.pack(fill="x")
+        airline_row = tk.Frame(g_filters, bg=self.C_BG)
+        airline_row.pack(fill="x")
+        self._airline_entry = ttk.Entry(airline_row, textvariable=self.airline_var)
+        self._airline_entry.pack(side="left", fill="x", expand=True)
+        self._airline_pick_btn = ttk.Button(
+            airline_row,
+            text="Pick\u2026",
+            width=6,
+            command=lambda: self._open_picker("airlines"),
+        )
+        self._airline_pick_btn.pack(side="left", padx=(4, 0))
         self._airline_hint_label = tk.Label(
             g_filters,
             textvariable=self._airline_help_var,
@@ -813,7 +874,33 @@ class TravelportGUI:
         self.limit_var = tk.StringVar(value="0")
         ttk.Entry(g_filters, textvariable=self.limit_var, width=8).pack(anchor="w")
 
-        # â”€â”€ Group 4a: Options - core (always) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        self.one_direction_var = tk.BooleanVar(value=False)
+        self._one_direction_cb = ttk.Checkbutton(
+            g_filters,
+            text="One direction only",
+            variable=self.one_direction_var,
+        )
+        self._one_direction_cb.pack(anchor="w", pady=(6, 0))
+        _Tooltip(
+            self._one_direction_cb,
+            "Run DAC-BKK without BKK-DAC. Round-trip gross needs both\n"
+            "directions, so it is left blank for one-direction runs.",
+        )
+
+        self._filter_problem_var = tk.StringVar(value="")
+        tk.Label(
+            g_filters,
+            textvariable=self._filter_problem_var,
+            bg=self.C_BG,
+            fg=self.C_BAD,
+            font=("Segoe UI", 8),
+            justify="left",
+            wraplength=250,
+        ).pack(anchor="w")
+        self.route_var.trace_add("write", self._check_filters)
+        self.airline_var.trace_add("write", self._check_filters)
+
+        # ── Group 4a: Options - core (always) ───────────────────────────
         g_options_core = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_options_core, "Options")
         self.checkpoint_var = tk.BooleanVar(value=True)
@@ -827,24 +914,40 @@ class TravelportGUI:
             g_options_core, text="Skip change report", variable=self.no_changes_var
         ).pack(anchor="w", pady=1)
 
-        # â”€â”€ Group 4b: Options - only-flags (Fares mode only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        g_only_flags = tk.Frame(parent, bg="#f2f2f2")
-        self.only_fd_var = tk.BooleanVar(value=False)
-        self.only_yq_var = tk.BooleanVar(value=False)
+        # ── Group 4b: Options - only-flags (Fares mode only) ────────────
+        g_only_flags = tk.Frame(parent, bg=self.C_BG)
+        tk.Label(
+            g_only_flags, text="Extract:", bg=self.C_BG, font=("Segoe UI", 9)
+        ).pack(anchor="w", pady=(6, 0))
+        self.fare_scope_var = tk.StringVar(value="both")
+        for label, val in [
+            ("Fares + taxes", "both"),
+            ("Fares only (skip taxes)", "fd"),
+            ("Taxes only (skip fares)", "yq"),
+        ]:
+            ttk.Radiobutton(
+                g_only_flags, text=label, variable=self.fare_scope_var, value=val
+            ).pack(anchor="w", pady=1)
         self.baggage_inline_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            g_only_flags, text="Fares only (skip taxes)", variable=self.only_fd_var
-        ).pack(anchor="w", pady=1)
-        ttk.Checkbutton(
-            g_only_flags, text="Taxes only (skip fares)", variable=self.only_yq_var
-        ).pack(anchor="w", pady=1)
         ttk.Checkbutton(
             g_only_flags,
             text="Include baggage (BOOK+FQC)",
             variable=self.baggage_inline_var,
-        ).pack(anchor="w", pady=1)
+        ).pack(anchor="w", pady=(4, 1))
+        self.include_ftax_var = tk.BooleanVar(value=False)
+        ftax_cb = ttk.Checkbutton(
+            g_only_flags,
+            text="Add Future Tax (FTAX) sheet",
+            variable=self.include_ftax_var,
+        )
+        ftax_cb.pack(anchor="w", pady=1)
+        _Tooltip(
+            ftax_cb,
+            "Also extract FTAX rules for the airports in this run and add\n"
+            "them to the fare report (slower).",
+        )
 
-        # â”€â”€ Group 5: Compare against (hidden in Currency / Manual) â”€â”€â”€â”€â”€â”€
+        # ── Group 5: Compare against (hidden in Currency / Manual) ──────
 
         # ── Group 4c: Baggage file (Fares + Baggage modes) ─────────────────
         g_baggage_file = tk.Frame(parent, bg="#f2f2f2")
@@ -866,7 +969,7 @@ class TravelportGUI:
         self._baggage_browse_btn.pack(side="left", padx=(4, 0))
         tk.Label(
             g_baggage_file,
-            text="Leave blank to extract live  |  browse for saved baggage JSON",
+            text="Blank = extract live, or browse a saved JSON",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
@@ -888,13 +991,13 @@ class TravelportGUI:
         self._compare_browse_btn.pack(side="left", padx=(4, 0))
         tk.Label(
             g_compare,
-            text="blank = previous run  |  date or browse for snapshot file",
+            text="Blank = previous run, or browse a snapshot",
             bg="#f2f2f2",
             fg="#999",
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
-        # â”€â”€ Group 6: Previous Rates (Currency mode only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Group 6: Previous Rates (Currency mode only) ────────────────
         g_prev_rates = tk.Frame(parent, bg="#f2f2f2")
         tk.Label(
             g_prev_rates,
@@ -922,7 +1025,7 @@ class TravelportGUI:
             font=("Segoe UI", 7, "italic"),
         ).pack(anchor="w")
 
-        # â”€â”€ Group 7: Output Path (always) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Group 7: Output Path (always) ───────────────────────────────
         g_output = tk.Frame(parent, bg="#f2f2f2")
         self._section(g_output, "Output Path")
         tk.Label(
@@ -976,7 +1079,7 @@ class TravelportGUI:
 
         self._apply_mode_visibility()
 
-    # â”€â”€ Right panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Right panel ───────────────────────────────────────────────────────────
 
     def _build_right(self, parent):
         # Step indicator
@@ -993,11 +1096,16 @@ class TravelportGUI:
             if i < len(self.STEPS) - 1:
                 tk.Label(
                     step_frame,
-                    text="  ->  ",
+                    text="  ›  ",
                     bg="#f2f2f2",
                     fg="#ccc",
                     font=("Segoe UI", 9),
                 ).pack(side="left")
+
+        self.status_label = tk.Label(
+            step_frame, text="Ready", bg=self.C_BG, fg="#555", font=("Segoe UI", 9)
+        )
+        self.status_label.pack(side="right")
 
         # Progress bar + counter
         prog_row = tk.Frame(parent, bg="#f2f2f2")
@@ -1010,7 +1118,7 @@ class TravelportGUI:
             bg="#f2f2f2",
             fg="#0f3758",
             font=("Segoe UI", 9, "bold"),
-            width=28,
+            width=40,
             anchor="e",
         )
         self.counter_label.pack(side="left", padx=(6, 0))
@@ -1023,16 +1131,20 @@ class TravelportGUI:
 
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=("status", "airline", "route"),
+            columns=("status", "airline", "route", "taxes", "total"),
             show="headings",
             selectmode="none",
         )
         self.tree.heading("status", text="")
         self.tree.heading("airline", text="Airline")
         self.tree.heading("route", text="Route")
+        self.tree.heading("taxes", text="Taxes")
+        self.tree.heading("total", text="Ticket total")
         self.tree.column("status", width=36, stretch=False, anchor="center")
-        self.tree.column("airline", width=110, stretch=False)
-        self.tree.column("route", width=200, stretch=True)
+        self.tree.column("airline", width=90, stretch=False)
+        self.tree.column("route", width=160, stretch=True)
+        self.tree.column("taxes", width=130, stretch=False)
+        self.tree.column("total", width=130, stretch=False, anchor="e")
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
@@ -1046,6 +1158,7 @@ class TravelportGUI:
         )
         self.tree.tag_configure("done", foreground="#1d8a63")
         self.tree.tag_configure("failed", foreground="#b73632")
+        self.tree.tag_configure("warn", foreground=self.C_WARN)
 
         # Collapsible technical log
         self._build_log_toggle(parent)
@@ -1075,113 +1188,345 @@ class TravelportGUI:
             fg="#d4d4d4",
             relief="flat",
             state="disabled",
-            height=0,
+            height=8,
         )
-        self.log_text.pack(fill="x")
+        # Packed only while visible: a Text widget with height=0 still shows
+        # a few lines.
         self.log_text.tag_config("ERROR", foreground="#f44747")
         self.log_text.tag_config("WARNING", foreground="#ffcc02")
         self.log_text.tag_config("SUCCESS", foreground="#4ec9b0")
 
     def _toggle_log(self):
         self._log_visible = not self._log_visible
-        self.log_text.configure(height=8 if self._log_visible else 0)
+        if self._log_visible:
+            self.log_text.pack(fill="x")
+        else:
+            self.log_text.pack_forget()
         self._toggle_btn.configure(
             text=(
-                "â–¼  Hide technical log" if self._log_visible else "Show technical log"
+                "▼  Hide technical log" if self._log_visible else "Show technical log"
             )
         )
 
-    # â”€â”€ Bottom bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Bottom bar ────────────────────────────────────────────────────────────
 
     def _build_bottom(self):
         bar = tk.Frame(self.root, bg="#dde3e8", pady=8)
         bar.pack(fill="x", side="bottom")
 
-        self.start_btn = ttk.Button(bar, text="Start", command=self._start, width=14)
+        self.start_btn = ttk.Button(
+            bar,
+            text="\u25b6  Start",
+            command=self._start,
+            width=12,
+            style="Accent.TButton",
+        )
         self.start_btn.pack(side="left", padx=(12, 4))
-
         self.stop_btn = ttk.Button(
-            bar, text="Stop", command=self._stop, width=14, state="disabled"
+            bar, text="\u25a0  Stop", command=self._stop, width=10, state="disabled"
         )
         self.stop_btn.pack(side="left", padx=4)
-
         self.open_btn = ttk.Button(
             bar,
             text="Open Report",
             command=self._open_report,
-            width=16,
+            width=13,
             state="disabled",
         )
         self.open_btn.pack(side="left", padx=4)
 
-        self.feedback_btn = ttk.Button(
-            bar, text="Feedback", command=self._open_feedback_dialog, width=14
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+
+        self.rerun_btn = ttk.Button(
+            bar,
+            text="Re-run missing",
+            command=self._rerun_missing,
+            width=20,
+            state="disabled",
         )
-        self.feedback_btn.pack(side="left", padx=4)
+        self.rerun_btn.pack(side="left", padx=4)
+        _Tooltip(
+            self.rerun_btn,
+            "Run exactly the routes the latest fare report lists on its\n"
+            "Re-run Needed sheet (missing or unusable tax data).",
+        )
+        self.resume_btn = ttk.Button(
+            bar,
+            text="Resume last run",
+            command=self._resume_last_run,
+            width=20,
+            state="disabled",
+        )
+        self.resume_btn.pack(side="left", padx=4)
+        _Tooltip(
+            self.resume_btn,
+            "The last run stopped before finishing. Continue it with the\n"
+            "same settings, skipping routes it already completed.",
+        )
+
+        tools_btn = ttk.Menubutton(bar, text="Tools", width=8)
+        tools_menu = tk.Menu(tools_btn, tearoff=False)
+        tools_menu.add_command(
+            label="Time calculator", command=self._open_time_calculator
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Open reports folder", command=lambda: self._open_folder("reports")
+        )
+        tools_menu.add_command(
+            label="Open logs folder", command=lambda: self._open_folder("logs")
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Recalibrate display", command=self._recalibrate_display
+        )
+        tools_menu.add_command(
+            label="Reset D-click calibration",
+            command=self._reset_d_click_calibration,
+        )
+        tools_btn["menu"] = tools_menu
+        tools_btn.pack(side="left", padx=4)
 
         self.account_btn = ttk.Button(
-            bar, text="Sign In", command=self._on_account_btn, width=12
+            bar, text="Sign In", command=self._on_account_btn, width=10
         )
-        self.account_btn.pack(side="left", padx=4)
-
-        self.recalibrate_btn = ttk.Button(
-            bar, text="Recalibrate", command=self._recalibrate_display, width=15
+        self.account_btn.pack(side="right", padx=(4, 12))
+        self.feedback_btn = ttk.Button(
+            bar, text="Feedback", command=self._open_feedback_dialog, width=10
         )
-        self.recalibrate_btn.pack(side="left", padx=4)
-        _Tooltip(
-            self.recalibrate_btn,
-            "Reset click calibration for this display.\n"
-            "Run this after changing screen resolution or DPI scaling.",
-        )
-
-        self.reset_dclick_btn = ttk.Button(
-            bar,
-            text="Reset D-click",
-            command=self._reset_d_click_calibration,
-            width=16,
-        )
-        self.reset_dclick_btn.pack(side="left", padx=4)
-        _Tooltip(
-            self.reset_dclick_btn,
-            "Drop the saved D-click offset for this PC.\n"
-            "The next D-click will pause for 5 seconds - click the\n"
-            "D button on the FS screen during that window so the new\n"
-            "position is learned. Use this if D-click keeps landing\n"
-            "on the wrong glyph (e.g. BOOK instead of D).",
-        )
-
-        self.time_calc_btn = ttk.Button(
-            bar, text="Time Calc", command=self._open_time_calculator, width=12
-        )
-        self.time_calc_btn.pack(side="left", padx=4)
-        _Tooltip(
-            self.time_calc_btn,
-            "Calculate local arrival time from origin/destination\n"
-            "UTC offsets, departure time, and flight duration.",
-        )
-
+        self.feedback_btn.pack(side="right", padx=4)
         self._user_label = tk.Label(
             bar, text="", bg="#dde3e8", fg="#357a38", font=("Segoe UI", 9)
         )
         self._user_label.pack(side="right", padx=8)
 
-        self.status_label = tk.Label(
-            bar, text="Ready", bg="#dde3e8", fg="#555", font=("Segoe UI", 9)
-        )
-        self.status_label.pack(side="right", padx=12)
+    # ── Run follow-ups: pickers, filter checks, re-run, resume ──────────────
 
-    # â”€â”€ Logging setup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    def _commands_file(self) -> str:
+        return os.path.join(_SCRIPT_DIR, "commands.txt")
+
+    def _data_dir(self, name: str) -> str:
+        return os.path.join(_SCRIPT_DIR, "data", name)
+
+    def _open_folder(self, name: str):
+        path = self._data_dir(name)
+        os.makedirs(path, exist_ok=True)
+        os.startfile(path)
+
+    def _check_filters(self, *_):
+        """Show typos in Route / Airline as you type (not in Future Tax mode,
+        where the field takes airport names)."""
+        if not hasattr(self, "_filter_problem_var"):
+            return
+        if self.mode_var.get() in ("tax", "currency", "baggage"):
+            self._filter_problem_var.set("")
+            return
+        problems = _gs.filter_problems(self.route_var.get(), self.airline_var.get())
+        self._filter_problem_var.set("\n".join(problems))
+
+    def _open_picker(self, kind: str):
+        """Checklist of configured routes or airlines; fills the filter field."""
+        try:
+            from parser import load_commands
+
+            commands = load_commands(self._commands_file())
+        except Exception as exc:
+            messagebox.showerror("Pick", f"Could not read commands.txt:\n\n{exc}")
+            return
+        try:
+            with open(os.path.join(_SCRIPT_DIR, "config.json"), encoding="utf-8") as fh:
+                domestic = json.load(fh).get("domestic_airports") or ["DAC"]
+        except Exception:
+            domestic = ["DAC"]
+        routes, airlines = _gs.configured_choices(commands, tuple(domestic))
+        items = routes if kind == "routes" else airlines
+        target = self.route_var if kind == "routes" else self.airline_var
+        if not items:
+            messagebox.showinfo("Pick", "No routes configured in commands.txt yet.")
+            return
+        current = {x.strip().upper() for x in target.get().split(",") if x.strip()}
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Pick routes" if kind == "routes" else "Pick airlines")
+        dlg.configure(bg=self.C_BG)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.geometry("360x480")
+        tk.Label(
+            dlg,
+            text=(
+                "Tick the routes to run (blank = all)."
+                if kind == "routes"
+                else "Tick the airlines to run (blank = all)."
+            ),
+            bg=self.C_BG,
+            fg=self.C_NAVY,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", padx=10, pady=(10, 4))
+
+        box = tk.Listbox(
+            dlg,
+            selectmode="multiple",
+            font=("Consolas", 10),
+            activestyle="none",
+            exportselection=False,
+        )
+        scroll = ttk.Scrollbar(dlg, orient="vertical", command=box.yview)
+        box.configure(yscrollcommand=scroll.set)
+        for i, item in enumerate(items):
+            box.insert("end", item)
+            if item in current:
+                box.selection_set(i)
+        btns = tk.Frame(dlg, bg=self.C_BG)
+        btns.pack(side="bottom", fill="x", padx=10, pady=8)
+        scroll.pack(side="right", fill="y", padx=(0, 10))
+        box.pack(side="left", fill="both", expand=True, padx=(10, 0))
+
+        def _apply():
+            chosen = [items[i] for i in box.curselection()]
+            target.set(",".join(chosen))
+            dlg.destroy()
+
+        ttk.Button(
+            btns, text="All", width=6, command=lambda: box.selection_set(0, "end")
+        ).pack(side="left")
+        ttk.Button(
+            btns,
+            text="None",
+            width=6,
+            command=lambda: box.selection_clear(0, "end"),
+        ).pack(side="left", padx=4)
+        ttk.Button(
+            btns, text="OK", width=8, style="Accent.TButton", command=_apply
+        ).pack(side="right")
+        ttk.Button(btns, text="Cancel", width=8, command=dlg.destroy).pack(
+            side="right", padx=4
+        )
+
+    def _settings_snapshot(self) -> dict:
+        return {
+            "mode": self.mode_var.get(),
+            "speed": self.speed_var.get(),
+            "route": self.route_var.get(),
+            "airline": self.airline_var.get(),
+            "limit": self.limit_var.get(),
+            "fare_scope": self.fare_scope_var.get(),
+            "one_direction": self.one_direction_var.get(),
+            "include_ftax": self.include_ftax_var.get(),
+            "baggage_inline": self.baggage_inline_var.get(),
+        }
+
+    def _restore_settings(self, settings: dict):
+        for key, var in [
+            ("mode", self.mode_var),
+            ("speed", self.speed_var),
+            ("route", self.route_var),
+            ("airline", self.airline_var),
+            ("limit", self.limit_var),
+            ("fare_scope", self.fare_scope_var),
+            ("one_direction", self.one_direction_var),
+            ("include_ftax", self.include_ftax_var),
+            ("baggage_inline", self.baggage_inline_var),
+        ]:
+            if key in (settings or {}):
+                var.set(settings[key])
+
+    def _refresh_followup_buttons(self):
+        """Enable Re-run missing / Resume only when there is something to do."""
+        running = bool(self._run_thread and self._run_thread.is_alive())
+        report = _gs.find_latest_rerun_report(self._data_dir("reports"))
+        count = len(_gs.rerun_pairs_from_report(report)) if report else 0
+        self.rerun_btn.configure(
+            text=f"Re-run missing ({count})" if count else "Re-run missing",
+            state="normal" if count and not running else "disabled",
+        )
+        resumable = _gs.resumable_run(self._last_run, self._data_dir("checkpoints"))
+        self.resume_btn.configure(
+            text=(
+                f"Resume last run ({resumable['completed']} done)"
+                if resumable
+                else "Resume last run"
+            ),
+            state="normal" if resumable and not running else "disabled",
+        )
+
+    def _rerun_missing(self):
+        report = _gs.find_latest_rerun_report(self._data_dir("reports"))
+        pairs = _gs.rerun_pairs_from_report(report) if report else []
+        if not pairs:
+            self._refresh_followup_buttons()
+            return
+        listing = "\n".join(
+            f"  {p['airline']}  {p['route']}   ({p['missing']})" for p in pairs[:15]
+        )
+        if len(pairs) > 15:
+            listing += f"\n  ... and {len(pairs) - 15} more"
+        if not messagebox.askyesno(
+            "Re-run missing",
+            f"Re-run {len(pairs)} route(s) from {os.path.basename(report)}?\n\n"
+            f"{listing}",
+        ):
+            return
+        self.mode_var.set("fare")
+        self.fare_scope_var.set("both")
+        self._start(overrides={"pairs": _gs.pairs_to_text(pairs)})
+
+    def _resume_last_run(self):
+        resumable = _gs.resumable_run(self._last_run, self._data_dir("checkpoints"))
+        if not resumable:
+            self._refresh_followup_buttons()
+            return
+        self._restore_settings(resumable.get("settings") or {})
+        self.checkpoint_var.set(True)
+        self._start(overrides={"resume": resumable["path"]})
+
+    def _note_run_detail(self, text: str):
+        """Per-route details from log lines: checkpoint session, taxes, total."""
+        m_session = re.search(r"\[CHECKPOINT\] Session: (\S+)", text)
+        if m_session and self._last_run is not None:
+            self._last_run["session"] = m_session.group(1)
+            self._save_preferences()
+            return
+        m_tax = re.search(
+            r"Tax breakdown extracted via D-click(?: \(TOT ([A-Z]{3}) ([\d,]+)\))?",
+            text,
+        )
+        if m_tax:
+            total = f"{m_tax.group(1)} {m_tax.group(2)}" if m_tax.group(1) else ""
+            self._set_row_detail("\u2713 captured", total)
+        elif "[TAX] No tax breakdown captured" in text:
+            self._set_row_detail("\u26a0 re-run", "", warn=True)
+        elif "Skipping FS extraction because FD returned no fare data" in text:
+            self._set_row_detail("\u2013 no fares", "")
+
+    def _set_row_detail(self, taxes: str, total: str, warn: bool = False):
+        iid = self._current_row
+        if not iid or not self.tree.exists(iid):
+            return
+        vals = list(self.tree.item(iid, "values")) + [""] * 5
+        self.tree.item(iid, values=(vals[0], vals[1], vals[2], taxes, total))
+        if warn:
+            self._row_warnings.add(iid)
+            self.tree.item(iid, tags=("warn",))
+        self._update_counter()
+
+    # ── Logging setup ─────────────────────────────────────────────────────────
 
     def _setup_logging(self):
         handler = _QueueHandler(self.log_queue)
         handler.setFormatter(logging.Formatter("%(message)s"))
+        # Other libraries (keyring, urllib3, ...) only reach the GUI log at
+        # WARNING or above; their DEBUG chatter ("Loading chainer") is noise.
+        library_handler = _QueueHandler(self.log_queue)
+        library_handler.setFormatter(logging.Formatter("%(message)s"))
+        library_handler.setLevel(logging.WARNING)
         root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
+        root_logger.addHandler(library_handler)
         root_logger.setLevel(logging.DEBUG)
 
         # main.py logs to the "travelport" named logger and adds its own
         # StreamHandler to it.  Without this, each message propagates to the
-        # root QueueHandler AND fires the StreamHandler â†’ stdout â†’ queue,
+        # root QueueHandler AND fires the StreamHandler → stdout → queue,
         # producing duplicate lines.  Turning off propagation means the named
         # logger's own handlers run; the root QueueHandler catches everything
         # else (e.g. third-party library logs).
@@ -1236,7 +1581,7 @@ class TravelportGUI:
         elif _read_update_state():
             _clear_update_state()
 
-    # â”€â”€ Queue polling (main thread) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Queue polling (main thread) ───────────────────────────────────────────
 
     def _poll(self):
         try:
@@ -1267,13 +1612,14 @@ class TravelportGUI:
         self._refresh_eta()
         self.root.after(150, self._poll)
 
-    # â”€â”€ Log parsing â†’ UI updates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Log parsing → UI updates ──────────────────────────────────────────────
 
     def _handle_log(self, text: str):
         """Parse a log line and update the step indicator + route checklist."""
         tl = text.lower()
+        self._note_run_detail(text)
 
-        # â”€â”€ Step detection â”€â”€
+        # ── Step detection ──
         if re.search(r"\[1/4\].*load|loading config", tl):
             self._set_step(1)
         elif re.search(r"connecting to smart|\[2/4\].*auto", tl):
@@ -1281,18 +1627,18 @@ class TravelportGUI:
         elif re.search(r"\[4/4\].*generat|generating excel", tl):
             self._set_step(4)
 
-        # â”€â”€ Route command line:  [45/85] FDDACMCT/BG â”€â”€
+        # ── Route command line:  [45/85] FDDACMCT/BG ──
         m_cmd = re.search(r"\[(\d+)/(\d+)\]\s+(FD[A-Z0-9]+/[A-Z0-9]+)", text)
-        # â”€â”€ Currency progress:  [3/17] OMR -> BDT: 320.64   (success)
-        # â”€â”€ Currency failure:   [3/17] Could not parse rate for OMR
+        # ── Currency progress:  [3/17] OMR -> BDT: 320.64   (success)
+        # ── Currency failure:   [3/17] Could not parse rate for OMR
         m_fzs = re.search(
             r"\[(\d+)/(\d+)\]\s+(?:[A-Z]{3}\s*->\s*[A-Z]{3}|Could not parse)",
             text,
         )
-        # â”€â”€ FZS pre-scan banner sets the total up-front so ETA has a denominator
+        # ── FZS pre-scan banner sets the total up-front so ETA has a denominator
         # even before the first currency completes.
         m_fzs_total = re.search(r"Extracting FZS rates for (\d+) currencies", text)
-        # â”€â”€ Tax progress: [N/M] Airport: KUL (Kuala Lumpur) -> FTAX-MY
+        # ── Tax progress: [N/M] Airport: KUL (Kuala Lumpur) -> FTAX-MY
         # Each line marks the START of a new airport, so by the time we see
         # line N, exactly N-1 airports are completed.  Without this the ETA
         # overlay stays stuck on "calculating..." for the whole tax run.
@@ -1351,17 +1697,17 @@ class TravelportGUI:
             self._update_counter()
             self._refresh_eta()
 
-        # â”€â”€ Route succeeded â”€â”€
+        # ── Route succeeded ──
         elif re.search(
-            r"âœ“.*fare data|âœ“.*tax.*complet|âœ“.*completed|fare data captured", tl
+            r"✓.*fare data|✓.*tax.*complet|✓.*completed|fare data captured", tl
         ):
             self._mark_row("done")
 
-        # â”€â”€ Route failed â”€â”€
-        elif re.search(r"failed after|âœ— failed|âœ—.*failed", tl):
+        # ── Route failed ──
+        elif re.search(r"failed after|✗ failed|✗.*failed", tl):
             self._mark_row("failed")
 
-        # â”€â”€ Append to hidden technical log â”€â”€
+        # ── Append to hidden technical log ──
         self._append_raw(text)
 
     def _set_step(self, n: int):
@@ -1372,7 +1718,7 @@ class TravelportGUI:
             step_num = i + 1
             if step_num < n:
                 lbl.configure(
-                    text=f"[x] {self.STEPS[i]}", fg="#1d8a63", font=("Segoe UI", 9)
+                    text=f"✓ {self.STEPS[i]}", fg="#1d8a63", font=("Segoe UI", 9)
                 )
             elif step_num == n:
                 lbl.configure(
@@ -1386,10 +1732,14 @@ class TravelportGUI:
         iid = f"row_{idx}"
         # If already exists (e.g. resume), just update it
         if self.tree.exists(iid):
-            self.tree.item(iid, values=("âŸ³", airline, route), tags=("running",))
+            self.tree.item(iid, values=("▶", airline, route, "", ""), tags=("running",))
         else:
             self.tree.insert(
-                "", "end", iid=iid, values=("âŸ³", airline, route), tags=("running",)
+                "",
+                "end",
+                iid=iid,
+                values=("▶", airline, route, "", ""),
+                tags=("running",),
             )
         self._row_states[iid] = "running"
         self.tree.see(iid)
@@ -1399,12 +1749,12 @@ class TravelportGUI:
         """Insert (or update) a currency row and mark it done/failed in one step.
 
         Currency runs emit one log line per currency when the rate is finalised, so
-        each line is a completed event - no separate "running â†’ done" transition.
+        each line is a completed event - no separate "running → done" transition.
         """
         iid = f"row_{idx}"
-        icon = "âœ“" if state == "done" else "âœ—"
+        icon = "✓" if state == "done" else "✗"
         detail = f"\u2192 BDT: {rate_str}" if state == "done" else "failed to parse"
-        values = (icon, code, detail)
+        values = (icon, code, detail, "", "")
         if self.tree.exists(iid):
             self.tree.item(iid, values=values, tags=(state,))
         else:
@@ -1416,11 +1766,17 @@ class TravelportGUI:
     def _mark_row(self, state: str):
         if not self._current_row or not self.tree.exists(self._current_row):
             return
-        icon = "âœ“" if state == "done" else "âœ—"
+        icon = "✓" if state == "done" else "✗"
         previous_state = self._row_states.get(self._current_row)
         vals = self.tree.item(self._current_row, "values")
+        extra = tuple(vals[3:5]) + ("",) * (5 - len(vals))
+        tags = (
+            ("warn",)
+            if state == "done" and self._current_row in self._row_warnings
+            else (state,)
+        )
         self.tree.item(
-            self._current_row, values=(icon, vals[1], vals[2]), tags=(state,)
+            self._current_row, values=(icon, vals[1], vals[2], *extra[:2]), tags=tags
         )
         self._row_states[self._current_row] = state
         if previous_state not in {"done", "failed"} and state in {"done", "failed"}:
@@ -1437,10 +1793,12 @@ class TravelportGUI:
         done = sum(1 for s in self._row_states.values() if s == "done")
         failed = sum(1 for s in self._row_states.values() if s == "failed")
         running = sum(1 for s in self._row_states.values() if s == "running")
+        rerun = len(self._row_warnings)
         self.counter_label.configure(
             text=(
-                f"\u2713 {done}  \u2717 {failed}  \u27f3 {running}   "
-                f"({self._done}/{self._total})"
+                f"\u2713 {done}  \u2717 {failed}  {running} running"
+                + (f"  \u26a0 {rerun} re-run" if rerun else "")
+                + f"   ({self._done}/{self._total})"
             )
         )
         self.progress.configure(mode="determinate", value=pct)
@@ -1509,13 +1867,13 @@ class TravelportGUI:
             tag = "ERROR"
         elif "warning" in tl:
             tag = "WARNING"
-        elif "âœ“" in text or "success" in tl:
+        elif "✓" in text or "success" in tl:
             tag = "SUCCESS"
         self.log_text.insert("end", text + "\n", tag)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    # â”€â”€ Mode change handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Mode change handler ───────────────────────────────────────────────────
 
     def _on_mode_change(self, *_):
         if self.mode_var.get() == "quickpaste":
@@ -1532,6 +1890,7 @@ class TravelportGUI:
                 group.pack(fill="x")
         self._update_filter_controls(mode)
         self._update_tree_headings(mode)
+        self._check_filters()
 
     def _update_filter_controls(self, mode: str):
         """Rename the shared filter field and disable airline input in tax mode."""
@@ -1544,20 +1903,27 @@ class TravelportGUI:
             self._airline_label.configure(fg="#999")
             self._airline_hint_label.configure(fg="#999")
             self._airline_entry.configure(state="disabled")
+            self._airline_pick_btn.configure(state="disabled")
+            self._route_pick_btn.configure(state="disabled")
+            self._one_direction_cb.configure(state="disabled")
         else:
             self._primary_filter_label_var.set("Route:")
-            self._primary_filter_help_var.set(
-                "e.g. DAC-MCT or DAC-MCT,DAC-BKK  (blank = configured list)"
-            )
+            self._primary_filter_help_var.set("e.g. DAC-MCT,DAC-BKK  (blank = all)")
             self._airline_help_var.set("e.g. BG or BG,BS,EK  (blank = all)")
             self._airline_label.configure(fg="#000")
             self._airline_hint_label.configure(fg="#999")
             self._airline_entry.configure(state="normal")
+            self._airline_pick_btn.configure(state="normal")
+            self._route_pick_btn.configure(state="normal")
+            self._one_direction_cb.configure(state="normal")
 
     def _update_tree_headings(self, mode: str):
         """Rename the tree's two visible columns to match the current mode."""
         if not hasattr(self, "tree"):
             return
+        show_taxes = mode in ("fare", "quickpaste")
+        self.tree.heading("taxes", text="Taxes" if show_taxes else "")
+        self.tree.heading("total", text="Ticket total" if show_taxes else "")
         if mode == "currency":
             self.tree.heading("airline", text="Currency")
             self.tree.heading("route", text="Rate \u2192 BDT")
@@ -1571,7 +1937,7 @@ class TravelportGUI:
             self.tree.heading("airline", text="Airline")
             self.tree.heading("route", text="Route")
 
-    # â”€â”€ Quick-paste wizard (GUI-native, step-by-step clipboard collection) â”€â”€â”€â”€
+    # ── Quick-paste wizard (GUI-native, step-by-step clipboard collection) ────
 
     def _run_quickpaste_wizard(self) -> dict | None:
         """Show step-by-step dialogs to collect GDS output from clipboard.
@@ -1666,7 +2032,7 @@ class TravelportGUI:
             "raw_fs_texts": raw_fs_texts,
         }
 
-    # â”€â”€ Auto-update â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Auto-update ───────────────────────────────────────────────────────────
 
     def _bg_update_check(self):
         """Run in background thread; posts result to queue."""
@@ -1948,7 +2314,7 @@ class TravelportGUI:
     def _on_update_restart(self):
         self.root.destroy()
 
-    # â”€â”€ Button actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Button actions ────────────────────────────────────────────────────────
 
     def _browse(self):
         path = filedialog.asksaveasfilename(
@@ -1959,9 +2325,30 @@ class TravelportGUI:
         if path:
             self.output_var.set(path)
 
-    def _start(self):
+    def _start(self, overrides: dict | None = None):
         if self._run_thread and self._run_thread.is_alive():
             return
+        self._run_overrides = dict(overrides or {})
+        mode = self.mode_var.get()
+        problems = (
+            []
+            if self._run_overrides or mode in ("tax", "currency", "baggage")
+            else _gs.filter_problems(self.route_var.get(), self.airline_var.get())
+        )
+        if problems:
+            messagebox.showerror(
+                "Check filters", "Fix these before starting:\n\n" + "\n".join(problems)
+            )
+            return
+        if "resume" not in self._run_overrides and self.checkpoint_var.get():
+            self._last_run = {
+                "session": None,
+                "finished": False,
+                "settings": self._settings_snapshot(),
+            }
+        self._row_warnings = set()
+        self.rerun_btn.configure(state="disabled")
+        self.resume_btn.configure(state="disabled")
         self.stop_event.clear()
         self._last_report = None
         self._run_started_at = time.monotonic()
@@ -2155,13 +2542,13 @@ class TravelportGUI:
         except Exception as exc:
             messagebox.showerror("Recalibrate Failed", str(exc))
 
-    # â”€â”€ Account / login â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Account / login ───────────────────────────────────────────────────────
 
     def _refresh_user_label(self) -> None:
         if self._user_info:
             email = self._user_info.get("email", "")
             display = email or self._user_info.get("full_name", "Signed in")
-            self._user_label.configure(text=f"â— {display}", fg="#357a38")
+            self._user_label.configure(text=f"● {display}", fg="#357a38")
             self.account_btn.configure(text="Account")
         else:
             self._user_label.configure(text="")
@@ -2263,7 +2650,7 @@ class TravelportGUI:
 
         tk.Label(body, text="Password", anchor="w", font=("Segoe UI", 9)).pack(fill="x")
         self._login_password_var = tk.StringVar()
-        ttk.Entry(body, textvariable=self._login_password_var, show="â—").pack(
+        ttk.Entry(body, textvariable=self._login_password_var, show="●").pack(
             fill="x", pady=(2, 8)
         )
 
@@ -2631,7 +3018,7 @@ class TravelportGUI:
             self._feedback_submit_btn.configure(state="normal")
         self._feedback_status_var.set(payload.get("error", "Could not send feedback."))
 
-    # â”€â”€ Args builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Args builder ──────────────────────────────────────────────────────────
 
     def _open_time_calculator(self):
         """Popup: calculate local arrival time for up to two flights side-by-side."""
@@ -2793,6 +3180,9 @@ class TravelportGUI:
         is_baggage = mode == "baggage"
         primary_filter = self.route_var.get().strip() or None
         airline_filter = self.airline_var.get().strip() or None
+        overrides = self._run_overrides or {}
+        pairs = overrides.get("pairs")
+        scope = self.fare_scope_var.get() if mode == "fare" else "both"
         return argparse.Namespace(
             auto=(not is_quickpaste),
             tax=is_tax,
@@ -2805,21 +3195,24 @@ class TravelportGUI:
             previous_date=(
                 getattr(self, "_prev_rates_date", None) if is_currency else None
             ),
-            route=None if (is_tax or is_baggage) else primary_filter,
+            route=None if (is_tax or is_baggage or pairs) else primary_filter,
             airport=primary_filter if is_tax else None,
-            one_direction=False,
-            airline=None if (is_tax or is_baggage) else airline_filter,
-            limit=limit,
-            only_fd=self.only_fd_var.get(),
-            only_yq=self.only_yq_var.get(),
+            one_direction=(
+                self.one_direction_var.get() if mode in ("fare", "penalty") else False
+            ),
+            airline=None if (is_tax or is_baggage or pairs) else airline_filter,
+            pairs=pairs,
+            limit=0 if pairs else limit,
+            only_fd=scope == "fd",
+            only_yq=scope == "yq",
             only_currency=False,
-            include_ftax=False,
+            include_ftax=self.include_ftax_var.get() if mode == "fare" else False,
             only_baggage=is_baggage,
             baggage=self.baggage_inline_var.get() if not is_baggage else False,
             baggage_file=self.baggage_file_var.get().strip() or None,
             speed=speed if speed != "normal" else None,
             checkpoint=self.checkpoint_var.get(),
-            resume=None,
+            resume=overrides.get("resume"),
             compare_snapshot=self.compare_var.get().strip() or None,
             no_changes=self.no_changes_var.get(),
             no_validation=False,
@@ -2827,7 +3220,7 @@ class TravelportGUI:
             config=None,
         )
 
-    # â”€â”€ Worker thread â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Worker thread ─────────────────────────────────────────────────────────
 
     def _worker(self, args: argparse.Namespace):
         result_path = None
@@ -2842,7 +3235,7 @@ class TravelportGUI:
         finally:
             self.log_queue.put(("done", result_path))
 
-    # â”€â”€ Completion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Completion ────────────────────────────────────────────────────────────
 
     def _show_stop_overlay(self):
         """Small always-on-top overlay shown while automation is running.
@@ -2939,7 +3332,19 @@ class TravelportGUI:
         self.progress.configure(mode="determinate", value=100)
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        self._set_step(len(self.STEPS) + 1)  # +1 so last step shows [x] not bold
+        self._set_step(len(self.STEPS) + 1)  # +1 so last step shows a tick, not bold
+
+        finished_ok = (
+            bool(result_path)
+            and os.path.exists(result_path)
+            and "_partial" not in os.path.basename(result_path)
+            and not self.stop_event.is_set()
+        )
+        if self._last_run is not None and finished_ok:
+            self._last_run["finished"] = True
+        self._run_overrides = {}
+        self._save_preferences()
+        self.root.after(200, self._refresh_followup_buttons)
 
         if result_path and os.path.exists(result_path):
             self._last_report = result_path
@@ -2947,12 +3352,12 @@ class TravelportGUI:
             is_partial = "_partial" in os.path.basename(result_path)
             if is_partial:
                 self.status_label.configure(
-                    text=f"âš  Partial report saved - {os.path.basename(result_path)}",
+                    text=f"⚠ Partial report saved - {os.path.basename(result_path)}",
                     fg="#e67e22",
                 )
             else:
                 self.status_label.configure(
-                    text=f"[x]  {os.path.basename(result_path)}", fg="#1d8a63"
+                    text=f"✓  {os.path.basename(result_path)}", fg="#1d8a63"
                 )
         elif self.stop_event.is_set():
             self.status_label.configure(
@@ -2962,7 +3367,7 @@ class TravelportGUI:
             self.status_label.configure(text="Finished", fg="#555")
 
 
-# â”€â”€ Entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 
 def launch():

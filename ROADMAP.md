@@ -283,6 +283,23 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **GUI enhancements (2026-10-07):**
+  - Options: one choice for Fares + taxes / Fares only / Taxes only (two checkboxes
+    could both be ticked); One direction only; Add FTAX sheet; Pick… checklists for
+    routes and airlines (BS, BG first; routes ordered by domestic airport); typo
+    check under the filters and before Start.
+  - Re-run missing: reads the newest fare report's Re-run Needed sheet and runs
+    exactly those airline+route pairs (new `--pairs`). Resume last run: the GUI
+    remembers the last run's settings + checkpoint session and offers Resume when it
+    stopped early.
+  - Progress table: Taxes (captured / re-run / no fares) and Ticket total columns,
+    re-run rows amber, counter shows re-runs. Bottom bar: Start/Stop/Open Report,
+    Re-run missing, Resume, Tools menu (Time calculator, open reports/logs folders,
+    Recalibrate, Reset D-click), Feedback, Sign In. Status moved beside the steps.
+  - Fixed mojibake throughout gui.py (status icons ⟳✓✗⚠, "▼ Hide technical log",
+    log-matching patterns that could never match), the collapsed log still showing
+    lines, and keyring debug noise in the GUI log.
+
 - **Live retry fixes (2026-10-07):**
   - Never use PageUp/PageDown to scroll: in Smartpoint they send MU/MD ("CHECK
     ACTION CODE" on FS) and replace the screen. `_scroll_terminal` uses the mouse

@@ -1,6 +1,6 @@
 """route_filters.py - Route/airline filters for --route and --airline."""
 
-from exceptions import ConfigurationError
+from exceptions import ConfigurationError, ValidationError
 from validators import validate_airline_code, validate_route
 
 
@@ -77,6 +77,62 @@ def _resolve_explicit_airline_codes(
     raise ConfigurationError(
         "No airlines available to generate explicit route commands. Add airline_names or provide --airline."
     )
+
+
+def parse_route_pairs(text: str | None) -> list[tuple[str, str, str]]:
+    """Parse "BS:DAC-BKK,FZ:DXB-DAC" into [(airline, origin, dest), ...].
+
+    Used to re-run exact airline+route pairs (the report's Re-run Needed
+    list) instead of every route x every airline.
+    """
+    pairs: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in str(text or "").split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        airline_part, sep, route_part = raw.partition(":")
+        if not sep:
+            raise ValidationError(
+                "pairs", raw, "expected AIRLINE:ORIGIN-DEST, e.g. BS:DAC-BKK"
+            )
+        airline = validate_airline_code(airline_part.strip())
+        origin, dest = validate_route(route_part.strip())
+        pair = (airline, origin, dest)
+        if pair not in seen:
+            seen.add(pair)
+            pairs.append(pair)
+    return pairs
+
+
+def select_pair_commands(
+    commands: list[dict], pairs: list[tuple[str, str, str]]
+) -> list[dict]:
+    """Configured commands matching each exact pair, in pair order; a pair
+    missing from commands.txt gets a generated FD command."""
+    by_key = {
+        (
+            str(c.get("airline") or "").upper(),
+            str(c.get("origin") or "").upper(),
+            str(c.get("destination") or "").upper(),
+        ): c
+        for c in commands
+    }
+    selected: list[dict] = []
+    for airline, origin, dest in pairs:
+        selected.append(
+            by_key.get(
+                (airline, origin, dest),
+                {
+                    "origin": origin,
+                    "destination": dest,
+                    "airline": airline,
+                    "route": f"{origin}-{dest}",
+                    "command": f"FD{origin}{dest}/{airline}",
+                },
+            )
+        )
+    return selected
 
 
 def _build_explicit_route_commands(
