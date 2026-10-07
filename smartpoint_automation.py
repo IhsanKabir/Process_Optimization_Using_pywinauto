@@ -2508,7 +2508,8 @@ class SmartpointAutomation:
         img, layout, rect = captured
 
         visible = _screen.visible_line_count(layout, img.height)
-        if _screen.text_line_count(text) <= visible:
+        all_visible = _screen.text_line_count(text) <= visible
+        if all_visible:
             viewport = "top"  # everything fits: the terminal cannot be scrolled
         else:
             viewport = "top" if book_lines[ordinal] < visible - 1 else "bottom"
@@ -2524,7 +2525,7 @@ class SmartpointAutomation:
 
         rows = _screen.find_option_rows(img, layout)
         row = _screen.select_option_row(
-            layout, rows, text, book_lines, ordinal, viewport
+            rows, len(book_lines), ordinal, viewport, all_visible=all_visible
         )
         if row is None:
             self.logger.debug(

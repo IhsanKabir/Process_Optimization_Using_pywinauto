@@ -1033,8 +1033,13 @@ def generate_report(
     changes: Optional[dict] = None,
     config: Optional[dict] = None,
     only_currency: bool = False,
+    taxes_expected: bool = True,
 ) -> str:
-    """Generate Excel fare report grouped by international destination."""
+    """Generate Excel fare report grouped by international destination.
+
+    ``taxes_expected`` is False for runs that never fetch FS tax details
+    (--only-fd, quick paste); missing taxes are then not flagged for re-run.
+    """
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -1099,7 +1104,11 @@ def generate_report(
         _auto_fit_columns(ws)
 
         # ── Re-run list: routes with fares but no tax breakdown ──
-        missing_taxes = _collect_missing_tax_routes(all_route_data, domestic_airports)
+        missing_taxes = (
+            _collect_missing_tax_routes(all_route_data, domestic_airports)
+            if taxes_expected
+            else []
+        )
         if missing_taxes:
             ws_rerun = wb.create_sheet(RERUN_SHEET)
             _write_rerun_sheet(ws_rerun, missing_taxes, airline_names)
@@ -1116,6 +1125,7 @@ def generate_report(
             rbd_sort_order,
             domestic_airports,
             changes,
+            flag_missing_taxes=taxes_expected,
         )
         _auto_fit_columns(ws_ind)
 
@@ -1707,6 +1717,7 @@ def _write_individual_tables_sheet(
     rbd_sort_order,
     domestic_airports,
     changes,
+    flag_missing_taxes=True,
 ):
     """
     Write per-airline tables placed side-by-side horizontally.
@@ -1862,7 +1873,9 @@ def _write_individual_tables_sheet(
 
             # Table title
             missing_note = ""
-            if not has_tax_data and _route_has_fares(route_info):
+            if not flag_missing_taxes:
+                pass
+            elif not has_tax_data and _route_has_fares(route_info):
                 missing_note = "  ⚠ TAXES MISSING – re-run"
             elif has_tax_data and not has_rt_gross:
                 missing_note = "  ⚠ RT gross omitted – return-leg taxes missing"

@@ -169,35 +169,35 @@ def text_line_count(text: str) -> int:
 
 
 def select_option_row(
-    layout: TerminalLayout,
     rows: list[OptionRow],
-    text: str,
-    book_lines: list[int],
+    total_options: int,
     ordinal: int,
     viewport: str,
+    all_visible: bool = False,
 ) -> Optional[OptionRow]:
     """Pick pricing option ``ordinal``'s action row from the visible ``rows``.
 
-    ``book_lines`` are the copied-text line indices of every option's
-    «BOOK»/+TQ row, in order. ``viewport`` says where the terminal is scrolled:
+    Rows are counted, not matched by Y: a Y prediction needs an anchor line,
+    and anything drawn above the first text line (tab strip, icons) or an
+    unknown scroll position shifts it. ``viewport`` says which end of the
+    output is on screen:
 
-    * ``"top"``: the first text line is the first rendered line, so the row is
-      found at its predicted Y on the measured grid.
-    * ``"bottom"``: the last option row is the last visible one, so the row is
-      counted back from the end. Evenly spaced options make any Y-based guess
-      ambiguous once the terminal is scrolled, which is why the caller scrolls
-      to a known end instead of matching on Y.
+    * ``"top"``: visible rows are options 1, 2, 3... in order.
+    * ``"bottom"``: the last visible row is the last option; count back.
+
+    With ``all_visible`` (the output fits the terminal) the row count must equal
+    ``total_options``; a mismatch means a row was missed or misread, so nothing
+    is returned rather than risk clicking another option.
     """
-    if not rows or not 0 <= ordinal < len(book_lines):
+    if not rows or not 0 <= ordinal < total_options or len(rows) > total_options:
+        return None
+    if all_visible and len(rows) != total_options:
         return None
     if viewport == "bottom":
-        index = len(rows) - (len(book_lines) - ordinal)
-        return rows[index] if 0 <= index < len(rows) else None
-    target_y = line_center_y(layout, text, book_lines[ordinal])
-    if target_y is None or layout.line_pitch is None:
-        return None
-    best = min(rows, key=lambda row: abs(row.y - target_y))
-    return best if abs(best.y - target_y) <= layout.line_pitch / 2 else None
+        index = len(rows) - (total_options - ordinal)
+    else:
+        index = ordinal
+    return rows[index] if 0 <= index < len(rows) else None
 
 
 # ── internals ───────────────────────────────────────────────────────────────
