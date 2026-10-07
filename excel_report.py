@@ -10,6 +10,7 @@ Layout per section:
 """
 
 import os
+from copy import copy
 from collections import OrderedDict
 from datetime import datetime
 from typing import Optional
@@ -43,6 +44,16 @@ NEW_FILL = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="soli
 SOLD_OUT_FILL = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
 
 MAIN_SHEET = "Side-by-Side Comparison"
+RERUN_SHEET = "Re-run Needed"
+
+# Airlines shown first on every sheet, in this order (US-Bangla, then Biman);
+# all others follow alphabetically.
+AIRLINE_PRIORITY = ("BS", "BG")
+
+MISSING_TAX_FILL = PatternFill(
+    start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"
+)
+MISSING_TAX_FONT = Font(name="Calibri", bold=True, size=11, color="9C0006")
 
 UPPER_CABIN_PRIORITY = {
     "FIRST": 0,
@@ -1066,7 +1077,7 @@ def generate_report(
 
         freeze_row = row  # freeze here
 
-        for section_key in sorted(sections.keys()):
+        for section_key in sorted(sections, key=_section_sort_key):
             entries = sections[section_key]
             intl_code, direction = section_key
             row, locs = _write_section(
@@ -1086,6 +1097,13 @@ def generate_report(
 
         ws.freeze_panes = f"A{freeze_row}"
         _auto_fit_columns(ws)
+
+        # ── Re-run list: routes with fares but no tax breakdown ──
+        missing_taxes = _collect_missing_tax_routes(all_route_data, domestic_airports)
+        if missing_taxes:
+            ws_rerun = wb.create_sheet(RERUN_SHEET)
+            _write_rerun_sheet(ws_rerun, missing_taxes, airline_names)
+            _auto_fit_columns(ws_rerun)
 
         # ── Individual Tables sheet (per-airline, side-by-side) ──
         ws_ind = wb.create_sheet("Individual Tables")
@@ -1185,6 +1203,74 @@ def _group_by_international(all_route_data, domestic_airports):
     return sections
 
 
+def _section_sort_key(section_key):
+    """Order sections by destination, outbound (DAC-BKK) before inbound
+    (BKK-DAC): the domestic hub is the origin of the outbound leg."""
+    intl, direction = section_key
+    return (intl, 0 if direction == "outbound" else 1)
+
+
+def _airline_sort_key(airline):
+    """AIRLINE_PRIORITY first (BS, BG), then the rest alphabetically."""
+    if airline in AIRLINE_PRIORITY:
+        return (AIRLINE_PRIORITY.index(airline), "")
+    return (len(AIRLINE_PRIORITY), airline)
+
+
+def _entry_sort_key(dom_order):
+    """Sort key for section entries (airline, domestic, route_key, info)."""
+    return lambda entry: (dom_order.get(entry[1], 999), _airline_sort_key(entry[0]))
+
+
+def _route_fs_taxes(route_info):
+    return route_info.get("fs_taxes", {}) or {} if isinstance(route_info, dict) else {}
+
+
+def _route_has_fares(route_info):
+    if not isinstance(route_info, dict):
+        return False
+    rbd_data = route_info.get("rbd_data", route_info)
+    return isinstance(rbd_data, dict) and any(
+        isinstance(v, dict) and (v.get("ow_fare") or v.get("rt_fare"))
+        for v in rbd_data.values()
+    )
+
+
+def _return_leg_fs_taxes(all_route_data, route_key):
+    """fs_taxes of the opposite direction ("BS_DAC-BKK" -> "BS_BKK-DAC")."""
+    parts = route_key.split("_", 1)
+    if len(parts) != 2 or "-" not in parts[1]:
+        return {}
+    origin, dest = parts[1].split("-", 1)
+    return _route_fs_taxes(all_route_data.get(f"{parts[0]}_{dest}-{origin}", {}))
+
+
+def _collect_missing_tax_routes(all_route_data, domestic_airports):
+    """Routes that have fares but no captured tax breakdown, in report order.
+
+    Without the breakdown the YQ/YR/Q charges and gross fares cannot be
+    computed, so these routes need an extraction re-run.
+    """
+    sections = _group_by_international(all_route_data, domestic_airports)
+    dom_order = {code: i for i, code in enumerate(domestic_airports)}
+    missing = []
+    for section_key in sorted(sections, key=_section_sort_key):
+        for airline, _domestic, route_key, route_info in sorted(
+            sections[section_key], key=_entry_sort_key(dom_order)
+        ):
+            if _route_has_fares(route_info) and not _has_tax_data_for_individual_table(
+                _route_fs_taxes(route_info)
+            ):
+                missing.append(
+                    {
+                        "airline": airline,
+                        "route": route_key.split("_", 1)[1],
+                        "route_key": route_key,
+                    }
+                )
+    return missing
+
+
 # ── Section writer ──────────────────────────────────────
 def _write_section(
     ws,
@@ -1217,7 +1303,7 @@ def _write_section(
 
     # Sort entries: by domestic airport order, then airline
     dom_order = {code: i for i, code in enumerate(domestic_airports)}
-    entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+    entries.sort(key=_entry_sort_key(dom_order))
 
     # Build column list: each entry = (airline, domestic, route_key, info)
     cols_needed = 1 + len(entries) * 2
@@ -1476,6 +1562,51 @@ def _write_changes_summary(ws, changes, airline_names, city_names, cell_location
         )
 
 
+def _write_rerun_sheet(ws, missing, airline_names):
+    """List routes whose taxes were not captured, with the GUI filter values
+    to re-run them."""
+    ws.cell(row=1, column=1, value="Re-run Needed: taxes missing").font = Font(
+        name="Calibri", bold=True, size=16, color="9C0006"
+    )
+    ws.cell(
+        row=2,
+        column=1,
+        value=(
+            "These routes have fares but no tax breakdown, so YQ/YR/Q and gross "
+            "fares are left out of the report. Re-run each with the Route and "
+            "Airline filters shown."
+        ),
+    ).font = Font(name="Calibri", size=10, italic=True)
+
+    headers = [
+        "Airline",
+        "Route",
+        "Airline Name",
+        "Missing",
+        "Route filter",
+        "Airline filter",
+    ]
+    for col, text in enumerate(headers, 1):
+        _styled_cell(ws, 4, col, text, HEADER_FONT, HEADER_FILL)
+
+    for row, item in enumerate(missing, 5):
+        values = [
+            item["airline"],
+            item["route"],
+            airline_names.get(item["airline"], item["airline"]),
+            "Tax breakdown (YQ/YR/Q, gross)",
+            item["route"],
+            item["airline"],
+        ]
+        for col, value in enumerate(values, 1):
+            cell = ws.cell(row=row, column=col, value=value)
+            cell.border = THIN_BORDER
+            if col <= 2:
+                cell.font = MISSING_TAX_FONT
+                cell.fill = MISSING_TAX_FILL
+    ws.freeze_panes = "A5"
+
+
 def _auto_fit_columns(ws, min_width=10, max_width=30):
     col_widths = [min_width] * (ws.max_column or 0)
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, values_only=False):
@@ -1604,17 +1735,18 @@ def _write_individual_tables_sheet(
     ).font = Font(name="Calibri", size=10, italic=True)
     current_row += 2
 
-    FD_TABLE_WIDTH = 3  # RBD, OW, RT
-    TAX_TABLE_WIDTH = 7  # RBD, OW, WithYQ, Gross, RT, WithYQ, Gross
+    # RBD, OW, RT; +3 (OW WithYQ, OW Gross, RT WithYQ) when this leg's taxes
+    # were captured; +1 (RT Gross) when the return leg's taxes were too.
+    FD_TABLE_WIDTH = 3
     GAP = 1  # 1 empty column between tables
 
-    for section_key in sorted(sections.keys()):
+    for section_key in sorted(sections, key=_section_sort_key):
         entries = sections[section_key]
         intl_code, direction = section_key
 
         # Sort entries by domestic order then airline
         dom_order = {code: i for i, code in enumerate(domestic_airports)}
-        entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+        entries.sort(key=_entry_sort_key(dom_order))
 
         intl_name = city_names.get(intl_code, intl_code)
         arrow = "→" if direction == "outbound" else "←"
@@ -1625,16 +1757,18 @@ def _write_individual_tables_sheet(
             name="Calibri", bold=True, size=14
         )
         ws.cell(row=current_row, column=1).fill = ROUTE_FILL
-        table_widths = []
+        # (has this leg's taxes, has both legs' taxes for RT gross)
+        table_specs = []
         for _airline, _domestic, _route_key, route_info in entries:
-            fs_taxes = (
-                route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
+            has_ow_tax = _has_tax_data_for_individual_table(_route_fs_taxes(route_info))
+            has_rt_gross = has_ow_tax and _has_tax_data_for_individual_table(
+                _return_leg_fs_taxes(all_route_data, _route_key)
             )
-            table_widths.append(
-                TAX_TABLE_WIDTH
-                if _has_tax_data_for_individual_table(fs_taxes)
-                else FD_TABLE_WIDTH
-            )
+            table_specs.append((has_ow_tax, has_rt_gross))
+        table_widths = [
+            FD_TABLE_WIDTH + (3 if has_ow else 0) + (1 if has_rt else 0)
+            for has_ow, has_rt in table_specs
+        ]
 
         total_cols = sum(table_widths) + (GAP * max(len(entries) - 1, 0))
         if total_cols > 1:
@@ -1651,9 +1785,14 @@ def _write_individual_tables_sheet(
         table_start_row = current_row
 
         col_offset = 1
-        for (airline, domestic, route_key, route_info), this_table_width in zip(
-            entries, table_widths
-        ):
+        for (
+            (airline, domestic, route_key, route_info),
+            this_table_width,
+            (
+                has_tax_data,
+                has_rt_gross,
+            ),
+        ) in zip(entries, table_widths, table_specs):
             fs_taxes = (
                 route_info.get("fs_taxes", {}) if isinstance(route_info, dict) else {}
             )
@@ -1670,7 +1809,6 @@ def _write_individual_tables_sheet(
             # all three charges in it (Q in BDT for the comparison).
             yq_total = yq_charge + yr_charge + q_charge_bdt
             total_tax_val = int(fs_taxes.get("total_taxes", 0))
-            has_tax_data = this_table_width == TAX_TABLE_WIDTH
 
             al_name = airline_names.get(airline, airline)
             dom_name = city_names.get(domestic, domestic)
@@ -1723,8 +1861,21 @@ def _write_individual_tables_sheet(
             row = table_start_row
 
             # Table title
-            title_cell = ws.cell(row=row, column=col_offset, value=table_title)
-            title_cell.font = Font(name="Calibri", bold=True, size=11)
+            missing_note = ""
+            if not has_tax_data and _route_has_fares(route_info):
+                missing_note = "  ⚠ TAXES MISSING – re-run"
+            elif has_tax_data and not has_rt_gross:
+                missing_note = "  ⚠ RT gross omitted – return-leg taxes missing"
+            title_cell = ws.cell(
+                row=row, column=col_offset, value=table_title + missing_note
+            )
+            title_cell.font = (
+                MISSING_TAX_FONT
+                if missing_note
+                else Font(name="Calibri", bold=True, size=11)
+            )
+            if missing_note:
+                title_cell.fill = MISSING_TAX_FILL
             ws.merge_cells(
                 start_row=row,
                 start_column=col_offset,
@@ -1836,6 +1987,7 @@ def _write_individual_tables_sheet(
                 )
                 current_col += 1
 
+            if has_rt_gross:
                 _styled_cell(
                     ws,
                     row,
@@ -1936,6 +2088,7 @@ def _write_individual_tables_sheet(
                     _write_fare_cell(ws, row, current_data_col, rt_yq_val, None)
                     current_data_col += 1
 
+                if has_rt_gross:
                     if rt and exchange_rate:
                         if gross_currency == "BDT":
                             rt_gross_val = (rt * exchange_rate) + tax_rt
@@ -1970,6 +2123,12 @@ TAX_TOTAL_FONT = Font(name="Calibri", bold=True, size=11)
 TAX_CHARGE_FILL = PatternFill(
     start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"
 )
+
+
+def _write_original_cell(ws, source_cell, value):
+    """Write ``value`` in the column right of ``source_cell`` with its style."""
+    cell = ws.cell(row=source_cell.row, column=source_cell.column + 1, value=value)
+    cell._style = copy(source_cell._style)
 
 
 def _write_tax_breakdown_sheet(
@@ -2007,16 +2166,16 @@ def _write_tax_breakdown_sheet(
     ).font = Font(name="Calibri", size=10, italic=True)
     current_row += 2
 
-    TABLE_WIDTH = 2  # Tax Code + Amount
+    TABLE_WIDTH = 3  # Tax Code + Amount (equivalent) + Original (base currency)
     GAP = 1  # 1 empty column between tables
 
     dom_order = {code: i for i, code in enumerate(domestic_airports)}
 
-    for section_key in sorted(sections.keys()):
+    for section_key in sorted(sections, key=_section_sort_key):
         entries = sections[section_key]
         intl_code, direction = section_key
 
-        entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+        entries.sort(key=_entry_sort_key(dom_order))
 
         # Filter to entries that actually have tax data
         tax_entries = []
@@ -2096,6 +2255,12 @@ def _write_tax_breakdown_sheet(
             exch_rate = fs_taxes.get("exchange_rate", 0)
             roe = fs_taxes.get("roe", 1.0) or 1.0
 
+            def _original(value, _rate=exch_rate, _same=(base_cur == equ_cur)):
+                """Equivalent-currency amount back in the fare's base currency."""
+                if _same:
+                    return value
+                return round(value / _rate, 2) if _rate else None
+
             info_font = Font(name="Calibri", size=9, italic=True)
             ws.cell(
                 row=row, column=col_offset, value=f"Base: {base_cur or 'N/A'}"
@@ -2116,6 +2281,15 @@ def _write_tax_breakdown_sheet(
                 row,
                 col_offset + 1,
                 f"Amount ({equ_cur})",
+                TAX_HEADER_FONT,
+                TAX_HEADER_FILL,
+                alignment=Alignment(horizontal="right"),
+            )
+            _styled_cell(
+                ws,
+                row,
+                col_offset + 2,
+                f"Original ({base_cur or 'N/A'})",
                 TAX_HEADER_FONT,
                 TAX_HEADER_FILL,
                 alignment=Alignment(horizontal="right"),
@@ -2148,6 +2322,7 @@ def _write_tax_breakdown_sheet(
                     c2.border = THIN_BORDER
                     c2.number_format = "#,##0.00"
                     c2.alignment = Alignment(horizontal="right")
+                    _write_original_cell(ws, c2, _original(c2.value))
                     row += 1
 
             # Separator: Charges subtotal
@@ -2161,6 +2336,7 @@ def _write_tax_breakdown_sheet(
                 c2.border = THIN_BORDER
                 c2.number_format = "#,##0.00"
                 c2.alignment = Alignment(horizontal="right")
+                _write_original_cell(ws, c2, _original(c2.value))
                 row += 1
 
             # Tax codes section
@@ -2183,6 +2359,7 @@ def _write_tax_breakdown_sheet(
                     c2.border = THIN_BORDER
                     c2.number_format = "#,##0.00"
                     c2.alignment = Alignment(horizontal="right")
+                    _write_original_cell(ws, c2, _original(c2.value))
                     row += 1
 
             # Totals — raw BDT values as scraped, no conversion.
@@ -2204,6 +2381,7 @@ def _write_tax_breakdown_sheet(
                 c2.border = THIN_BORDER
                 c2.number_format = "#,##0.00"
                 c2.alignment = Alignment(horizontal="right")
+                _write_original_cell(ws, c2, _original(c2.value))
                 row += 1
 
             table_height = row - table_start_row
@@ -2264,11 +2442,11 @@ def _write_yq_charges_sheet(
 
     dom_order = {code: i for i, code in enumerate(domestic_airports)}
 
-    for section_key in sorted(sections.keys()):
+    for section_key in sorted(sections, key=_section_sort_key):
         entries = sections[section_key]
         intl_code, direction = section_key
 
-        entries.sort(key=lambda e: (dom_order.get(e[1], 999), e[0]))
+        entries.sort(key=_entry_sort_key(dom_order))
 
         yq_entries = []
         for airline, domestic, route_key, route_info in entries:

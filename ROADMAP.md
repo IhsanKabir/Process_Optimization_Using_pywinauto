@@ -283,6 +283,19 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Fare report ordering, missing-tax flags, original currency (2026-10-07):**
+  - Sections list DAC-outbound before inbound (DAC-BKK, then BKK-DAC) on every
+    sheet (`_section_sort_key`); airlines follow `AIRLINE_PRIORITY = ("BS", "BG")`
+    then alphabetical (`_airline_sort_key`).
+  - Individual Tables: a route with fares but no tax breakdown keeps only
+    RBD/OW/RT and gets a red "TAXES MISSING – re-run" title. RT/Gross needs both
+    legs' taxes; previously a missing return leg silently understated it, now
+    the column is omitted and the title says so.
+  - New "Re-run Needed" sheet (2nd tab, only when needed) lists those routes with
+    the Route/Airline filter values (`_collect_missing_tax_routes`).
+  - Tax Breakdowns: "Original ({base})" column beside "Amount (BDT)" (= BDT ÷
+    exchange rate; same value when base is BDT). The BDT column is unchanged.
+
 - **Screen-located clicks (2026-10-06):**
   - **Why:** clicks predicted Y from a fixed 20 px line height + calibration. A
     user screenshot on a 1920x1080 laptop showed the terminal renders at 14 px

@@ -333,7 +333,13 @@ def test_write_individual_tables_sheet_keeps_tax_columns_when_tax_data_present()
                 "J": {"ow_fare": 300, "rt_fare": 500},
                 "Y": {"ow_fare": 200, "rt_fare": 350},
             },
-        }
+        },
+        # Return leg with taxes: RT/Gross needs both legs' taxes.
+        "BG_MLE-DAC": {
+            "currency": "USD",
+            "fs_taxes": {"total_taxes": 4000, "exchange_rate": 120},
+            "rbd_data": {"Y": {"ow_fare": 210, "rt_fare": 360}},
+        },
     }
     sections = {
         ("MLE", "outbound"): [("BG", "DAC", "BG_DAC-MLE", all_route_data["BG_DAC-MLE"])]
@@ -386,7 +392,13 @@ def test_individual_tables_sheet_uses_base_currency_for_non_dac_origin():
             "rbd_data": {
                 "Q": {"ow_fare": 770, "rt_fare": 1400},
             },
-        }
+        },
+        # Return leg with taxes: RT/Gross needs both legs' taxes.
+        "CZ_DAC-CAN": {
+            "currency": "CNY",
+            "fs_taxes": {"total_taxes": 8000.0, "exchange_rate": 17.998},
+            "rbd_data": {"Q": {"ow_fare": 760, "rt_fare": 1390}},
+        },
     }
     sections = {
         ("CAN", "outbound"): [("CZ", "DAC", "CZ_CAN-DAC", all_route_data["CZ_CAN-DAC"])]
