@@ -621,3 +621,16 @@ def test_yq_charges_sheet_header_uses_base_currency():
     assert all(
         h == "Amount (CNY)" for h in headers
     ), f"YQ-YR-Q header must say 'Amount (CNY)' for CNY-base fare, got {headers!r}"
+
+
+def test_fare_cell_keeps_change_marker_in_number_format():
+    from excel_report import _write_fare_cell
+
+    ws = Workbook().active
+    _write_fare_cell(ws, 1, 1, 1800.4, "increased")
+    _write_fare_cell(ws, 1, 2, 950, "sold_out")
+    _write_fare_cell(ws, 1, 3, None, "sold_out")
+
+    assert ws.cell(1, 1).value == 1800 and ws.cell(1, 1).number_format == '#,##0" ↑"'
+    assert ws.cell(1, 2).value == 950 and "SOLD OUT" in ws.cell(1, 2).number_format
+    assert ws.cell(1, 3).value == "SOLD OUT"

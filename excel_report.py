@@ -1569,36 +1569,50 @@ def _fmt_fare(fare):
         return str(fare)
 
 
-def _write_fare_cell(ws, row, col, fare, change_type):
-    """
-    Write fare value with change indicator using plain text and font styling.
+# Change markers live in the number format so the cell stays a real number
+# (summable in Excel) while still showing "1,800 ↑" etc.
+_CHANGE_MARKERS = {
+    "sold_out": ("SOLD OUT", SOLD_OUT_FONT, SOLD_OUT_FILL),
+    "new": ("NEW", NEW_FONT, NEW_FILL),
+    "increased": ("↑", INCREASE_FONT, INCREASE_FILL),
+    "decreased": ("↓", DECREASE_FONT, DECREASE_FILL),
+}
 
-    Uses simple text concatenation instead of CellRichText to avoid Excel corruption issues.
-    """
+
+def _fare_number(fare):
+    """Rounded numeric fare, or None when the value is not a number."""
+    if fare is None or fare == "":
+        return None
+    try:
+        return int(round(float(fare)))
+    except (ValueError, TypeError):
+        return None
+
+
+def _write_fare_cell(ws, row, col, fare, change_type):
+    """Write a fare as a number with a thousands format; a change marker
+    (↑ ↓ NEW SOLD OUT) is shown through the number format and cell style."""
     cell = ws.cell(row=row, column=col)
     cell.border = THIN_BORDER
     cell.alignment = Alignment(horizontal="right")
 
-    fare_str = _fmt_fare(fare)
-
-    if change_type == "sold_out":
-        cell.value = f"{fare_str} SOLD OUT"
-        cell.font = SOLD_OUT_FONT
-        cell.fill = SOLD_OUT_FILL
-    elif change_type == "new":
-        cell.value = f"{fare_str} NEW"
-        cell.font = NEW_FONT
-        cell.fill = NEW_FILL
-    elif change_type == "increased" and fare is not None:
-        cell.value = f"{fare_str} ↑"
-        cell.font = INCREASE_FONT
-        cell.fill = INCREASE_FILL
-    elif change_type == "decreased" and fare is not None:
-        cell.value = f"{fare_str} ↓"
-        cell.font = DECREASE_FONT
-        cell.fill = DECREASE_FILL
+    number = _fare_number(fare)
+    marker = _CHANGE_MARKERS.get(change_type)
+    if marker and change_type in ("increased", "decreased") and number is None:
+        marker = None
+    if number is None:
+        # Nothing numeric to show: keep the old text behaviour.
+        if marker:
+            cell.value = marker[0]
+        elif fare not in (None, ""):
+            cell.value = str(fare)
+        else:
+            cell.value = None
     else:
-        cell.value = _fmt_fare(fare) if fare is not None else None
+        cell.value = number
+        cell.number_format = f'#,##0" {marker[0]}"' if marker else "#,##0"
+    if marker:
+        cell.font, cell.fill = marker[1], marker[2]
 
 
 def _styled_cell(ws, row, col, value, font, fill, alignment=None):
