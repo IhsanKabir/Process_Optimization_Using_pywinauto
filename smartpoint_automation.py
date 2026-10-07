@@ -2512,18 +2512,21 @@ class SmartpointAutomation:
         return int(round(rect.top + y))
 
     # PageUp/PageDown presses that reach either end of any FS result.
-    _SCROLL_TO_END_PRESSES = 12
+    # Mouse-wheel notches that reach either end of any FS result (~3 lines
+    # per notch).
+    _SCROLL_TO_END_NOTCHES = 60
 
     def _scroll_terminal(self, direction: str) -> None:
-        """Scroll the terminal to its "top" or "bottom" with paging keys."""
-        safe_x, safe_y = self._get_terminal_focus_point()
-        self._safe_focus_click(safe_x, safe_y)
-        time.sleep(constants.COPY_DELAY)
-        key = "pageup" if direction == "top" else "pagedown"
-        pyautogui.press(
-            key,
-            presses=self._SCROLL_TO_END_PRESSES,
-            interval=constants.KEYBOARD_INTERVAL,
+        """Scroll the terminal view to its "top" or "bottom" with the mouse wheel.
+
+        Never use PageUp/PageDown here: in Smartpoint they send the MU/MD
+        commands (paging the GDS response, "CHECK ACTION CODE" on FS), which
+        replaces the screen being clicked.
+        """
+        x, y = self._get_terminal_focus_point()
+        notches = self._SCROLL_TO_END_NOTCHES
+        _pw_mouse.scroll(
+            coords=(x, y), wheel_dist=notches if direction == "top" else -notches
         )
         time.sleep(constants.PAGEDOWN_SCROLL_DELAY)
 

@@ -283,6 +283,15 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **Live retry fixes (2026-10-07):**
+  - Never use PageUp/PageDown to scroll: in Smartpoint they send MU/MD ("CHECK
+    ACTION CODE" on FS) and replace the screen. `_scroll_terminal` uses the mouse
+    wheel. Verified live on FZ DAC-DXB option 7 and BS DAC-BKK.
+  - `looks_like_fs_tax_breakdown` no longer accepts bare tax codes: aircraft types
+    (AT7, DH8) on a plain option list parsed as taxes and passed as "extracted".
+  - CLI ESC listener caught the app's own Escape presses (copy deselect) and
+    stopped CLI runs after the first copy; now ESC must be held ~0.3 s.
+
 - **Fare formulas and no figures from partial data (2026-10-07):**
   - Formulas (user rule; Q not added, YQ/YR doubled for RT):
     With YQ/OW = OW + (YQ+YR)/R; OW gross = OW + T/R (DAC origin: OW·R + T);
