@@ -924,9 +924,9 @@ def test_copy_terminal_text_uses_heavy_fallback_after_two_empty_attempts(monkeyp
     assert automation._copy_terminal_text() == "CAPTURED"
     assert sent_shortcuts == ["copy", "copy", "copy"]
     assert len(focus_calls) == 2
-    # Two focus clicks for the copy attempts, plus one that clears the
-    # Ctrl+A selection afterwards.
-    assert len(clicks) == 3
+    # Only the focus clicks for the copy attempts: no click after copying,
+    # since a click moves Smartpoint's typing cursor into the old output.
+    assert len(clicks) == 2
 
 
 def test_copy_terminal_text_converts_keyboard_interrupt_to_runtime_error(monkeypatch):
