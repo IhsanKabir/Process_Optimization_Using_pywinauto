@@ -497,7 +497,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.33"
+    VERSION = "v1.5.34"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -1464,12 +1464,16 @@ class TravelportGUI:
         if not messagebox.askyesno(
             "Re-run missing",
             f"Re-run {len(pairs)} route(s) from {os.path.basename(report)}?\n\n"
-            f"{listing}",
+            f"{listing}\n\n"
+            "The results are written into that report (close it in Excel "
+            "first); the previous version is kept in reports\\backup.",
         ):
             return
         self.mode_var.set("fare")
         self.fare_scope_var.set("both")
-        self._start(overrides={"pairs": _gs.pairs_to_text(pairs)})
+        self._start(
+            overrides={"pairs": _gs.pairs_to_text(pairs), "update_report": report}
+        )
 
     def _resume_last_run(self):
         resumable = _gs.resumable_run(self._last_run, self._data_dir("checkpoints"))
@@ -3201,6 +3205,7 @@ class TravelportGUI:
             ),
             airline=None if (is_tax or is_baggage or pairs) else airline_filter,
             pairs=pairs,
+            update_report=overrides.get("update_report"),
             limit=0 if pairs else limit,
             only_fd=scope == "fd",
             only_yq=scope == "yq",

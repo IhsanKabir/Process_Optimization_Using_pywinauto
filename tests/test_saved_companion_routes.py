@@ -37,3 +37,32 @@ def test_skips_stale_saved_screens_and_keeps_run_data(tmp_path):
 
     assert added == []
     assert raw == {"FZ_DXB-DAC": "this run"}
+
+
+def test_report_routes_are_loaded_whatever_their_age(tmp_path):
+    _write(tmp_path, "BS_DAC-BKK.txt", "FD bs", age_hours=30)
+    _write(tmp_path, "BS_DAC-BKK_FS.txt", "FS bs", age_hours=30)
+    raw, fs = {"FZ_DAC-DXB": "this run"}, {}
+
+    added = main._add_saved_companion_routes(
+        raw, fs, report_routes=["BS_DAC-BKK", "FZ_DAC-DXB"], raw_dir=str(tmp_path)
+    )
+
+    assert added == ["BS_DAC-BKK"]
+    assert raw["BS_DAC-BKK"] == "FD bs" and fs["BS_DAC-BKK"] == "FS bs"
+    assert raw["FZ_DAC-DXB"] == "this run"
+
+
+def test_skips_tax_screen_older_than_its_fare_screen(tmp_path):
+    # An FS screen left over from an earlier run must not fill in taxes the
+    # later run failed to capture.
+    _write(tmp_path, "BS_DAC-BKK_FS.txt", "old FS", age_hours=5)
+    _write(tmp_path, "BS_DAC-BKK.txt", "FD bs", age_hours=1)
+    raw, fs = {}, {}
+
+    added = main._add_saved_companion_routes(
+        raw, fs, report_routes=["BS_DAC-BKK"], raw_dir=str(tmp_path)
+    )
+
+    assert added == ["BS_DAC-BKK"]
+    assert "BS_DAC-BKK" not in fs
