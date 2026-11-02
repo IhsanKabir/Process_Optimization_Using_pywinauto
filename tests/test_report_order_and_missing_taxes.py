@@ -234,6 +234,17 @@ def test_collect_missing_lists_reason_and_unextracted_return_route():
     assert [m["route"] for m in one_way] == ["DAC-BKK", "BKK-DAC"]
 
 
+def test_return_route_without_fares_is_not_listed_for_rerun():
+    # BS DOH-ZYL: the run asked Smartpoint and it showed no fares.
+    data = {"BS_ZYL-DOH": _route(TAXES), "EK_DAC-DXB": _route(TAXES)}
+
+    missing = _collect_missing_tax_routes(
+        data, ["DAC", "ZYL"], no_fare_routes={"BS_DOH-ZYL"}
+    )
+
+    assert [m["route"] for m in missing] == ["DXB-DAC"]
+
+
 def test_report_has_rerun_sheet_only_when_taxes_missing(tmp_path):
     out = str(tmp_path / "fares.xlsx")
     generate_report(
@@ -455,3 +466,33 @@ def test_gross_check_flags_when_priced_class_does_not_match_smartpoint_total():
     note = flagged.cell(_header_row(flagged) - 2, 1).value
     assert "check" in note and "42,000" in note and "43,200" in note
     assert "check" not in clean.cell(_header_row(clean) - 2, 1).value
+
+
+def test_gross_check_uses_the_fare_basis_class_not_the_segment_class():
+    # SV MED-DAC (2026-11-02): the MED-JED leg is booked in B but FS priced
+    # fare basis QAOTSAB4, the Q fare: 1071 SAR x 33.4446 + taxes 6,966 +
+    # Q 25 NUC x ROE 3.75 x 33.4446 = 45,920 vs TOT 45,929 -> no warning.
+    from excel_report import _gross_check_note
+
+    fs = {
+        "priced_class": "B",
+        "priced_fare_basis": "QAOTSAB4",
+        "base_currency": "SAR",
+        "base_fare": 1165.0,
+        "equ_fare": 38963.0,
+        "exchange_rate": 33.4446,
+        "total_taxes": 6966.0,
+        "q_charge": 25.0,
+        "roe": 3.75,
+        "total_amount": 45929.0,
+    }
+    route = {
+        "currency": "SAR",
+        "rbd_data": {
+            "B": {"ow_fare": 2494.0, "ow_fare_basis": "BAOTSAB4"},
+            "Q": {"ow_fare": 1071.0, "ow_fare_basis": "QAOTSAB4"},
+        },
+        "fs_taxes": fs,
+    }
+
+    assert _gross_check_note(route, {"SAR": 33.4446}) == ""

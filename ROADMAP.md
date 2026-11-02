@@ -283,11 +283,30 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **v1.5.34 (2026-11-02):** Re-run missing updates the original report (below);
+  the gross check finds the priced class by fare basis, not the first segment's
+  booking class (SV MED-DAC books B but prices QAOTSAB4, the Q fare); a return
+  route Smartpoint showed no fares for (BS DOH-ZYL) is no longer listed for
+  re-run, and the hidden `_run_info` remembers it (`no_fares`) across re-runs.
+- **Re-run missing updates the original report (2026-10-08):** every fare report
+  keeps its route list and change markers as JSON in a very hidden `_run_info`
+  sheet (`report_run_info.py`). The GUI passes `--update-report <xlsx>`; the run
+  loads that report's routes from `data/raw` (any age; an `_FS.txt` older than
+  its FD is ignored as left over from an earlier run), rewrites the same file
+  after copying it to `data/reports/backup/`, and keeps the original markers
+  except for re-run routes whose fares moved. Falls back to a new report when
+  the original is open in Excel, predates `_run_info`, or a route's saved screen
+  is missing.
+- **v1.5.33 (2026-10-08):** removed the post-copy deselect click from v1.5.32; it
+  moved Smartpoint's typing cursor so the next command was typed into the old
+  output (`RATEFZSGBP1BDT` -> INVALID INPUT). Only Escape remains after a copy.
+
 - **Weakness fixes after v1.5.31 (2026-10-07):**
   - D-click on a teal theme failed: Escape does not clear the Ctrl+A highlight
     (now a safe click deselects after every copy), a green "@" connection marker
     looked like «BOOK» (the green link must start the row), and "D" split into two
-    strokes at a larger font (pieces joined by ~half a character). Fixture:
+    strokes at a larger font (pieces joined by ~half a character; the deselect
+    click was removed again in v1.5.33). Fixture:
     `tests/fixtures/fs_highlighted_teal.png`. Live re-test SQ JFK-DAC: first click.
   - Gross check: the parser records the priced class/fare basis; each table notes
     "check: FS priced X at BDT n, report gives BDT m" when its gross for that class

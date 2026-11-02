@@ -20,6 +20,7 @@ from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 
 from origin_sensitive_taxes import compute_rt_tax_total
+from report_run_info import write_run_info
 
 # ── Styles ──────────────────────────────────────────────
 THIN_BORDER = Border(
@@ -1035,13 +1036,16 @@ def generate_report(
     only_currency: bool = False,
     taxes_expected: bool = True,
     return_legs_expected: bool = True,
+    no_fare_routes=(),
 ) -> str:
     """Generate Excel fare report grouped by international destination.
 
     ``taxes_expected`` is False for runs that never fetch FS tax details
     (--only-fd, quick paste); missing taxes are then not flagged for re-run.
     ``return_legs_expected`` is False for --one-direction runs, where the
-    opposite direction is not listed for re-run.
+    opposite direction is not listed for re-run. ``no_fare_routes`` are routes
+    Smartpoint showed no fares for; re-running them would not help, so they
+    are not listed either.
     """
     wb = Workbook()
     wb.remove(wb.active)
@@ -1109,7 +1113,10 @@ def generate_report(
         # ── Re-run list: routes with fares but no tax breakdown ──
         missing_taxes = (
             _collect_missing_tax_routes(
-                all_route_data, domestic_airports, return_legs_expected
+                all_route_data,
+                domestic_airports,
+                return_legs_expected,
+                no_fare_routes,
             )
             if taxes_expected
             else []
@@ -1172,6 +1179,11 @@ def generate_report(
             ws_ch, changes, airline_names, city_names, cell_locations
         )
         _auto_fit_columns(ws_ch)
+
+    # Hidden route list + change markers, read back by Re-run missing when
+    # it rewrites this report.
+    if not only_currency:
+        write_run_info(wb, all_route_data.keys(), changes, no_fare_routes)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     wb.save(output_path)
@@ -1330,13 +1342,31 @@ def _q_in_bdt(fs_taxes):
 GROSS_CHECK_TOLERANCE = 0.01
 
 
+def _priced_rbd(rbd_data, fs_taxes):
+    """The FD class whose fare FS priced, found by fare basis.
+
+    The segment's booking class can differ from the fare's class: SV MED-DAC
+    books the MED-JED leg in B but prices fare basis QAOTSAB4, the Q fare.
+    """
+    basis = (fs_taxes.get("priced_fare_basis") or "").upper()
+    if basis:
+        for rbd, info in rbd_data.items():
+            if isinstance(info, dict) and (
+                str(info.get("ow_fare_basis") or "").upper() == basis
+            ):
+                return rbd
+        if basis[0] in rbd_data:
+            return basis[0]
+    return fs_taxes.get("priced_class")
+
+
 def _gross_check_note(route_info, rates):
     """Compare the report's one-way gross for the class FS priced with
     Smartpoint's TOT for that option ("" when it matches or can't be checked)."""
     fs = _route_fs_taxes(route_info)
-    priced_class = fs.get("priced_class")
     total = float(fs.get("total_amount") or 0)
     rbd_data = route_info.get("rbd_data") if isinstance(route_info, dict) else None
+    priced_class = _priced_rbd(rbd_data or {}, fs)
     fare = ((rbd_data or {}).get(priced_class) or {}).get("ow_fare")
     rate = _fare_rate(route_info, rates)
     if not (priced_class and total and fare and rate):
@@ -1373,14 +1403,14 @@ def _return_leg_gaps(all_route_data, route_key, rates=None):
 
 
 def _collect_missing_tax_routes(
-    all_route_data, domestic_airports, return_legs_expected=True
+    all_route_data, domestic_airports, return_legs_expected=True, no_fare_routes=()
 ):
     """Routes whose tax data is missing or unusable, in report order.
 
     Each item names the route to re-run and what is missing. A route whose
     opposite direction was never extracted also lists that return route
     (RT With YQ and RT Gross need both legs), unless the run was limited to
-    one direction on purpose.
+    one direction on purpose, or Smartpoint showed no fares for it.
     """
     rates = _bdt_rates_by_currency(all_route_data)
     sections = _group_by_international(all_route_data, domestic_airports)
@@ -1410,7 +1440,12 @@ def _collect_missing_tax_routes(
             if gaps:
                 _add(airline, route_key, "; ".join(gaps))
             return_key = _return_route_key(route_key)
-            if return_legs_expected and return_key and return_key not in all_route_data:
+            if (
+                return_legs_expected
+                and return_key
+                and return_key not in all_route_data
+                and return_key not in no_fare_routes
+            ):
                 _add(airline, return_key, "return route not extracted")
     return missing
 

@@ -48,6 +48,7 @@ from penalty_report import generate_penalty_report
 from tax_breakdown_parser import parse_fs_tax_breakdown, looks_like_fs_tax_breakdown
 from baggage_parser import parse_baggage_allowance, is_no_bf_error
 from excel_report import generate_report
+from report_run_info import backup_report, merge_rerun_changes, read_run_info
 from change_detector import (
     detect_changes,
     detect_fs_tax_changes,
@@ -463,13 +464,18 @@ def _add_saved_companion_routes(
     completed_commands=(),
     raw_dir: str | None = None,
     max_age_hours: float = SAVED_RAW_MAX_AGE_HOURS,
+    report_routes=(),
 ) -> list[str]:
     """Load saved FD/FS screens for routes a Re-run or Resume report needs but
-    this run did not execute: each run route's return direction (for RT gross)
-    and, on Resume, the routes completed before the stop.
+    this run did not execute: each run route's return direction (for RT gross),
+    on Resume the routes completed before the stop, and ``report_routes`` (the
+    routes of the report a Re-run rewrites).
 
-    Only screens saved within ``max_age_hours`` are used, and routes this run
-    captured are never overwritten. Returns the route keys added.
+    Only screens saved within ``max_age_hours`` are used, except for
+    ``report_routes``, which are the latest saved data whatever their age. A
+    tax (FS) screen older than its fare screen is left out: it is from an
+    earlier run, not the one that saved the fares. Routes this run captured
+    are never overwritten. Returns the route keys added.
     """
     raw_dir = raw_dir or RAW_DATA_DIR
     wanted: set[str] = set()
@@ -482,22 +488,27 @@ def _add_saved_companion_routes(
         m = re.match(r"FD([A-Z]{3})([A-Z]{3})/([A-Z0-9]{2})", str(command).upper())
         if m:
             wanted.add(f"{m.group(3)}_{m.group(1)}-{m.group(2)}")
+    any_age = set(report_routes)
 
     cutoff = _time.time() - max_age_hours * 3600
 
-    def _fresh(path: str) -> str | None:
-        if not os.path.exists(path) or os.path.getmtime(path) < cutoff:
+    def _read(path: str, not_before: float) -> str | None:
+        if not os.path.exists(path) or os.path.getmtime(path) < not_before:
             return None
         with open(path, "r", encoding="utf-8") as fh:
             return fh.read()
 
     added = []
-    for key in sorted(wanted - set(raw_texts)):
-        fd_text = _fresh(os.path.join(raw_dir, f"{key}.txt"))
+    for key in sorted((wanted | any_age) - set(raw_texts)):
+        fd_path = os.path.join(raw_dir, f"{key}.txt")
+        fd_text = _read(fd_path, 0.0 if key in any_age else cutoff)
         if fd_text is None:
             continue
         raw_texts[key] = fd_text
-        fs_text = _fresh(os.path.join(raw_dir, f"{key}_FS.txt"))
+        # FS is saved after its FD in the same run; allow a second of clock slack.
+        fs_text = _read(
+            os.path.join(raw_dir, f"{key}_FS.txt"), os.path.getmtime(fd_path) - 1
+        )
         if fs_text is not None and key not in raw_fs_texts:
             raw_fs_texts[key] = fs_text
         added.append(key)
@@ -506,6 +517,53 @@ def _add_saved_companion_routes(
             f"  [MERGE] Added saved data from earlier runs today: {', '.join(added)}"
         )
     return added
+
+
+def _load_update_report(path: str | None) -> dict | None:
+    """Run info of the report a Re-run should rewrite, or None to write a
+    new report (no report given, missing, or made before reports kept it)."""
+    if not path:
+        return None
+    if not os.path.isfile(path):
+        logger.warning(f"  Report to update not found: {path}; writing a new one.")
+        return None
+    info = read_run_info(path)
+    if info is None:
+        logger.warning(
+            f"  {os.path.basename(path)} has no saved route list (made by an "
+            "older version); writing a new report instead."
+        )
+    return info
+
+
+def _prepare_report_update(report_path: str, fallback_path: str) -> str:
+    """Back up the report a Re-run rewrites and return the path to write.
+
+    Falls back to a new report when the original cannot be written (usually
+    because it is open in Excel).
+    """
+    try:
+        with open(report_path, "r+b"):
+            pass
+    except OSError:
+        logger.warning(
+            f"  {os.path.basename(report_path)} is open or locked (close it in "
+            "Excel); writing a new report instead."
+        )
+        return fallback_path
+    try:
+        backup = backup_report(report_path)
+    except OSError as exc:
+        logger.warning(
+            f"  Could not back up {os.path.basename(report_path)} ({exc}); "
+            "writing a new report instead."
+        )
+        return fallback_path
+    logger.info(
+        f"  Updating {os.path.basename(report_path)} "
+        f"(previous version kept as {backup})"
+    )
+    return report_path
 
 
 def load_raw_data(raw_dir: str) -> tuple[dict[str, str], dict[str, str]]:
@@ -1031,6 +1089,16 @@ def main(prebuilt_args=None, stop_event=None):
         ),
     )
     arg_parser.add_argument(
+        "--update-report",
+        type=str,
+        metavar="XLSX",
+        help=(
+            "With --pairs: rewrite this fare report with the re-run routes "
+            "merged in, instead of writing a new report (a backup copy is "
+            "kept in data/reports/backup)."
+        ),
+    )
+    arg_parser.add_argument(
         "--only-fd",
         action="store_true",
         help="Extract only basic Fares (skip YQ/Currency FS command)",
@@ -1530,6 +1598,12 @@ def main(prebuilt_args=None, stop_event=None):
     # Routes added from earlier runs' saved screens (Re-run / Resume): shown
     # in the report but already recorded by the run that captured them.
     merged_route_keys: list[str] = []
+    # Re-run missing rewriting an earlier report: that report's run info
+    # (route list, change markers) and the routes this run captured.
+    update_info = None
+    run_route_keys: set[str] = set()
+    # Routes Smartpoint showed no fares for: not listed for re-run.
+    no_fare_routes: set[str] = set()
 
     if args.checkpoint or args.resume:
         os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -1615,6 +1689,7 @@ def main(prebuilt_args=None, stop_event=None):
                         only_currency=getattr(args, "only_currency", False),
                         taxes_expected=not getattr(args, "only_fd", False),
                         return_legs_expected=not getattr(args, "one_direction", False),
+                        no_fare_routes=no_fare_routes,
                     )
                 logger.info(f"  [PARTIAL] Partial report saved: {result}")
                 return result
@@ -2215,6 +2290,7 @@ def main(prebuilt_args=None, stop_event=None):
                             except Exception as e:
                                 logger.warning(f"    Could not save backup: {e}")
                         elif fd_no_fares:
+                            no_fare_routes.add(file_key)
                             logger.info(
                                 f"    [SKIP] No fare rows available for {cmd['command']}."
                             )
@@ -2651,7 +2727,11 @@ def main(prebuilt_args=None, stop_event=None):
 
         if args.auto and (getattr(args, "pairs", None) or args.resume):
             # Re-run / Resume reports only cover this run's routes; bring in
-            # today's saved screens for the routes they depend on.
+            # saved screens for the routes they depend on, and for a Re-run
+            # that rewrites a report, every route of that report.
+            run_route_keys = set(raw_texts)
+            if getattr(args, "pairs", None):
+                update_info = _load_update_report(getattr(args, "update_report", None))
             merged_route_keys = _add_saved_companion_routes(
                 raw_texts,
                 raw_fs_texts,
@@ -2660,7 +2740,19 @@ def main(prebuilt_args=None, stop_event=None):
                     if (args.resume and checkpoint_mgr)
                     else ()
                 ),
+                report_routes=update_info["routes"] if update_info else (),
             )
+            if update_info:
+                lost = sorted(set(update_info["routes"]) - set(raw_texts))
+                if lost:
+                    logger.warning(
+                        "  [MERGE] Saved screens missing for "
+                        f"{', '.join(lost)}; writing a new report instead of "
+                        "updating the original."
+                    )
+                    update_info = None
+            if update_info:
+                no_fare_routes.update(update_info["no_fares"])
 
         _parse_stop = None if (_stop and _stop.is_set()) else _stop
         all_route_data = process_route_data(
@@ -2775,6 +2867,14 @@ def main(prebuilt_args=None, stop_event=None):
             logger.info("  DB is primary snapshot source; skipping JSON archive write.")
         logger.info("")
 
+    # A rewritten report keeps the original run's change markers; only
+    # re-run routes whose fares moved since then show new ones.
+    detected_changes = changes
+    if update_info:
+        changes = merge_rerun_changes(
+            update_info["changes"], detected_changes, run_route_keys
+        )
+
     # [4/4] Generate Report
     if _stop and _stop.is_set():
         return _stop_run(
@@ -2797,6 +2897,8 @@ def main(prebuilt_args=None, stop_event=None):
             )
             output_filename = output_filename.replace("{date}", timestamp_full)
             output_path = os.path.join(REPORTS_DIR, output_filename)
+        if update_info:
+            output_path = _prepare_report_update(args.update_report, output_path)
 
     if args.tax:
         from tax_report import generate_tax_report
@@ -2812,6 +2914,7 @@ def main(prebuilt_args=None, stop_event=None):
             only_currency=args.only_currency,
             taxes_expected=not getattr(args, "only_fd", False),
             return_legs_expected=not getattr(args, "one_direction", False),
+            no_fare_routes=no_fare_routes,
         )
 
         # Merge FTAX if enabled
@@ -2862,8 +2965,8 @@ def main(prebuilt_args=None, stop_event=None):
                 _bq_pusher.push_tax_snapshot(all_route_data, _db_run_id, _run_time)
             else:
                 _bq_pusher.push_fare_snapshot(run_route_data, _db_run_id, _run_time)
-                if changes:
-                    _bq_pusher.push_change_events(changes, _run_time)
+                if detected_changes:
+                    _bq_pusher.push_change_events(detected_changes, _run_time)
         except Exception as _bq_err:
             logger.warning("  [BQ] Push failed (non-fatal): %s", _bq_err)
 
