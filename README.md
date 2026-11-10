@@ -27,7 +27,7 @@ The main motivation behind this project was to eliminate the heavy manual burden
 - **Intelligent Pagination**: Handles complex multi-page terminal output automatically
 - **Secure Credential Management**: Environment variable-based authentication (no passwords in command line)
 - **Excel Report Generation**: Creates formatted Excel reports with change tracking
-- **Comprehensive Testing**: 25+ unit tests with CI/CD integration
+- **Comprehensive Testing**: 460+ unit tests with CI/CD integration
 - **Input Validation**: Validates and sanitizes all inputs before processing
 - **Configuration Management**: Environment-specific configs with JSON schema validation 
 
@@ -50,7 +50,7 @@ graph TD
     end
     
     H --> I[Regex Data Parsing]
-    I -->|fare_parser.py| J((Structured Fares))
+    I -->|parser.py| J((Structured Fares))
     I -->|tax_parser.py| K((Structured Taxes))
     
     J --> L[Excel Report Generation]
@@ -68,7 +68,7 @@ graph TD
 2. **UI Attachment**: The script utilizes `pywinauto` via the UIAutomation (UIA) backend to locate the active Smartpoint window on the desktop and attach to its command-line input box.
 3. **Macro Execution**: `pyautogui` mimics human keystrokes to fire off the required GDS terminal commands (e.g., `FD` for fares, `FTAX` for taxes).
 4. **Clipboard Reading & Pagination**: The script reads the terminal output, detects Smartpoint-specific pagination prompts (like "More Fares" or missing "END" indicators), handles inline sub-commands like `FU*`, and accumulates the raw text strings.
-5. **Regex Data Structuring**: The raw strings are passed to dedicated parsers (`fare_parser.py` / `tax_parser.py`) which use heavy regular expressions to isolate variables like fare basis codes, validities, maximum stays, and exact tax amounts by airport terminal.
+5. **Regex Data Structuring**: The raw strings are passed to dedicated parsers (`parser.py` / `tax_parser.py`) which use heavy regular expressions to isolate variables like fare basis codes, validities, maximum stays, and exact tax amounts by airport terminal.
 6. **Excel Generation**: Finally, `openpyxl` takes the structured dictionaries and dynamically lays out the final `.xlsx` report files, applying color-coding and time-stamped metadata.
 
 ## Project Structure
