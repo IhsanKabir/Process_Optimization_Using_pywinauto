@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/test_smartpoint_automation.py -x -q 2>&1)"
-    ]
-  }
-}

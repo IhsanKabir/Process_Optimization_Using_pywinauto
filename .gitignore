@@ -62,3 +62,10 @@ preferences.json
 
 # Per-user Claude Code permissions
 .claude/settings.local.json
+
+# AI assistant tool configs (kept locally, not published)
+/.claude/
+/.cursor/
+/.cursorrules
+/AGENTS.md
+/CLAUDE.md
