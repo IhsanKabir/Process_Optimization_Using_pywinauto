@@ -94,6 +94,7 @@ FS-1 ADT
     parsed = parse_fs_tax_breakdown(text)
 
     assert parsed["priced_class"] == "H"
+    assert parsed["priced_date"] == "06NOV"
     assert parsed["priced_fare_basis"] == "H13USOAA"
 
 

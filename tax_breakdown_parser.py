@@ -25,7 +25,7 @@ _RE_FARE_CONSTRUCTION_END = re.compile(r"\bEND\b")
 #   "1   SQ @ 1527  H  06NOV JFK LAX   1100  1416    FR   32S     H13USOAA"
 # -> booking class (H) and fare basis (last token).
 _RE_SEGMENT_LINE = re.compile(
-    r"^\s*\d\s+[#@]?\s*[A-Z0-9]{2}\s*[@#]?\s*\d+\s+([A-Z])\s+\d{2}[A-Z]{3}\b.*?(\S+)\s*$",
+    r"^\s*\d\s+[#@]?\s*[A-Z0-9]{2}\s*[@#]?\s*\d+\s+([A-Z])\s+(\d{2}[A-Z]{3})\b.*?(\S+)\s*$",
     re.MULTILINE,
 )
 # ROE = Rate of Exchange — local-currency-per-NUC.  Defaults to 1.0 when
@@ -162,7 +162,8 @@ def parse_fs_tax_breakdown(text: str) -> dict:
         segment = _RE_SEGMENT_LINE.search(block)
         if segment:
             result["priced_class"] = segment.group(1)
-            result["priced_fare_basis"] = segment.group(2)
+            result["priced_date"] = segment.group(2)
+            result["priced_fare_basis"] = segment.group(3)
 
     # Calculate exchange rate dynamically after all fields are parsed.
     if result["base_fare"] > 0 and result["equ_fare"] > 0:

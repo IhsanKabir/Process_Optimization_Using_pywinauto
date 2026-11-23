@@ -283,6 +283,12 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **v1.5.36 (2026-11-23):** the gross-check note names the date FS priced
+  ("FS priced I for 02DEC at BDT 57,118; today's I fare gives BDT 43,528"): the
+  report's fares are FD's for travel today, FS prices ~30 days out, and the 15
+  warnings left on 2026-11-02 were all fares for 02DEC that matched no FD class
+  (seasonal), not report errors. A return route with no fares no longer marks
+  its outbound table "INCOMPLETE" (BS ZYL-DOH); that table shows no RT Gross.
 - **v1.5.35 (2026-11-23) — custom FS dates:** `--fs-dates` / the GUI "FS dates"
   field replaces the built-in FS schedule (30-36 and 90-96 days out) with the
   user's dates, for airlines whose tax/YQ/YR/Q details only price on other days.

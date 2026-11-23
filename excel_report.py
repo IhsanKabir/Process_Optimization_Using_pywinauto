@@ -1138,6 +1138,7 @@ def generate_report(
             domestic_airports,
             changes,
             flag_missing_taxes=taxes_expected,
+            no_fare_routes=no_fare_routes,
         )
         _auto_fit_columns(ws_ind)
 
@@ -1362,7 +1363,11 @@ def _priced_rbd(rbd_data, fs_taxes):
 
 def _gross_check_note(route_info, rates):
     """Compare the report's one-way gross for the class FS priced with
-    Smartpoint's TOT for that option ("" when it matches or can't be checked)."""
+    Smartpoint's TOT for that option ("" when it matches or can't be checked).
+
+    The report's fares are FD's, for travel today; FS prices a later date
+    (shown in the note), where the airline may charge a different fare.
+    """
     fs = _route_fs_taxes(route_info)
     total = float(fs.get("total_amount") or 0)
     rbd_data = route_info.get("rbd_data") if isinstance(route_info, dict) else None
@@ -1374,9 +1379,11 @@ def _gross_check_note(route_info, rates):
     gross = float(fare) * rate + float(fs.get("total_taxes") or 0) + _q_in_bdt(fs)
     if abs(gross - total) <= total * GROSS_CHECK_TOLERANCE:
         return ""
+    date = fs.get("priced_date")
+    for_date = f" for {date}" if date else ""
     return (
-        f"  ⚠ check: FS priced {priced_class} at BDT {total:,.0f}, "
-        f"report gives BDT {gross:,.0f}"
+        f"  ⚠ check: FS priced {priced_class}{for_date} at BDT {total:,.0f}; "
+        f"today's {priced_class} fare gives BDT {gross:,.0f}"
     )
 
 
@@ -1901,6 +1908,7 @@ def _write_individual_tables_sheet(
     domestic_airports,
     changes,
     flag_missing_taxes=True,
+    no_fare_routes=(),
 ):
     """
     Write per-airline tables placed side-by-side horizontally.
@@ -1958,6 +1966,11 @@ def _write_individual_tables_sheet(
         table_specs = []
         for _airline, _domestic, _route_key, route_info in entries:
             leg_gaps = _leg_tax_gaps(route_info, rates)
+            return_key = _return_route_key(_route_key)
+            if return_key in no_fare_routes and return_key not in all_route_data:
+                # No fares to fly back on: no RT Gross, nothing to re-run.
+                table_specs.append((not leg_gaps, False, leg_gaps))
+                continue
             return_gaps = (
                 [] if leg_gaps else _return_leg_gaps(all_route_data, _route_key, rates)
             )

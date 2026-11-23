@@ -93,7 +93,7 @@ def test_main_report_lists_dac_bkk_before_bkk_dac_and_bs_first(tmp_path):
 # ── missing taxes ───────────────────────────────────────────────────────────
 
 
-def _individual(all_route_data, route_key):
+def _individual(all_route_data, route_key, no_fare_routes=()):
     wb = Workbook()
     ws = wb.active
     airline, route = route_key.split("_")
@@ -103,7 +103,15 @@ def _individual(all_route_data, route_key):
         (intl, direction): [(airline, "DAC", route_key, all_route_data[route_key])]
     }
     _write_individual_tables_sheet(
-        ws, all_route_data, sections, {}, {}, [], ["DAC"], None
+        ws,
+        all_route_data,
+        sections,
+        {},
+        {},
+        [],
+        ["DAC"],
+        None,
+        no_fare_routes=no_fare_routes,
     )
     return ws
 
@@ -465,7 +473,33 @@ def test_gross_check_flags_when_priced_class_does_not_match_smartpoint_total():
 
     note = flagged.cell(_header_row(flagged) - 2, 1).value
     assert "check" in note and "42,000" in note and "43,200" in note
+    assert "today's Y fare" in note
     assert "check" not in clean.cell(_header_row(clean) - 2, 1).value
+
+
+def test_gross_check_names_the_date_fs_priced():
+    from excel_report import _gross_check_note
+
+    fs = dict(TAXES, priced_class="Y", priced_date="02DEC", total_amount=42000.0)
+
+    note = _gross_check_note(_route(fs), {})
+
+    assert "FS priced Y for 02DEC at BDT 42,000" in note
+
+
+def test_return_route_without_fares_does_not_mark_table_incomplete():
+    # BS ZYL-DOH (2026-11-15): Smartpoint has no DOH-ZYL fares to come back on.
+    data = {"BS_DAC-DOH": _route(TAXES)}
+
+    flagged = _individual(data, "BS_DAC-DOH")
+    no_fares = _individual(data, "BS_DAC-DOH", no_fare_routes={"BS_DOH-DAC"})
+
+    assert "INCOMPLETE" in flagged.cell(_header_row(flagged) - 2, 1).value
+    title = no_fares.cell(_header_row(no_fares) - 2, 1).value
+    assert "INCOMPLETE" not in title
+    headers = [str(c.value) for c in no_fares[_header_row(no_fares)]]
+    assert not any("RT/Gross" in h for h in headers)
+    assert any("OW/Gross" in h for h in headers)
 
 
 def test_gross_check_uses_the_fare_basis_class_not_the_segment_class():
