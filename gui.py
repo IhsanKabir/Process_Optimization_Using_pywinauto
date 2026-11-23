@@ -497,7 +497,7 @@ def _check_for_update(current_version: str) -> dict | None:
 
 
 class TravelportGUI:
-    VERSION = "v1.5.34"
+    VERSION = "v1.5.35"
 
     # Step labels shown in the step indicator
     STEPS = ["Setup", "Connect", "Extracting", "Report"]
@@ -586,6 +586,7 @@ class TravelportGUI:
             ("route_var", "route"),
             ("airline_var", "airline"),
             ("limit_var", "limit"),
+            ("fs_dates_var", "fs_dates"),
         ]:
             val = prefs.get(key)
             if val is not None:
@@ -619,6 +620,7 @@ class TravelportGUI:
                 "route": self.route_var.get(),
                 "airline": self.airline_var.get(),
                 "limit": self.limit_var.get(),
+                "fs_dates": self.fs_dates_var.get(),
                 "checkpoint": self.checkpoint_var.get(),
                 "no_changes": self.no_changes_var.get(),
                 "fare_scope": self.fare_scope_var.get(),
@@ -873,6 +875,24 @@ class TravelportGUI:
         ).pack(anchor="w", pady=(5, 0))
         self.limit_var = tk.StringVar(value="0")
         ttk.Entry(g_filters, textvariable=self.limit_var, width=8).pack(anchor="w")
+
+        tk.Label(
+            g_filters,
+            text="FS dates (blank = built-in):",
+            bg="#f2f2f2",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(5, 0))
+        self.fs_dates_var = tk.StringVar(value="")
+        ttk.Entry(g_filters, textvariable=self.fs_dates_var, width=28).pack(
+            anchor="w", fill="x"
+        )
+        tk.Label(
+            g_filters,
+            text="e.g. 15DEC..22DEC, 10JAN  or  +45..+50",
+            bg="#f2f2f2",
+            fg="#999",
+            font=("Segoe UI", 7, "italic"),
+        ).pack(anchor="w")
 
         self.one_direction_var = tk.BooleanVar(value=False)
         self._one_direction_cb = ttk.Checkbutton(
@@ -1410,6 +1430,7 @@ class TravelportGUI:
             "route": self.route_var.get(),
             "airline": self.airline_var.get(),
             "limit": self.limit_var.get(),
+            "fs_dates": self.fs_dates_var.get(),
             "fare_scope": self.fare_scope_var.get(),
             "one_direction": self.one_direction_var.get(),
             "include_ftax": self.include_ftax_var.get(),
@@ -1423,6 +1444,7 @@ class TravelportGUI:
             ("route", self.route_var),
             ("airline", self.airline_var),
             ("limit", self.limit_var),
+            ("fs_dates", self.fs_dates_var),
             ("fare_scope", self.fare_scope_var),
             ("one_direction", self.one_direction_var),
             ("include_ftax", self.include_ftax_var),
@@ -2337,7 +2359,7 @@ class TravelportGUI:
             []
             if self._run_overrides or mode in ("tax", "currency", "baggage")
             else _gs.filter_problems(self.route_var.get(), self.airline_var.get())
-        )
+        ) + _gs.fs_dates_problems(self.fs_dates_var.get())
         if problems:
             messagebox.showerror(
                 "Check filters", "Fix these before starting:\n\n" + "\n".join(problems)
@@ -3207,6 +3229,7 @@ class TravelportGUI:
             pairs=pairs,
             update_report=overrides.get("update_report"),
             limit=0 if pairs else limit,
+            fs_dates=self.fs_dates_var.get().strip() or None,
             only_fd=scope == "fd",
             only_yq=scope == "yq",
             only_currency=False,

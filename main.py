@@ -27,7 +27,7 @@ import shutil
 import sys
 import time as _time
 import constants
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import OrderedDict
 
 try:
@@ -62,6 +62,7 @@ from change_detector import (
     snapshot_has_changed,
 )
 from exceptions import ConfigurationError, ValidationError
+from fs_dates import resolve_fs_dates, smartpoint_date
 from validators import (
     validate_config,
     validate_limit,
@@ -109,10 +110,6 @@ from tax_airports import (  # noqa: F401
 )
 from constants import (
     MAX_RETRIES_COMMAND,
-    FS_DATE_OFFSET_START,
-    FS_DATE_STEP,
-    FS_DATE_WINDOW_DAYS,
-    FS_DATE_FALLBACK_OFFSET,
 )
 
 try:
@@ -1197,6 +1194,15 @@ def main(prebuilt_args=None, stop_event=None):
         help="Effective date (YYYY-MM-DD) for --load-previous-rates; defaults to yesterday",
     )
     arg_parser.add_argument(
+        "--fs-dates",
+        type=str,
+        default=None,
+        help=(
+            "Travel dates the FS tax search tries instead of the built-in ones, "
+            'e.g. "15DEC..22DEC, 10JAN" or "2026-12-15..2026-12-22" or "+45..+50"'
+        ),
+    )
+    arg_parser.add_argument(
         "--user-token",
         type=str,
         default=None,
@@ -1398,6 +1404,15 @@ def main(prebuilt_args=None, stop_event=None):
     if getattr(args, "baggage", False) and getattr(args, "only_baggage", False):
         logger.error("  Use either --baggage or --only-baggage, not both.")
         sys.exit(1)
+    try:
+        fs_search_dates = resolve_fs_dates(getattr(args, "fs_dates", None))
+    except ValidationError as e:
+        logger.error(f"  {e}")
+        sys.exit(1)
+    if getattr(args, "fs_dates", None):
+        logger.info(
+            f"  FS dates: {', '.join(smartpoint_date(d) for d in fs_search_dates)}"
+        )
 
     if args.tax:
         try:
@@ -2056,59 +2071,46 @@ def main(prebuilt_args=None, stop_event=None):
 
                 logger.info(f"  [{i}/{len(commands)}] {airline} {src}-{dst}")
 
-                for window_start in (FS_DATE_OFFSET_START, FS_DATE_FALLBACK_OFFSET):
-                    _got_bag = False
-                    for fs_date_offset in range(
-                        window_start, window_start + FS_DATE_WINDOW_DAYS, FS_DATE_STEP
-                    ):
-                        if _stop and _stop.is_set():
-                            break
-                        date_str = (
-                            (datetime.now() + timedelta(days=fs_date_offset))
-                            .strftime("%d%b")
-                            .upper()
-                        )
-                        fs_result = automation.run_fs_command(
-                            src, dst, date_str, airline
-                        )
-                        if not fs_result or _fs_output_is_no_results(fs_result):
-                            continue
+                _got_bag = False
+                for fs_date in fs_search_dates:
+                    if _stop and _stop.is_set():
+                        break
+                    date_str = smartpoint_date(fs_date)
+                    fs_result = automation.run_fs_command(src, dst, date_str, airline)
+                    if not fs_result or _fs_output_is_no_results(fs_result):
+                        continue
 
-                        target_option_index, _, _ = (
-                            _find_pure_airline_option_in_fs_page(fs_result, airline)
-                        )
-                        if target_option_index is None:
-                            continue
+                    target_option_index, _, _ = _find_pure_airline_option_in_fs_page(
+                        fs_result, airline
+                    )
+                    if target_option_index is None:
+                        continue
 
+                    try:
+                        _book_screen = automation.click_book_link(
+                            target_option_index, fs_result
+                        )
+                        if _book_screen and not is_no_bf_error(_book_screen):
+                            _fqc_text = automation.run_fqc_command(airline)
+                            if not is_no_bf_error(_fqc_text) and _fqc_text:
+                                _bag = parse_baggage_allowance(_fqc_text)
+                                if _bag:
+                                    raw_baggage_data[file_key] = _bag
+                                    logger.info(
+                                        f"    [BAG] Checked:{_bag.get('checked','?')} "
+                                        f"Carry-on:{_bag.get('carry_on','?')}"
+                                    )
+                                    _got_bag = True
+                        elif _book_screen:
+                            logger.info(f"    [BAG] NO B.F. TO DISPLAY for {file_key}.")
+                        automation.send_ignore_command()
+                    except Exception as _be:
+                        logger.warning(f"    [BAG] Error for {file_key}: {_be}")
                         try:
-                            _book_screen = automation.click_book_link(
-                                target_option_index, fs_result
-                            )
-                            if _book_screen and not is_no_bf_error(_book_screen):
-                                _fqc_text = automation.run_fqc_command(airline)
-                                if not is_no_bf_error(_fqc_text) and _fqc_text:
-                                    _bag = parse_baggage_allowance(_fqc_text)
-                                    if _bag:
-                                        raw_baggage_data[file_key] = _bag
-                                        logger.info(
-                                            f"    [BAG] Checked:{_bag.get('checked','?')} "
-                                            f"Carry-on:{_bag.get('carry_on','?')}"
-                                        )
-                                        _got_bag = True
-                            elif _book_screen:
-                                logger.info(
-                                    f"    [BAG] NO B.F. TO DISPLAY for {file_key}."
-                                )
                             automation.send_ignore_command()
-                        except Exception as _be:
-                            logger.warning(f"    [BAG] Error for {file_key}: {_be}")
-                            try:
-                                automation.send_ignore_command()
-                            except Exception:
-                                pass
+                        except Exception:
+                            pass
 
-                        if _got_bag:
-                            break
                     if _got_bag:
                         break
 
@@ -2328,28 +2330,10 @@ def main(prebuilt_args=None, stop_event=None):
                             airline = base_cmd.split("/")[1][:2]
 
                             fs_expanded = ""
-                            # Two-window fallback: 7 consecutive days ~1 month out,
-                            # then 7 more ~3 months out if the first window yields
-                            # no pure-airline option.
-                            fs_date_offsets: list[int] = []
-                            for window_start in (
-                                FS_DATE_OFFSET_START,
-                                FS_DATE_FALLBACK_OFFSET,
-                            ):
-                                fs_date_offsets.extend(
-                                    range(
-                                        window_start,
-                                        window_start + FS_DATE_WINDOW_DAYS,
-                                        FS_DATE_STEP,
-                                    )
-                                )
-
-                            for fs_date_offset in fs_date_offsets:
-                                date_str = (
-                                    (datetime.now() + timedelta(days=fs_date_offset))
-                                    .strftime("%d%b")
-                                    .upper()
-                                )
+                            # Built-in schedule (two 7-day windows ~1 and ~3
+                            # months out) or the user's --fs-dates.
+                            for fs_date in fs_search_dates:
+                                date_str = smartpoint_date(fs_date)
                                 logger.info(
                                     f"    [FS Checkout] Extracting tax details for {src}-{dst} on {date_str}..."
                                 )
@@ -2448,7 +2432,7 @@ def main(prebuilt_args=None, stop_event=None):
                                             break
 
                                         logger.warning(
-                                            f"      [!] Waiting for terminal content (offset {fs_date_offset})..."
+                                            f"      [!] Waiting for terminal content ({date_str})..."
                                         )
                                         break
 

@@ -11,6 +11,7 @@ import os
 
 from excel_report import RERUN_SHEET, _airline_sort_key
 from exceptions import ValidationError
+from fs_dates import parse_fs_dates
 from validators import validate_airline_code, validate_route
 
 # The report's Re-run Needed sheet: header on row 4, data from row 5,
@@ -65,6 +66,19 @@ def filter_problems(route_text: str, airline_text: str) -> list[str]:
         except ValidationError as exc:
             problems.append(f"Airline '{raw}': {exc}")
     return problems
+
+
+def fs_dates_problems(text: str, today=None) -> list[str]:
+    """Problems in the FS dates field ([] = fine; empty means built-in dates)."""
+    from datetime import date
+
+    if not (text or "").strip():
+        return []
+    try:
+        parse_fs_dates(text, today or date.today())
+    except ValidationError as exc:
+        return [f"FS dates: {exc}"]
+    return []
 
 
 def rerun_pairs_from_report(path: str) -> list[dict]:

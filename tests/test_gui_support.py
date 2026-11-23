@@ -9,6 +9,7 @@ from gui_support import (
     configured_choices,
     filter_problems,
     find_latest_rerun_report,
+    fs_dates_problems,
     pairs_to_text,
     rerun_pairs_from_report,
 )
@@ -52,6 +53,23 @@ def test_configured_choices_order_routes_and_airlines():
 def test_filter_problems_accepts_valid_and_blank():
     assert filter_problems("DAC-BKK, DAC-DXB", "BS,bg") == []
     assert filter_problems("", "") == []
+
+
+def test_fs_dates_blank_or_valid_is_fine():
+    from datetime import date
+
+    today = date(2026, 11, 23)
+    assert fs_dates_problems("", today) == []
+    assert fs_dates_problems("15DEC..22DEC, +45", today) == []
+
+
+def test_fs_dates_problem_names_the_bad_date():
+    from datetime import date
+
+    problems = fs_dates_problems("15DEC, 32DEC", date(2026, 11, 23))
+
+    assert len(problems) == 1
+    assert "32DEC" in problems[0]
 
 
 def test_filter_problems_names_each_bad_entry():

@@ -283,6 +283,11 @@ pyautogui.FailSafeException: PyAutoGUI fail-safe triggered from mouse moving to 
 
 These are done and live on `main` so the next reader knows not to re-open them:
 
+- **v1.5.35 (2026-11-23) — custom FS dates:** `--fs-dates` / the GUI "FS dates"
+  field replaces the built-in FS schedule (30-36 and 90-96 days out) with the
+  user's dates, for airlines whose tax/YQ/YR/Q details only price on other days.
+  Accepts `15DEC..22DEC`, `2026-12-15..2026-12-22`, `+45..+50`, comma-separated;
+  rejects past dates, >331 days ahead, and >60 dates (`fs_dates.py`).
 - **v1.5.34 (2026-11-02):** Re-run missing updates the original report (below);
   the gross check finds the priced class by fare basis, not the first segment's
   booking class (SV MED-DAC books B but prices QAOTSAB4, the Q fare); a return
